@@ -1,0 +1,9 @@
+[package]
+name = "sweep"
+version = "0.1.0"
+authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+surf_n_term = { path = "../" }
+rayon = "1.3.1"

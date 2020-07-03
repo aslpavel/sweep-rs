@@ -1,0 +1,625 @@
+use rayon::prelude::*;
+use std::{
+    collections::BTreeSet,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    sync::{mpsc, Arc, Mutex},
+    time::{Duration, Instant},
+};
+use surf_n_term::{
+    render::{TerminalWritable, TerminalWriter},
+    widgets::{Input, List, ListItems, Theme},
+    DecMode, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Surface, SurfaceMut,
+    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
+};
+
+fn main() -> Result<(), Error> {
+    let theme = Theme::from_palette("#3c3836".parse()?, "#fbf1c7".parse()?, "#8f3f71".parse()?);
+    let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
+    let height = 11;
+
+    // initialize terminal
+    let mut term = SystemTerminal::new()?;
+    term.duplicate_output("/tmp/sweep.log")?;
+    term.execute(TerminalCommand::DecModeSet {
+        enable: false,
+        mode: DecMode::VisibleCursor,
+    })?;
+    // find current row offset
+    let mut row_offset = 0;
+    term.execute(TerminalCommand::CursorGet)?;
+    match term.poll(Some(Duration::from_millis(500)))? {
+        Some(TerminalEvent::CursorPosition { row, .. }) => {
+            row_offset = row;
+        }
+        _ => (),
+    }
+
+    // initialize ranker
+    let waker = term.waker();
+    let ranker = Ranker::new(move || waker.wake().is_ok());
+    ranker.haystack_extend(Candidate::load("/Users/aslpavel/collins.txt")?);
+    // ranker.haystack_extend(Candidate::load("/Users/aslpavel/Downloads/home_files.txt")?);
+
+    // initialize widgets
+    let mut input = Input::new();
+    let mut list = List::new(RankerResultThemed::new(
+        theme.clone(),
+        Arc::new(RankerResult::<Candidate>::default()),
+    ));
+
+    // render loop
+    let mut result = None;
+    term.run_render(|_term, event, view| -> Result<_, Error> {
+        let mut view = view.view_owned((row_offset as i32).., 1..-1);
+
+        // handle events
+        if let Some(event) = &event {
+            match *event {
+                TerminalEvent::Key(Key { name, mode }) if mode == KeyMod::CTRL => {
+                    if name == KeyName::Char('c') {
+                        return Ok(TerminalAction::Quit);
+                    } else if name == KeyName::Char('m') {
+                        if let Some(candidate) = list.current() {
+                            result.replace(candidate.result.haystack);
+                            return Ok(TerminalAction::Quit);
+                        }
+                    }
+                }
+                TerminalEvent::CursorPosition { row, .. } => {
+                    row_offset = row;
+                }
+                _ => (),
+            }
+            input.handle(event);
+            list.handle(event);
+        }
+
+        // update niddle
+        ranker.niddle_set(input.get().collect());
+        let result = ranker.result();
+
+        // label
+        let mut label_view = view.view_mut(0, ..);
+        let label_face = Face::new(Some(theme.bg), Some(theme.accent), FaceAttrs::BOLD);
+        let mut label = label_view.writer().face(label_face);
+        write!(&mut label, " INPUT ")?;
+        let mut label = label.face(label_face.invert());
+        write!(&mut label, " ")?;
+        let input_start = label.position().1 as i32;
+
+        // stats
+        let stats_str = format!(
+            " {}/{} {:.2?} ",
+            result.result.len(),
+            result.haystack_size,
+            result.duration,
+        );
+        let input_stop = -(stats_str.chars().count() as i32 + 1);
+        let mut stats_view = view.view_mut(0, input_stop..);
+        let stats_face = Face::new(Some(theme.bg), Some(theme.accent), FaceAttrs::EMPTY);
+        let mut stats = stats_view.writer().face(stats_face.invert());
+        write!(&mut stats, "")?;
+        let mut stats = stats.face(stats_face);
+        stats.write_all(stats_str.as_ref())?;
+
+        // input
+        input.render(&theme, view.view_mut(0, input_start..input_stop))?;
+
+        // list
+        if list.items().result.generation != result.generation {
+            list.items_set(RankerResultThemed::new(theme.clone(), result));
+        }
+        list.render(&theme, view.view_mut(1..height, ..))?;
+
+        // debug
+        let mut debug = view.view_mut((height + 2)..14, ..);
+        debug.erase(debug_face.bg);
+        write!(
+            &mut debug.writer().face(debug_face),
+            "row:{} event:{:?}",
+            row_offset,
+            event,
+        )?;
+
+        Ok(TerminalAction::Wait)
+    })?;
+
+    // restore terminal
+    term.execute(TerminalCommand::CursorTo(Position {
+        row: row_offset,
+        col: 0,
+    }))?;
+    term.poll(Some(Duration::new(0, 0)))?;
+    std::mem::drop(term);
+
+    // print result
+    if let Some(result) = result {
+        println!("{}", result.as_ref());
+    }
+
+    Ok(())
+}
+#[derive(Clone, Debug)]
+struct Candidate(Arc<String>);
+
+impl Candidate {
+    fn new(string: String) -> Self {
+        Self(Arc::new(string))
+    }
+
+    fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Self>> {
+        let file = BufReader::new(File::open(path)?);
+        file.lines().map(|l| Ok(Candidate::new(l?))).collect()
+    }
+}
+
+impl AsRef<str> for Candidate {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[derive(Debug)]
+struct ScoreResultThemed<H> {
+    result: ScoreResult<H>,
+    face_default: Face,
+    face_highlight: Face,
+}
+
+impl<H: AsRef<str>> TerminalWritable for ScoreResultThemed<H> {
+    fn fmt(&self, writer: &mut TerminalWriter<'_>) -> std::io::Result<()> {
+        for (i, c) in self.result.haystack.as_ref().chars().enumerate() {
+            if self.result.positions.contains(&i) {
+                writer.put_char(c, self.face_highlight);
+            } else {
+                writer.put_char(c, Face::default().with_fg(self.face_default.fg));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct RankerResultThemed<H> {
+    theme: Theme,
+    result: Arc<RankerResult<H>>,
+}
+
+impl<H> RankerResultThemed<H> {
+    fn new(theme: Theme, result: Arc<RankerResult<H>>) -> Self {
+        Self { theme, result }
+    }
+}
+
+impl<H: Clone + AsRef<str>> ListItems for RankerResultThemed<H> {
+    type Item = ScoreResultThemed<H>;
+    fn len(&self) -> usize {
+        self.result.result.len()
+    }
+    fn get(&self, index: usize) -> Option<Self::Item> {
+        self.result
+            .result
+            .get(index)
+            .map(|result| ScoreResultThemed {
+                result: result.clone(),
+                face_default: self.theme.list_default,
+                face_highlight: self.theme.cursor,
+            })
+    }
+}
+
+pub fn rank<S, H, F, FR>(scorer: S, niddle: &str, haystack: &[H], focus: F) -> Vec<ScoreResult<FR>>
+where
+    S: Scorer + Sync + Send,
+    H: Sync,
+    F: Fn(&H) -> FR + Send + Sync,
+    FR: AsRef<str> + Send,
+{
+    let mut result: Vec<_> = haystack
+        .into_par_iter()
+        .filter_map(move |haystack| scorer.score(niddle, focus(haystack)))
+        .collect();
+    result.par_sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).expect("Nan score").reverse());
+    result
+}
+
+enum RankCmd<H> {
+    Haystack(Vec<H>),
+    Niddle(String),
+}
+
+struct RankerResult<H> {
+    result: Vec<ScoreResult<H>>,
+    duration: Duration,
+    haystack_size: usize,
+    generation: usize,
+}
+
+impl<H> Default for RankerResult<H> {
+    fn default() -> Self {
+        Self {
+            result: Default::default(),
+            duration: Duration::new(0, 0),
+            haystack_size: 0,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Ranker<H> {
+    sender: mpsc::Sender<RankCmd<H>>,
+    result: Arc<Mutex<Arc<RankerResult<H>>>>,
+}
+
+impl<H> Ranker<H>
+where
+    H: Clone + Send + Sync + 'static + AsRef<str>,
+{
+    pub fn new<N>(mut notify: N) -> Self
+    where
+        N: FnMut() -> bool + Send + 'static,
+    {
+        let result: Arc<Mutex<Arc<RankerResult<H>>>> = Default::default();
+        let mut niddle = String::new();
+        let mut haystack = Vec::new();
+        let mut generation = 0usize;
+        let scorer = FuzzyScorer::new();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn({
+            let result = result.clone();
+            move || {
+                loop {
+                    // block on first event and process all pending requests in one go
+                    let cmd = match receiver.recv() {
+                        Ok(cmd) => cmd,
+                        Err(_) => return,
+                    };
+                    let mut haystack_new = Vec::new();
+                    let mut niddle_updated = false; // niddle was updated
+                    let mut niddle_prefix = true; // previous niddle is a prefix of the new one
+                    for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
+                        match cmd {
+                            RankCmd::Haystack(haystack) => {
+                                haystack_new.extend(haystack);
+                            }
+                            RankCmd::Niddle(niddle_new) if niddle_new != niddle => {
+                                niddle_updated = true;
+                                niddle_prefix = niddle_prefix && niddle_new.starts_with(&niddle);
+                                niddle = niddle_new;
+                            }
+                            _ => continue,
+                        }
+                    }
+                    haystack.extend(haystack_new.iter().cloned());
+
+                    // rank haystack
+                    let start = Instant::now();
+                    let result_new = if !niddle_updated && haystack_new.is_empty() {
+                        continue;
+                    } else if niddle_updated {
+                        if niddle_prefix && haystack_new.is_empty() {
+                            // incremental ranking
+                            let result_old = result.with(|result| Arc::clone(result));
+                            rank(&scorer, niddle.as_ref(), result_old.result.as_ref(), |r| {
+                                r.haystack.clone()
+                            })
+                        } else {
+                            // re-rank all data
+                            rank(&scorer, niddle.as_ref(), haystack.as_ref(), Clone::clone)
+                        }
+                    } else {
+                        // rank only new data
+                        let result_add = rank(
+                            &scorer,
+                            niddle.as_ref(),
+                            haystack_new.as_ref(),
+                            Clone::clone,
+                        );
+                        let result_old = result.with(|result| Arc::clone(result));
+                        let mut result_new =
+                            Vec::with_capacity(result_old.result.len() + result_add.len());
+                        result_new.extend(result_old.result.iter().cloned());
+                        result_new.extend(result_add);
+                        result_new.par_sort_by(|a, b| {
+                            a.score.partial_cmp(&b.score).expect("Nan score").reverse()
+                        });
+                        result_new
+                    };
+                    let duration = Instant::now() - start;
+                    generation += 1;
+                    let result_new = RankerResult {
+                        result: result_new,
+                        duration,
+                        haystack_size: haystack.len(),
+                        generation,
+                    };
+                    result.with(|result| std::mem::replace(result, Arc::new(result_new)));
+
+                    if !notify() {
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            sender,
+            // worker,
+            result,
+        }
+    }
+
+    /// Extend haystack with new entries
+    pub fn haystack_extend(&self, haystack: Vec<H>) {
+        self.sender
+            .send(RankCmd::Haystack(haystack))
+            .expect("failed to send haystack");
+    }
+
+    /// Set new needle
+    pub fn niddle_set(&self, niddle: String) {
+        self.sender
+            .send(RankCmd::Niddle(niddle))
+            .expect("failed to send niddle");
+    }
+
+    /// Get last result
+    pub fn result(&self) -> Arc<RankerResult<H>> {
+        self.result.with(|result| result.clone())
+    }
+}
+
+type Score = f32;
+const SCORE_MIN: Score = Score::NEG_INFINITY;
+const SCORE_MAX: Score = Score::INFINITY;
+const SCORE_GAP_LEADING: Score = -0.005;
+const SCORE_GAP_TRAILING: Score = -0.005;
+const SCORE_GAP_INNER: Score = -0.01;
+const SCORE_MATCH_CONSECUTIVE: Score = 1.0;
+const SCORE_MATCH_SLASH: Score = 0.9;
+const SCORE_MATCH_WORD: Score = 0.8;
+const SCORE_MATCH_CAPITAL: Score = 0.7;
+const SCORE_MATCH_DOT: Score = 0.6;
+
+pub type Positions = BTreeSet<usize>;
+
+#[derive(Debug, Clone)]
+pub struct ScoreResult<H> {
+    pub haystack: H,
+    // score of this match
+    pub score: Score,
+    // match positions in the haystack string
+    pub positions: Positions,
+}
+
+struct ScoreMatrix<'a> {
+    data: &'a mut [Score],
+    width: usize,
+}
+
+impl<'a> ScoreMatrix<'a> {
+    fn new<'b: 'a>(width: usize, data: &'b mut [Score]) -> Self {
+        Self { data, width }
+    }
+
+    fn get(&self, row: usize, col: usize) -> Score {
+        self.data[row * self.width + col]
+    }
+
+    fn set(&mut self, row: usize, col: usize, val: Score) {
+        self.data[row * self.width + col] = val;
+    }
+}
+
+pub trait Scorer {
+    fn score_str(&self, niddle: &str, haystack: &str) -> Option<(Score, Positions)>;
+    fn score<H>(&self, niddle: &str, haystack: H) -> Option<ScoreResult<H>>
+    where
+        H: AsRef<str>,
+        Self: Sized,
+    {
+        let (score, positions) = self.score_str(niddle, haystack.as_ref())?;
+        Some(ScoreResult {
+            haystack,
+            score,
+            positions,
+        })
+    }
+}
+
+impl Scorer for Box<dyn Scorer> {
+    fn score_str(&self, niddle: &str, haystack: &str) -> Option<(Score, Positions)> {
+        (**self).score_str(niddle, haystack)
+    }
+}
+
+impl Scorer for Arc<dyn Scorer> {
+    fn score_str(&self, niddle: &str, haystack: &str) -> Option<(Score, Positions)> {
+        (**self).score_str(niddle, haystack)
+    }
+}
+
+impl<'a, S: Scorer> Scorer for &'a S {
+    fn score_str(&self, niddle: &str, haystack: &str) -> Option<(Score, Positions)> {
+        (*self).score_str(niddle, haystack)
+    }
+}
+
+pub struct FuzzyScorer;
+
+impl FuzzyScorer {
+    pub fn new() -> Self {
+        FuzzyScorer
+    }
+
+    fn bonus(haystack: &str, bonus: &mut [Score]) {
+        let mut c_prev = '/';
+        for (i, c) in haystack.chars().enumerate() {
+            bonus[i] = if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                match c_prev {
+                    '/' => SCORE_MATCH_SLASH,
+                    '-' | '_' | ' ' => SCORE_MATCH_WORD,
+                    '.' => SCORE_MATCH_DOT,
+                    _ => 0.0,
+                }
+            } else if c.is_ascii_uppercase() {
+                match c_prev {
+                    '/' => SCORE_MATCH_SLASH,
+                    '-' | '_' | ' ' => SCORE_MATCH_WORD,
+                    '.' => SCORE_MATCH_DOT,
+                    'a'..='z' => SCORE_MATCH_CAPITAL,
+                    _ => 0.0,
+                }
+            } else {
+                0.0
+            };
+            c_prev = c;
+        }
+    }
+
+    fn subseq(niddle: &str, haystack: &str) -> bool {
+        let mut n_iter = niddle.chars().flat_map(char::to_lowercase);
+        let mut h_iter = haystack.chars().flat_map(char::to_lowercase);
+        let mut n = if let Some(n) = n_iter.next() {
+            n
+        } else {
+            return true;
+        };
+        while let Some(h) = h_iter.next() {
+            if n == h {
+                n = if let Some(n_next) = n_iter.next() {
+                    n_next
+                } else {
+                    return true;
+                };
+            }
+        }
+        return false;
+    }
+
+    // This function is only called when we know that niddle is a sub-string of
+    // the haystack string.
+    fn score_impl(niddle: &str, haystack: &str) -> (Score, Positions) {
+        let n_len = niddle.chars().flat_map(char::to_lowercase).count();
+        let h_len = haystack.chars().flat_map(char::to_lowercase).count();
+
+        if n_len == 0 || n_len == h_len {
+            // full match
+            return (SCORE_MAX, (0..n_len).collect());
+        }
+
+        // find scores
+        // use single allocation for all data needed for calulating score and positions
+        let mut data = vec![0.0; n_len * h_len * 2 + h_len];
+        let (bonus_score, matrix_data) = data.split_at_mut(h_len);
+        let (d_data, m_data) = matrix_data.split_at_mut(n_len * h_len);
+        Self::bonus(haystack, bonus_score);
+        let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with niddle[..i]
+        let mut m = ScoreMatrix::new(h_len, m_data); // best score for niddle[..i]
+        for (i, n_char) in niddle.chars().flat_map(char::to_lowercase).enumerate() {
+            let mut prev_score = SCORE_MIN;
+            let gap_score = if i == n_len - 1 {
+                SCORE_GAP_TRAILING
+            } else {
+                SCORE_GAP_INNER
+            };
+            for (j, h_char) in haystack.chars().flat_map(char::to_lowercase).enumerate() {
+                if n_char == h_char {
+                    let score = if i == 0 {
+                        (j as Score) * SCORE_GAP_LEADING + bonus_score[j]
+                    } else if j != 0 {
+                        let a = m.get(i - 1, j - 1) + bonus_score[j];
+                        let b = d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
+                        a.max(b)
+                    } else {
+                        SCORE_MIN
+                    };
+                    prev_score = score.max(prev_score + gap_score);
+                    d.set(i, j, score);
+                    m.set(i, j, prev_score);
+                } else {
+                    prev_score += gap_score;
+                    d.set(i, j, SCORE_MIN);
+                    m.set(i, j, prev_score);
+                }
+            }
+        }
+
+        // find positions
+        let mut match_required = false;
+        let mut positions = BTreeSet::new();
+        let mut h_iter = (0..h_len).rev();
+        for i in (0..n_len).rev() {
+            while let Some(j) = h_iter.next() {
+                if (match_required || d.get(i, j) == m.get(i, j)) && d.get(i, j) != SCORE_MIN {
+                    match_required = i > 0
+                        && j > 0
+                        && m.get(i, j) == d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
+                    positions.insert(j);
+                    break;
+                }
+            }
+        }
+
+        (m.get(n_len - 1, h_len - 1), positions)
+    }
+}
+
+impl Scorer for FuzzyScorer {
+    fn score_str(&self, niddle: &str, haystack: &str) -> Option<(Score, Positions)> {
+        if Self::subseq(niddle, haystack) {
+            Some(Self::score_impl(niddle, haystack))
+        } else {
+            None
+        }
+    }
+}
+
+pub trait LockExt {
+    type Value;
+
+    fn with<Scope, Out>(&self, scope: Scope) -> Out
+    where
+        Scope: FnOnce(&mut Self::Value) -> Out;
+}
+
+impl<V> LockExt for Mutex<V> {
+    type Value = V;
+
+    fn with<Scope, Out>(&self, scope: Scope) -> Out
+    where
+        Scope: FnOnce(&mut Self::Value) -> Out,
+    {
+        let mut value = self.lock().expect("lock poisoned");
+        scope(&mut *value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_subseq() {
+        let subseq = FuzzyScorer::subseq;
+        assert!(subseq("one", "On/e"));
+        assert!(subseq("one", "w o ne"));
+        assert!(!subseq("one", "net"));
+        assert!(subseq("", "one"));
+    }
+
+    #[test]
+    fn test_fuzzy_scorer() {
+        let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new());
+
+        let result = scorer.score("one", " on/e two").unwrap();
+        assert_eq!(
+            result.positions,
+            [1, 2, 4].iter().copied().collect::<BTreeSet<_>>()
+        );
+        assert!((result.score - 2.665).abs() < 0.001);
+
+        assert!(scorer.score("one", "two").is_none());
+    }
+}
