@@ -10,14 +10,20 @@ use std::{
 use surf_n_term::{
     render::{TerminalWritable, TerminalWriter},
     widgets::{Input, List, ListItems, Theme},
-    DecMode, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Surface, SurfaceMut,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
+    DecMode, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
+    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
 };
+
+type Error = Box<dyn std::error::Error>;
 
 fn main() -> Result<(), Error> {
     let theme = Theme::from_palette("#3c3836".parse()?, "#fbf1c7".parse()?, "#8f3f71".parse()?);
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
-    let height = 11;
+    let args = Args::new()?;
+
+    // size
+    let height_u = args.height;
+    let height = args.height as i32;
 
     // initialize terminal
     let mut term = SystemTerminal::new()?;
@@ -26,6 +32,7 @@ fn main() -> Result<(), Error> {
         enable: false,
         mode: DecMode::VisibleCursor,
     })?;
+
     // find current row offset
     let mut row_offset = 0;
     term.execute(TerminalCommand::CursorGet)?;
@@ -35,11 +42,20 @@ fn main() -> Result<(), Error> {
         }
         _ => (),
     }
+    let term_size = term.size()?;
+    if height_u > term_size.height {
+        row_offset = 0;
+    } else if row_offset + height_u > term_size.height {
+        let scroll = row_offset + height_u - term_size.height;
+        row_offset = term_size.height - height_u;
+        term.execute(TerminalCommand::Scroll(scroll as i32))?;
+    }
 
     // initialize ranker
     let waker = term.waker();
     let ranker = Ranker::new(move || waker.wake().is_ok());
-    ranker.haystack_extend(Candidate::load("/Users/aslpavel/collins.txt")?);
+    Candidate::load_stdin(ranker.clone());
+    // ranker.haystack_extend(Candidate::load("/Users/aslpavel/collins.txt")?);
     // ranker.haystack_extend(Candidate::load("/Users/aslpavel/Downloads/home_files.txt")?);
 
     // initialize widgets
@@ -51,9 +67,7 @@ fn main() -> Result<(), Error> {
 
     // render loop
     let mut result = None;
-    term.run_render(|_term, event, view| -> Result<_, Error> {
-        let mut view = view.view_owned((row_offset as i32).., 1..-1);
-
+    term.run_render(|term, event, view| -> Result<_, Error> {
         // handle events
         if let Some(event) = &event {
             match *event {
@@ -67,14 +81,20 @@ fn main() -> Result<(), Error> {
                         }
                     }
                 }
-                TerminalEvent::CursorPosition { row, .. } => {
-                    row_offset = row;
+                TerminalEvent::Resize(term_size) => {
+                    if height_u > term_size.height {
+                        row_offset = 0;
+                    } else if row_offset + height_u > term_size.height {
+                        row_offset = term_size.height - height_u;
+                    }
                 }
                 _ => (),
             }
             input.handle(event);
             list.handle(event);
         }
+        // restrict view
+        let mut view = view.view_owned((row_offset as i32).., 1..-1);
 
         // update niddle
         ranker.niddle_set(input.get().collect());
@@ -84,7 +104,7 @@ fn main() -> Result<(), Error> {
         let mut label_view = view.view_mut(0, ..);
         let label_face = Face::new(Some(theme.bg), Some(theme.accent), FaceAttrs::BOLD);
         let mut label = label_view.writer().face(label_face);
-        write!(&mut label, " INPUT ")?;
+        write!(&mut label, " {} ", args.prompt)?;
         let mut label = label.face(label_face.invert());
         write!(&mut label, " ")?;
         let input_start = label.position().1 as i32;
@@ -114,13 +134,14 @@ fn main() -> Result<(), Error> {
         list.render(&theme, view.view_mut(1..height, ..))?;
 
         // debug
-        let mut debug = view.view_mut((height + 2)..14, ..);
+        let mut debug = view.view_mut((height + 1)..(height + 3), ..);
         debug.erase(debug_face.bg);
         write!(
             &mut debug.writer().face(debug_face),
-            "row:{} event:{:?}",
+            "row:{} event:{:?} term:{:?}",
             row_offset,
             event,
+            term.stats(),
         )?;
 
         Ok(TerminalAction::Wait)
@@ -141,17 +162,81 @@ fn main() -> Result<(), Error> {
 
     Ok(())
 }
+
+#[derive(Debug)]
+pub struct Args {
+    pub height: usize,
+    pub prompt: String,
+}
+
+impl Args {
+    pub fn new() -> Result<Self, Error> {
+        use clap::Arg;
+
+        let matches = clap::App::new("sweep")
+            .version(env!("CARGO_PKG_VERSION"))
+            .about("Sweep is a command line fuzzy finder")
+            .author("Pavel Aslanov")
+            .arg(
+                Arg::with_name("prompt")
+                    .short("p")
+                    .long("prompt")
+                    .takes_value(true)
+                    .help("Prompt string"),
+            )
+            .arg(
+                Arg::with_name("height")
+                    .long("height")
+                    .takes_value(true)
+                    .help("Height occupied by the sweep list"),
+            )
+            .get_matches();
+
+        let prompt = match matches.value_of("prompt") {
+            Some(prompt) => prompt.to_string(),
+            None => "INPUT".to_string(),
+        };
+
+        let height = matches
+            .value_of("height")
+            .map(|h| h.parse::<usize>())
+            .transpose()?
+            .unwrap_or(11);
+
+        Ok(Self { prompt, height })
+    }
+}
+
 #[derive(Clone, Debug)]
-struct Candidate(Arc<String>);
+pub struct Candidate(Arc<String>);
 
 impl Candidate {
     fn new(string: String) -> Self {
         Self(Arc::new(string))
     }
 
-    fn load<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Self>> {
+    pub fn load_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Self>> {
         let file = BufReader::new(File::open(path)?);
         file.lines().map(|l| Ok(Candidate::new(l?))).collect()
+    }
+
+    fn load_stdin(ranker: Ranker<Candidate>) {
+        let mut buf_size = 10;
+        std::thread::spawn(move || {
+            let stdin = std::io::stdin();
+            let handle = stdin.lock();
+            let mut lines = handle.lines();
+            let mut buf = Vec::with_capacity(buf_size);
+            while let Some(Ok(line)) = lines.next() {
+                buf.push(Candidate::new(line));
+                if buf.len() >= buf_size {
+                    buf_size *= 2;
+                    ranker
+                        .haystack_extend(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));
+                }
+            }
+            ranker.haystack_extend(buf);
+        });
     }
 }
 
