@@ -17,9 +17,9 @@ use surf_n_term::{
 type Error = Box<dyn std::error::Error>;
 
 fn main() -> Result<(), Error> {
-    let theme = Theme::from_palette("#3c3836".parse()?, "#fbf1c7".parse()?, "#8f3f71".parse()?);
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
     let args = Args::new()?;
+    let theme = args.theme.clone();
 
     // size
     let height_u = args.height;
@@ -167,6 +167,7 @@ fn main() -> Result<(), Error> {
 pub struct Args {
     pub height: usize,
     pub prompt: String,
+    pub theme: Theme,
 }
 
 impl Args {
@@ -182,13 +183,19 @@ impl Args {
                     .short("p")
                     .long("prompt")
                     .takes_value(true)
-                    .help("Prompt string"),
+                    .help("prompt string"),
             )
             .arg(
                 Arg::with_name("height")
                     .long("height")
                     .takes_value(true)
-                    .help("Height occupied by the sweep list"),
+                    .help("height occupied by the sweep list"),
+            )
+            .arg(
+                Arg::with_name("theme")
+                    .long("theme")
+                    .takes_value(true)
+                    .help("specify theme as a list of comma sperated attributes"),
             )
             .get_matches();
 
@@ -203,7 +210,16 @@ impl Args {
             .transpose()?
             .unwrap_or(11);
 
-        Ok(Self { prompt, height })
+        let theme = match matches.value_of("theme") {
+            Some(theme) => theme.parse()?,
+            None => Theme::light(),
+        };
+
+        Ok(Self {
+            prompt,
+            height,
+            theme,
+        })
     }
 }
 
