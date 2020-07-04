@@ -1,9 +1,11 @@
+use anyhow::Error;
 use rayon::prelude::*;
 use std::{
     collections::BTreeSet,
     fs::File,
     io::{BufRead, BufReader, Write},
     path::Path,
+    str::FromStr,
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -13,8 +15,6 @@ use surf_n_term::{
     DecMode, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
     Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
 };
-
-type Error = Box<dyn std::error::Error>;
 
 fn main() -> Result<(), Error> {
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
@@ -168,6 +168,7 @@ pub struct Args {
     pub height: usize,
     pub prompt: String,
     pub theme: Theme,
+    pub field_selector: Option<FieldSelector>,
 }
 
 impl Args {
@@ -197,6 +198,12 @@ impl Args {
                     .takes_value(true)
                     .help("specify theme as a list of comma sperated attributes"),
             )
+            .arg(
+                Arg::with_name("field_selector")
+                    .long("nth")
+                    .takes_value(true)
+                    .help("comma-separated list of fields for limiting search scope"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -215,10 +222,16 @@ impl Args {
             None => Theme::light(),
         };
 
+        let field_selector = matches
+            .value_of("filed_selector")
+            .map(|h| h.parse())
+            .transpose()?;
+
         Ok(Self {
             prompt,
             height,
             theme,
+            field_selector,
         })
     }
 }
@@ -259,6 +272,110 @@ impl Candidate {
 impl AsRef<str> for Candidate {
     fn as_ref(&self) -> &str {
         self.0.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FieldSelect {
+    All,
+    Single(i32),
+    RangeFrom(i32),
+    RangeTo(i32),
+    Range(i32, i32),
+}
+
+impl FieldSelect {
+    fn matches(&self, index: usize, size: usize) -> bool {
+        let index = index as i32;
+        let size = size as i32;
+        let resolve = |value: i32| -> i32 {
+            if value < 0 {
+                size + value
+            } else {
+                value
+            }
+        };
+        use FieldSelect::*;
+        match *self {
+            All => return true,
+            Single(single) => {
+                if resolve(single) == index {
+                    return true;
+                }
+            }
+            RangeFrom(start) => {
+                if resolve(start) <= index {
+                    return true;
+                }
+            }
+            RangeTo(end) => {
+                println!("{} {}", end, resolve(end));
+                if resolve(end) > index {
+                    return true;
+                }
+            }
+            Range(start, end) => {
+                if resolve(start) <= index && resolve(end) > index {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+impl FromStr for FieldSelect {
+    type Err = Error;
+
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        if let Ok(single) = string.parse::<i32>() {
+            return Ok(FieldSelect::Single(single));
+        }
+        let mut iter = string.splitn(2, "..");
+        let mut value_next = || {
+            iter.next()
+                .and_then(|value| {
+                    let value = value.trim();
+                    if value.is_empty() {
+                        None
+                    } else {
+                        Some(value.parse::<i32>())
+                    }
+                })
+                .transpose()
+        };
+        match (value_next()?, value_next()?) {
+            (Some(start), Some(end)) => Ok(FieldSelect::Range(start, end)),
+            (Some(start), None) => Ok(FieldSelect::RangeFrom(start)),
+            (None, Some(end)) => Ok(FieldSelect::RangeTo(end)),
+            (None, None) => Ok(FieldSelect::All),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldSelector(Vec<FieldSelect>);
+
+impl FieldSelector {
+    pub fn matches(&self, index: usize, size: usize) -> bool {
+        for select in self.0.iter() {
+            if select.matches(index, size) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl FromStr for FieldSelector {
+    type Err = Error;
+
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        let mut selector = Vec::new();
+        for select in string.split(',') {
+            selector.push(select.trim().parse()?);
+        }
+        Ok(FieldSelector(selector))
     }
 }
 
@@ -722,5 +839,36 @@ mod tests {
         assert!((result.score - 2.665).abs() < 0.001);
 
         assert!(scorer.score("one", "two").is_none());
+    }
+
+    #[test]
+    fn test_select() -> Result<(), Error> {
+        let select = FieldSelect::from_str("..-1")?;
+        assert!(!select.matches(3, 3));
+        assert!(!select.matches(2, 3));
+        assert!(select.matches(1, 3));
+        assert!(select.matches(0, 3));
+
+        let select = FieldSelect::from_str("-2..")?;
+        assert!(select.matches(2, 3));
+        assert!(select.matches(1, 3));
+        assert!(!select.matches(0, 3));
+
+        let select = FieldSelect::from_str("-2..-1")?;
+        assert!(!select.matches(2, 3));
+        assert!(select.matches(1, 3));
+        assert!(!select.matches(0, 3));
+
+        let select = FieldSelect::from_str("..")?;
+        assert!(select.matches(2, 3));
+        assert!(select.matches(1, 3));
+        assert!(select.matches(0, 3));
+
+        let selector = FieldSelector::from_str("..1,-1")?;
+        assert!(selector.matches(2, 3));
+        assert!(!selector.matches(1, 3));
+        assert!(selector.matches(0, 3));
+
+        Ok(())
     }
 }
