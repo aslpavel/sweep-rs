@@ -27,7 +27,7 @@ fn main() -> Result<(), Error> {
 
     // initialize terminal
     let mut term = SystemTerminal::new()?;
-    term.duplicate_output("/tmp/sweep.log")?;
+    // term.duplicate_output("/tmp/sweep.log")?;
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
         mode: DecMode::VisibleCursor,
@@ -53,10 +53,8 @@ fn main() -> Result<(), Error> {
 
     // initialize ranker
     let waker = term.waker();
-    let ranker = Ranker::new(move || waker.wake().is_ok());
+    let ranker = Ranker::new(args.keep_order, move || waker.wake().is_ok());
     Candidate::load_stdin(ranker.clone());
-    // ranker.haystack_extend(Candidate::load("/Users/aslpavel/collins.txt")?);
-    // ranker.haystack_extend(Candidate::load("/Users/aslpavel/Downloads/home_files.txt")?);
 
     // initialize widgets
     let mut input = Input::new();
@@ -169,6 +167,7 @@ pub struct Args {
     pub prompt: String,
     pub theme: Theme,
     pub field_selector: Option<FieldSelector>,
+    pub keep_order: bool,
 }
 
 impl Args {
@@ -204,6 +203,11 @@ impl Args {
                     .takes_value(true)
                     .help("comma-separated list of fields for limiting search scope"),
             )
+            .arg(
+                Arg::with_name("keep_order")
+                    .long("keep-order")
+                    .help("keep order (don't use ranking score)"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -227,11 +231,14 @@ impl Args {
             .map(|h| h.parse())
             .transpose()?;
 
+        let keep_order = matches.is_present("keep_order");
+
         Ok(Self {
             prompt,
             height,
             theme,
             field_selector,
+            keep_order,
         })
     }
 }
@@ -427,7 +434,13 @@ impl<H: Clone + AsRef<str>> ListItems for RankerResultThemed<H> {
     }
 }
 
-pub fn rank<S, H, F, FR>(scorer: S, niddle: &str, haystack: &[H], focus: F) -> Vec<ScoreResult<FR>>
+pub fn rank<S, H, F, FR>(
+    scorer: S,
+    keep_order: bool,
+    niddle: &str,
+    haystack: &[H],
+    focus: F,
+) -> Vec<ScoreResult<FR>>
 where
     S: Scorer + Sync + Send,
     H: Sync,
@@ -438,7 +451,11 @@ where
         .into_par_iter()
         .filter_map(move |haystack| scorer.score(niddle, focus(haystack)))
         .collect();
-    result.par_sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).expect("Nan score").reverse());
+    if !keep_order {
+        result.par_sort_unstable_by(|a, b| {
+            a.score.partial_cmp(&b.score).expect("Nan score").reverse()
+        });
+    }
     result
 }
 
@@ -475,7 +492,7 @@ impl<H> Ranker<H>
 where
     H: Clone + Send + Sync + 'static + AsRef<str>,
 {
-    pub fn new<N>(mut notify: N) -> Self
+    pub fn new<N>(keep_order: bool, mut notify: N) -> Self
     where
         N: FnMut() -> bool + Send + 'static,
     {
@@ -520,17 +537,28 @@ where
                         if niddle_prefix && haystack_new.is_empty() {
                             // incremental ranking
                             let result_old = result.with(|result| Arc::clone(result));
-                            rank(&scorer, niddle.as_ref(), result_old.result.as_ref(), |r| {
-                                r.haystack.clone()
-                            })
+                            rank(
+                                &scorer,
+                                keep_order,
+                                niddle.as_ref(),
+                                result_old.result.as_ref(),
+                                |r| r.haystack.clone(),
+                            )
                         } else {
                             // re-rank all data
-                            rank(&scorer, niddle.as_ref(), haystack.as_ref(), Clone::clone)
+                            rank(
+                                &scorer,
+                                keep_order,
+                                niddle.as_ref(),
+                                haystack.as_ref(),
+                                Clone::clone,
+                            )
                         }
                     } else {
                         // rank only new data
                         let result_add = rank(
                             &scorer,
+                            keep_order,
                             niddle.as_ref(),
                             haystack_new.as_ref(),
                             Clone::clone,
@@ -540,9 +568,11 @@ where
                             Vec::with_capacity(result_old.result.len() + result_add.len());
                         result_new.extend(result_old.result.iter().cloned());
                         result_new.extend(result_add);
-                        result_new.par_sort_by(|a, b| {
-                            a.score.partial_cmp(&b.score).expect("Nan score").reverse()
-                        });
+                        if !keep_order {
+                            result_new.par_sort_by(|a, b| {
+                                a.score.partial_cmp(&b.score).expect("Nan score").reverse()
+                            });
+                        }
                         result_new
                     };
                     let duration = Instant::now() - start;
