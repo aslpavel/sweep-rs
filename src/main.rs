@@ -53,8 +53,10 @@ fn main() -> Result<(), Error> {
 
     // initialize ranker
     let waker = term.waker();
-    let ranker = Ranker::new(args.keep_order, move || waker.wake().is_ok());
-    Candidate::load_stdin(ranker.clone(), args.field_selector.clone());
+    let ranker = Ranker::new(args.scorer.clone(), args.keep_order, move || {
+        waker.wake().is_ok()
+    });
+    Candidate::load_stdin(ranker.clone(), args.delimiter, args.field_selector.clone());
 
     // initialize widgets
     let mut input = Input::new();
@@ -72,7 +74,7 @@ fn main() -> Result<(), Error> {
                 TerminalEvent::Key(Key { name, mode }) if mode == KeyMod::CTRL => {
                     if name == KeyName::Char('c') {
                         return Ok(TerminalAction::Quit);
-                    } else if name == KeyName::Char('m') {
+                    } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
                         if let Some(candidate) = list.current() {
                             result.replace(candidate.result.haystack);
                             return Ok(TerminalAction::Quit);
@@ -131,16 +133,17 @@ fn main() -> Result<(), Error> {
         }
         list.render(&theme, view.view_mut(1..height, ..))?;
 
-        // debug
-        let mut debug = view.view_mut((height + 1)..(height + 3), ..);
-        debug.erase(debug_face.bg);
-        write!(
-            &mut debug.writer().face(debug_face),
-            "row:{} event:{:?} term:{:?}",
-            row_offset,
-            event,
-            term.stats(),
-        )?;
+        if args.debug {
+            let mut debug = view.view_mut((height + 1)..(height + 3), ..);
+            debug.erase(debug_face.bg);
+            write!(
+                &mut debug.writer().face(debug_face),
+                "row:{} event:{:?} term:{:?}",
+                row_offset,
+                event,
+                term.stats(),
+            )?;
+        }
 
         Ok(TerminalAction::Wait)
     })?;
@@ -161,13 +164,16 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
-#[derive(Debug)]
 pub struct Args {
     pub height: usize,
     pub prompt: String,
     pub theme: Theme,
     pub field_selector: Option<FieldSelector>,
     pub keep_order: bool,
+    pub reversed: bool,
+    pub scorer: Arc<dyn Scorer>,
+    pub debug: bool,
+    pub delimiter: char,
 }
 
 impl Args {
@@ -208,6 +214,31 @@ impl Args {
                     .long("keep-order")
                     .help("keep order (don't use ranking score)"),
             )
+            .arg(
+                Arg::with_name("reversed")
+                    .short("r")
+                    .long("reversed")
+                    .help("reverse initial order of elements"),
+            )
+            .arg(
+                Arg::with_name("scorer")
+                    .long("scorer")
+                    .takes_value(true)
+                    .possible_values(&["fuzzy", "substr"])
+                    .help("default scorer to rank candidates"),
+            )
+            .arg(
+                Arg::with_name("debug")
+                    .long("debug")
+                    .help("enabled debugging output"),
+            )
+            .arg(
+                Arg::with_name("delimiter")
+                    .long("delimiter")
+                    .short("d")
+                    .takes_value(true)
+                    .help("field delimiter"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -233,12 +264,33 @@ impl Args {
 
         let keep_order = matches.is_present("keep_order");
 
+        let reversed = matches.is_present("reversed");
+
+        let scorer = match matches.value_of("scorer") {
+            None => Arc::new(FuzzyScorer::new()),
+            Some(_) => {
+                // TODO: acutually chose socrer
+                Arc::new(FuzzyScorer::new())
+            }
+        };
+
+        let debug = matches.is_present("debug");
+
+        let delimiter = match matches.value_of("delimiter") {
+            None => ' ',
+            Some(delimiter) => delimiter.parse()?,
+        };
+
         Ok(Self {
             prompt,
             height,
             theme,
             field_selector,
             keep_order,
+            scorer,
+            reversed,
+            debug,
+            delimiter,
         })
     }
 }
@@ -249,13 +301,12 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    fn new(string: String, field_selector: &Option<FieldSelector>) -> Self {
+    fn new(string: String, delimiter: char, field_selector: &Option<FieldSelector>) -> Self {
         let fields = match field_selector {
             None => vec![Ok(string)],
             Some(field_selector) => {
-                let fields_count = string.split(' ').count();
-                string
-                    .split(' ')
+                let fields_count = split_inclusive(delimiter, string.as_ref()).count();
+                split_inclusive(delimiter, string.as_ref())
                     .enumerate()
                     .map(|(index, field)| {
                         let field = field.to_owned();
@@ -275,15 +326,20 @@ impl Candidate {
 
     pub fn load_file<P: AsRef<Path>>(
         path: P,
+        delimiter: char,
         field_selector: &Option<FieldSelector>,
     ) -> std::io::Result<Vec<Self>> {
         let file = BufReader::new(File::open(path)?);
         file.lines()
-            .map(|l| Ok(Candidate::new(l?, &field_selector)))
+            .map(|l| Ok(Candidate::new(l?, delimiter, &field_selector)))
             .collect()
     }
 
-    fn load_stdin(ranker: Ranker<Candidate>, field_selector: Option<FieldSelector>) {
+    fn load_stdin(
+        ranker: Ranker<Candidate>,
+        delimiter: char,
+        field_selector: Option<FieldSelector>,
+    ) {
         let mut buf_size = 10;
         std::thread::spawn(move || {
             let stdin = std::io::stdin();
@@ -291,7 +347,7 @@ impl Candidate {
             let mut lines = handle.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {
-                buf.push(Candidate::new(line, &field_selector));
+                buf.push(Candidate::new(line, delimiter, &field_selector));
                 if buf.len() >= buf_size {
                     buf_size *= 2;
                     ranker
@@ -314,6 +370,53 @@ impl Candidate {
             }
         }
         result
+    }
+}
+
+pub fn split_inclusive<'a>(sep: char, string: &'a str) -> impl Iterator<Item = &'a str> {
+    SplitInclusive {
+        indices: string.char_indices(),
+        string,
+        prev: sep,
+        sep,
+        start: 0,
+    }
+}
+
+struct SplitInclusive<'a> {
+    indices: std::str::CharIndices<'a>,
+    string: &'a str,
+    sep: char,
+    prev: char,
+    start: usize,
+}
+
+impl<'a> Iterator for SplitInclusive<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (index, ch) = match self.indices.next() {
+                Some(index_char) => index_char,
+                None => {
+                    let string_len = self.string.len();
+                    if self.start != string_len {
+                        let chunk = &self.string[self.start..];
+                        self.start = string_len;
+                        return Some(chunk);
+                    } else {
+                        return None;
+                    }
+                }
+            };
+            let should_split = ch == self.sep && self.prev != self.sep;
+            self.prev = ch;
+            if should_split {
+                let chunk = &self.string[self.start..index];
+                self.start = index;
+                return Some(chunk);
+            }
+        }
     }
 }
 
@@ -478,10 +581,7 @@ struct ScoreResultThemed<H> {
 impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
     fn fmt(&self, writer: &mut TerminalWriter<'_>) -> std::io::Result<()> {
         let mut index = 0;
-        for (field_index, field) in self.result.haystack.fields().enumerate() {
-            if field_index != 0 {
-                writer.put_char(' ', self.face_default);
-            }
+        for field in self.result.haystack.fields() {
             match field {
                 Err(field) => {
                     writer.face_set(self.face_inactive);
@@ -597,7 +697,7 @@ impl<H> Ranker<H>
 where
     H: Clone + Send + Sync + 'static + Haystack,
 {
-    pub fn new<N>(keep_order: bool, mut notify: N) -> Self
+    pub fn new<N>(scorer: Arc<dyn Scorer>, keep_order: bool, mut notify: N) -> Self
     where
         N: FnMut() -> bool + Send + 'static,
     {
@@ -605,7 +705,6 @@ where
         let mut niddle = String::new();
         let mut haystack = Vec::new();
         let mut generation = 0usize;
-        let scorer = FuzzyScorer::new();
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn({
             let result = result.clone();
@@ -765,14 +864,14 @@ impl<'a> ScoreMatrix<'a> {
     }
 }
 
-pub trait Scorer {
-    fn score_str(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)>;
+pub trait Scorer: Send + Sync {
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)>;
     fn score<H>(&self, niddle: &str, haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
         Self: Sized,
     {
-        let (score, positions) = self.score_str(niddle, &haystack)?;
+        let (score, positions) = self.score_ref(niddle, &haystack)?;
         Some(ScoreResult {
             haystack,
             score,
@@ -782,20 +881,34 @@ pub trait Scorer {
 }
 
 impl Scorer for Box<dyn Scorer> {
-    fn score_str(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
-        (**self).score_str(niddle, haystack)
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+        (**self).score_ref(niddle, haystack)
     }
 }
 
 impl Scorer for Arc<dyn Scorer> {
-    fn score_str(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
-        (**self).score_str(niddle, haystack)
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+        (**self).score_ref(niddle, haystack)
     }
 }
 
 impl<'a, S: Scorer> Scorer for &'a S {
-    fn score_str(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
-        (*self).score_str(niddle, haystack)
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+        (*self).score_ref(niddle, haystack)
+    }
+}
+
+pub struct SubstrScorer;
+
+impl SubstrScorer {
+    pub fn new() -> Self {
+        SubstrScorer
+    }
+}
+
+impl Scorer for SubstrScorer {
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+        todo!()
     }
 }
 
@@ -920,7 +1033,7 @@ impl FuzzyScorer {
 }
 
 impl Scorer for FuzzyScorer {
-    fn score_str(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         if Self::subseq(niddle, haystack) {
             Some(Self::score_impl(niddle, haystack))
         } else {
