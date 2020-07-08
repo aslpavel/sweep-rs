@@ -68,6 +68,8 @@ fn main() -> Result<(), Error> {
     // render loop
     let mut result = None;
     term.run_render(|term, event, view| -> Result<_, Error> {
+        let frame_start = Instant::now();
+
         // handle events
         if let Some(event) = &event {
             match *event {
@@ -134,12 +136,14 @@ fn main() -> Result<(), Error> {
         list.render(&theme, view.view_mut(1..height, ..))?;
 
         if args.debug {
+            let frame_duration = Instant::now() - frame_start;
             let mut debug = view.view_mut((height + 1)..(height + 3), ..);
             debug.erase(debug_face.bg);
             write!(
                 &mut debug.writer().face(debug_face),
-                "row:{} event:{:?} term:{:?}",
+                "row:{} frame_time:{:.2?} event:{:?} term:{:?}",
                 row_offset,
+                frame_duration,
                 event,
                 term.stats(),
             )?;
@@ -266,12 +270,13 @@ impl Args {
 
         let reversed = matches.is_present("reversed");
 
-        let scorer = match matches.value_of("scorer") {
+        let scorer: Arc<dyn Scorer> = match matches.value_of("scorer") {
             None => Arc::new(FuzzyScorer::new()),
-            Some(_) => {
-                // TODO: acutually chose socrer
-                Arc::new(FuzzyScorer::new())
-            }
+            Some(name) => match name {
+                "fuzzy" => Arc::new(FuzzyScorer::new()),
+                "substr" => Arc::new(SubstrScorer::new()),
+                _ => unreachable!(),
+            },
         };
 
         let debug = matches.is_present("debug");
@@ -908,7 +913,78 @@ impl SubstrScorer {
 
 impl Scorer for SubstrScorer {
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
-        todo!()
+        if niddle.is_empty() {
+            return Some((SCORE_MAX, Positions::new()));
+        }
+
+        let haystack: Vec<char> = haystack.chars().collect();
+        let words: Vec<Vec<char>> = niddle
+            .split(' ')
+            .filter_map(|word| {
+                if word.is_empty() {
+                    None
+                } else {
+                    Some(word.chars().collect())
+                }
+            })
+            .collect();
+
+        let mut offset = 0;
+        let mut positions = Positions::new();
+        for word in words {
+            offset += KMPPattern::new(word.as_ref()).search(&haystack[offset..])?;
+            let start = offset;
+            offset += word.len();
+            let end = offset;
+            positions.extend(start..end);
+        }
+
+        Some((SCORE_MAX, positions))
+    }
+}
+
+/// Knuth-Morris-Pratt pattern
+pub struct KMPPattern<'a, T> {
+    niddle: &'a [T],
+    table: Vec<usize>,
+}
+
+impl<'a, T: PartialEq> KMPPattern<'a, T> {
+    pub fn new(niddle: &'a [T]) -> Self {
+        if niddle.is_empty() {
+            return Self {
+                niddle,
+                table: Vec::new(),
+            };
+        }
+        let mut table = vec![0; niddle.len()];
+        let mut i = 0;
+        for j in 1..niddle.len() {
+            while i > 0 && niddle[i] != niddle[j] {
+                i = table[i - 1];
+            }
+            if niddle[i] == niddle[j] {
+                i += 1;
+            }
+            table[j] = i;
+        }
+        Self { niddle, table }
+    }
+
+    pub fn search(&self, haystack: &[T]) -> Option<usize> {
+        let mut n_index = 0;
+        for h_index in 0..haystack.len() {
+            while n_index > 0 && self.niddle[n_index] != haystack[h_index] {
+                n_index = self.table[n_index - 1];
+            }
+            if self.niddle[n_index] == haystack[h_index] {
+                n_index += 1;
+            }
+            if n_index == self.niddle.len() {
+                return Some(h_index - n_index + 1);
+            }
+        }
+        None
     }
 }
 
@@ -1090,6 +1166,20 @@ mod tests {
     }
 
     #[test]
+    fn test_substr_scorer() {
+        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new());
+
+        let score = scorer.score("one  ababc", " one babababcd ").unwrap();
+        assert_eq!(
+            score.positions,
+            [1, 2, 3, 8, 9, 10, 11, 12]
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
     fn test_select() -> Result<(), Error> {
         let select = FieldSelect::from_str("..-1")?;
         assert!(!select.matches(3, 3));
@@ -1118,5 +1208,26 @@ mod tests {
         assert!(selector.matches(0, 3));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_split_inclusive() {
+        let chunks: Vec<_> = split_inclusive(' ', "  one  павел two  ").collect();
+        assert_eq!(chunks, vec!["  one", "  павел", " two", "  ",]);
+    }
+
+    #[test]
+    fn test_knuth_morris_pratt() {
+        let pattern = KMPPattern::new("acat".as_bytes());
+        assert_eq!(pattern.table, vec![0, 0, 1, 0]);
+
+        let pattern = KMPPattern::new("acacagt".as_bytes());
+        assert_eq!(pattern.table, vec![0, 0, 1, 2, 3, 0, 0]);
+
+        let pattern = KMPPattern::new("abcdabd".as_bytes());
+        assert_eq!(Some(13), pattern.search("abcabcdababcdabcdabde".as_bytes()));
+
+        let pattern = KMPPattern::new("abcabcd".as_bytes());
+        assert_eq!(pattern.table, vec![0, 0, 0, 1, 2, 3, 0]);
     }
 }
