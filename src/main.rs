@@ -144,16 +144,17 @@ fn main() -> Result<(), Error> {
 
         if args.debug {
             let frame_duration = Instant::now() - frame_start;
-            let mut debug = view.view_mut((height + 1)..(height + 3), ..);
+            let mut debug = view.view_mut((height + 1)..(height + 7), ..);
             debug.erase(debug_face.bg);
-            write!(
-                &mut debug.writer().face(debug_face),
-                "row:{} frame_time:{:.2?} current:{:?} event:{:?} term:{:?}",
-                row_offset,
-                frame_duration,
-                list.current(),
-                event,
-                term.stats(),
+            let mut debug_writer = debug.writer().face(debug_face);
+            writeln!(&mut debug_writer, "row: {}", row_offset)?;
+            writeln!(&mut debug_writer, "frame_time: {:.2?}", frame_duration)?;
+            writeln!(&mut debug_writer, "event: {:?}", event)?;
+            writeln!(&mut debug_writer, "term: {:?}", term.stats())?;
+            writeln!(
+                &mut debug_writer,
+                " current: {:?}",
+                list.current().map(|r| r.result)
             )?;
         }
 
