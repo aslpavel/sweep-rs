@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{anyhow, Error};
 use rayon::prelude::*;
 use std::{
     collections::BTreeSet,
@@ -18,7 +18,7 @@ use surf_n_term::{
 
 fn main() -> Result<(), Error> {
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
-    let args = Args::new()?;
+    let mut args = Args::new()?;
     let theme = args.theme.clone();
 
     // size
@@ -53,7 +53,7 @@ fn main() -> Result<(), Error> {
 
     // initialize ranker
     let waker = term.waker();
-    let ranker = Ranker::new(args.scorer.clone(), args.keep_order, move || {
+    let ranker = Ranker::new(args.scorer.next(), args.keep_order, move || {
         waker.wake().is_ok()
     });
     Candidate::load_stdin(ranker.clone(), args.delimiter, args.field_selector.clone());
@@ -81,6 +81,8 @@ fn main() -> Result<(), Error> {
                             result.replace(candidate.result.haystack);
                             return Ok(TerminalAction::Quit);
                         }
+                    } else if name == KeyName::Char('s') {
+                        ranker.scorer_set(args.scorer.next());
                     }
                 }
                 TerminalEvent::Resize(term_size) => {
@@ -113,10 +115,11 @@ fn main() -> Result<(), Error> {
 
         // stats
         let stats_str = format!(
-            " {}/{} {:.2?} ",
+            " {}/{} {:.2?} [{}] ",
             result.result.len(),
             result.haystack_size,
             result.duration,
+            result.scorer.name(),
         );
         let input_stop = -(stats_str.chars().count() as i32 + 1);
         let mut stats_view = view.view_mut(0, input_stop..);
@@ -141,9 +144,10 @@ fn main() -> Result<(), Error> {
             debug.erase(debug_face.bg);
             write!(
                 &mut debug.writer().face(debug_face),
-                "row:{} frame_time:{:.2?} event:{:?} term:{:?}",
+                "row:{} frame_time:{:.2?} current:{:?} event:{:?} term:{:?}",
                 row_offset,
                 frame_duration,
+                list.current(),
                 event,
                 term.stats(),
             )?;
@@ -168,6 +172,30 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
+pub struct ScorerSelector {
+    scorers: Vec<Arc<dyn Scorer>>,
+    index: usize,
+}
+
+impl ScorerSelector {
+    pub fn new(name: &str) -> Result<Self, Error> {
+        let scorers: Vec<Arc<dyn Scorer>> =
+            vec![Arc::new(FuzzyScorer::new()), Arc::new(SubstrScorer::new())];
+        let index = scorers
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| if s.name() == name { Some(i) } else { None })
+            .ok_or_else(|| anyhow!("Unknown scorer: {}", name))?;
+        Ok(Self { scorers, index })
+    }
+
+    pub fn next(&mut self) -> Arc<dyn Scorer> {
+        let scorer = self.scorers[self.index].clone();
+        self.index = (self.index + 1) % self.scorers.len();
+        scorer
+    }
+}
+
 pub struct Args {
     pub height: usize,
     pub prompt: String,
@@ -175,7 +203,7 @@ pub struct Args {
     pub field_selector: Option<FieldSelector>,
     pub keep_order: bool,
     pub reversed: bool,
-    pub scorer: Arc<dyn Scorer>,
+    pub scorer: ScorerSelector,
     pub debug: bool,
     pub delimiter: char,
 }
@@ -270,14 +298,7 @@ impl Args {
 
         let reversed = matches.is_present("reversed");
 
-        let scorer: Arc<dyn Scorer> = match matches.value_of("scorer") {
-            None => Arc::new(FuzzyScorer::new()),
-            Some(name) => match name {
-                "fuzzy" => Arc::new(FuzzyScorer::new()),
-                "substr" => Arc::new(SubstrScorer::new()),
-                _ => unreachable!(),
-            },
-        };
+        let scorer = ScorerSelector::new(matches.value_of("scorer").unwrap_or("fuzzy"))?;
 
         let debug = matches.is_present("debug");
 
@@ -669,22 +690,25 @@ where
     result
 }
 
-enum RankCmd<H> {
+enum RankerCmd<H> {
     Haystack(Vec<H>),
     Niddle(String),
+    Scorer(Arc<dyn Scorer>),
 }
 
-struct RankerResult<H> {
-    result: Vec<ScoreResult<H>>,
-    duration: Duration,
-    haystack_size: usize,
-    generation: usize,
+pub struct RankerResult<H> {
+    pub result: Vec<ScoreResult<H>>,
+    pub scorer: Arc<dyn Scorer>,
+    pub duration: Duration,
+    pub haystack_size: usize,
+    pub generation: usize,
 }
 
 impl<H> Default for RankerResult<H> {
     fn default() -> Self {
         Self {
             result: Default::default(),
+            scorer: Arc::new(FuzzyScorer::new()),
             duration: Duration::new(0, 0),
             haystack_size: 0,
             generation: 0,
@@ -693,8 +717,8 @@ impl<H> Default for RankerResult<H> {
 }
 
 #[derive(Clone)]
-struct Ranker<H> {
-    sender: mpsc::Sender<RankCmd<H>>,
+pub struct Ranker<H> {
+    sender: mpsc::Sender<RankerCmd<H>>,
     result: Arc<Mutex<Arc<RankerResult<H>>>>,
 }
 
@@ -702,7 +726,7 @@ impl<H> Ranker<H>
 where
     H: Clone + Send + Sync + 'static + Haystack,
 {
-    pub fn new<N>(scorer: Arc<dyn Scorer>, keep_order: bool, mut notify: N) -> Self
+    pub fn new<N>(mut scorer: Arc<dyn Scorer>, keep_order: bool, mut notify: N) -> Self
     where
         N: FnMut() -> bool + Send + 'static,
     {
@@ -723,15 +747,20 @@ where
                     let mut haystack_new = Vec::new();
                     let mut niddle_updated = false; // niddle was updated
                     let mut niddle_prefix = true; // previous niddle is a prefix of the new one
+                    let mut scorer_updated = false;
                     for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                         match cmd {
-                            RankCmd::Haystack(haystack) => {
+                            RankerCmd::Haystack(haystack) => {
                                 haystack_new.extend(haystack);
                             }
-                            RankCmd::Niddle(niddle_new) if niddle_new != niddle => {
+                            RankerCmd::Niddle(niddle_new) if niddle_new != niddle => {
                                 niddle_updated = true;
                                 niddle_prefix = niddle_prefix && niddle_new.starts_with(&niddle);
                                 niddle = niddle_new;
+                            }
+                            RankerCmd::Scorer(scorer_new) => {
+                                scorer = scorer_new;
+                                scorer_updated = true;
                             }
                             _ => continue,
                         }
@@ -740,7 +769,16 @@ where
 
                     // rank haystack
                     let start = Instant::now();
-                    let result_new = if !niddle_updated && haystack_new.is_empty() {
+                    let result_new = if scorer_updated {
+                        // re-rank all data
+                        rank(
+                            &scorer,
+                            keep_order,
+                            niddle.as_ref(),
+                            haystack.as_ref(),
+                            Clone::clone,
+                        )
+                    } else if !niddle_updated && haystack_new.is_empty() {
                         continue;
                     } else if niddle_updated {
                         if niddle_prefix && haystack_new.is_empty() {
@@ -787,6 +825,7 @@ where
                     let duration = Instant::now() - start;
                     generation += 1;
                     let result_new = RankerResult {
+                        scorer: scorer.clone(),
                         result: result_new,
                         duration,
                         haystack_size: haystack.len(),
@@ -810,15 +849,21 @@ where
     /// Extend haystack with new entries
     pub fn haystack_extend(&self, haystack: Vec<H>) {
         self.sender
-            .send(RankCmd::Haystack(haystack))
+            .send(RankerCmd::Haystack(haystack))
             .expect("failed to send haystack");
     }
 
     /// Set new needle
     pub fn niddle_set(&self, niddle: String) {
         self.sender
-            .send(RankCmd::Niddle(niddle))
+            .send(RankerCmd::Niddle(niddle))
             .expect("failed to send niddle");
+    }
+
+    pub fn scorer_set(&self, scorer: Arc<dyn Scorer>) {
+        self.sender
+            .send(RankerCmd::Scorer(scorer))
+            .expect("failed to send scorer");
     }
 
     /// Get last result
@@ -870,6 +915,7 @@ impl<'a> ScoreMatrix<'a> {
 }
 
 pub trait Scorer: Send + Sync {
+    fn name(&self) -> &str;
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)>;
     fn score<H>(&self, niddle: &str, haystack: H) -> Option<ScoreResult<H>>
     where
@@ -886,18 +932,27 @@ pub trait Scorer: Send + Sync {
 }
 
 impl Scorer for Box<dyn Scorer> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         (**self).score_ref(niddle, haystack)
     }
 }
 
 impl Scorer for Arc<dyn Scorer> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         (**self).score_ref(niddle, haystack)
     }
 }
 
 impl<'a, S: Scorer> Scorer for &'a S {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         (*self).score_ref(niddle, haystack)
     }
@@ -912,6 +967,10 @@ impl SubstrScorer {
 }
 
 impl Scorer for SubstrScorer {
+    fn name(&self) -> &str {
+        &"substr"
+    }
+
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         if niddle.is_empty() {
             return Some((SCORE_MAX, Positions::new()));
@@ -929,17 +988,28 @@ impl Scorer for SubstrScorer {
             })
             .collect();
 
-        let mut offset = 0;
         let mut positions = Positions::new();
-        for word in words {
-            offset += KMPPattern::new(word.as_ref()).search(&haystack[offset..])?;
-            let start = offset;
-            offset += word.len();
-            let end = offset;
-            positions.extend(start..end);
+        let mut match_start = 0;
+        let mut match_end = 0;
+        for (i, word) in words.into_iter().enumerate() {
+            match_end += KMPPattern::new(word.as_ref()).search(&haystack[match_end..])?;
+            if i == 0 {
+                match_start = match_end;
+            }
+            let word_start = match_end;
+            match_end += word.len();
+            positions.extend(word_start..match_end);
         }
 
-        Some((SCORE_MAX, positions))
+        let match_start = match_start as Score;
+        let match_end = match_end as Score;
+        let heystack_len = haystack.len() as Score;
+        let score = (match_start - match_end)
+            + (match_end - match_start) / heystack_len
+            + (match_start + 1.0).recip()
+            + (heystack_len - match_end + 1.0).recip();
+
+        Some((score, positions))
     }
 }
 
@@ -1109,6 +1179,10 @@ impl FuzzyScorer {
 }
 
 impl Scorer for FuzzyScorer {
+    fn name(&self) -> &str {
+        &"fuzzy"
+    }
+
     fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
         if Self::subseq(niddle, haystack) {
             Some(Self::score_impl(niddle, haystack))
