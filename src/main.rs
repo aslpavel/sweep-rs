@@ -369,6 +369,18 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
         }
         Ok(())
     }
+
+    fn length_hint(&self) -> Option<usize> {
+        let mut length = 0;
+        for field in self.result.haystack.fields() {
+            let field = match field {
+                Ok(field) => field,
+                Err(field) => field,
+            };
+            length += field.chars().count()
+        }
+        Some(length)
+    }
 }
 
 struct RankerResultThemed<H> {
