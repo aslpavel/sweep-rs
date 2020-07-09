@@ -278,6 +278,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nix",
  "rayon",
  "surf_n_term",
 ]
