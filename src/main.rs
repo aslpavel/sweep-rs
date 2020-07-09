@@ -21,9 +21,17 @@ mod candidate;
 use candidate::{Candidate, FieldSelector};
 
 fn main() -> Result<(), Error> {
-    let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
     let mut args = Args::new()?;
     let theme = args.theme.clone();
+
+    let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
+    let stats_face = Face::new(
+        Some(theme.accent.best_contrast(theme.bg, theme.fg)),
+        Some(theme.accent),
+        FaceAttrs::EMPTY,
+    );
+    let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
+    let sep_face = Face::new(Some(theme.accent), theme.input.bg, FaceAttrs::EMPTY);
 
     // size
     let height_u = args.height;
@@ -110,10 +118,9 @@ fn main() -> Result<(), Error> {
 
         // label
         let mut label_view = view.view_mut(0, ..);
-        let label_face = Face::new(Some(theme.bg), Some(theme.accent), FaceAttrs::BOLD);
         let mut label = label_view.writer().face(label_face);
         write!(&mut label, " {} ", args.prompt)?;
-        let mut label = label.face(label_face.invert());
+        let mut label = label.face(sep_face);
         write!(&mut label, " ")?;
         let input_start = label.position().1 as i32;
 
@@ -127,8 +134,7 @@ fn main() -> Result<(), Error> {
         );
         let input_stop = -(stats_str.chars().count() as i32 + 1);
         let mut stats_view = view.view_mut(0, input_stop..);
-        let stats_face = Face::new(Some(theme.bg), Some(theme.accent), FaceAttrs::EMPTY);
-        let mut stats = stats_view.writer().face(stats_face.invert());
+        let mut stats = stats_view.writer().face(sep_face);
         write!(&mut stats, "")?;
         let mut stats = stats.face(stats_face);
         stats.write_all(stats_str.as_ref())?;
