@@ -164,7 +164,7 @@ fn main() -> Result<(), Error> {
             writeln!(&mut debug_writer, "term: {:?}", term.stats())?;
             writeln!(
                 &mut debug_writer,
-                " current: {:?}",
+                "current: {:?}",
                 list.current().map(|r| r.result)
             )?;
         }

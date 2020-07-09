@@ -131,14 +131,14 @@ impl Scorer for SubstrScorer {
             return Some((SCORE_MAX, Positions::new()));
         }
 
-        let haystack: Vec<char> = haystack.chars().collect();
+        let haystack: Vec<char> = haystack.chars().flat_map(char::to_lowercase).collect();
         let words: Vec<Vec<char>> = niddle
             .split(' ')
             .filter_map(|word| {
                 if word.is_empty() {
                     None
                 } else {
-                    Some(word.chars().collect())
+                    Some(word.chars().flat_map(char::to_lowercase).collect())
                 }
             })
             .collect();
