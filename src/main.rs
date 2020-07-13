@@ -22,12 +22,12 @@ mod candidate;
 use candidate::{Candidate, FieldSelector};
 
 fn main() -> Result<(), Error> {
+    let mut args = Args::new()?;
+    let theme = args.theme.clone();
+
     if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
         return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
     }
-
-    let mut args = Args::new()?;
-    let theme = args.theme.clone();
 
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
     let stats_face = Face::new(
