@@ -12,8 +12,9 @@ use std::{
 use surf_n_term::{
     render::{TerminalWritable, TerminalWriter},
     widgets::{Input, List, ListItems, Theme},
-    Blend, Color, DecMode, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Surface, SurfaceMut,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
+    Blend, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
+    SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
+    TerminalSurfaceExt,
 };
 
 mod score;
@@ -102,6 +103,10 @@ fn main() -> Result<(), Error> {
         Arc::new(RankerResult::<Candidate>::default()),
     ));
 
+    // rpc key bindings
+    let mut key_map = KeyMap::new();
+    let mut key_map_state = Vec::new();
+
     // render loop
     let result = term.run_render(|term, event, view| -> Result<_, Error> {
         let frame_start = Instant::now();
@@ -143,6 +148,9 @@ fn main() -> Result<(), Error> {
                                 }
                             };
                             match request {
+                                Ok(RPCRequest::KeyBinding { key, tag }) => {
+                                    key_map.register(key.as_ref(), tag)
+                                }
                                 Ok(RPCRequest::NiddleSet(niddle)) => {
                                     input.set(niddle.as_ref());
                                 }
@@ -164,6 +172,14 @@ fn main() -> Result<(), Error> {
                                 Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
                             }
                         }
+                    }
+                }
+                _ => (),
+            }
+            match *event {
+                TerminalEvent::Key(key) => {
+                    if let Some(tag) = key_map.lookup_state(&mut key_map_state, key) {
+                        rpc_encode(std::io::stdout(), json!({ "key_binding": tag.clone() }))?
                     }
                 }
                 _ => (),

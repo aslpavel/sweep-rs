@@ -1,10 +1,14 @@
 #! /usr/bin/env python3
 from subprocess import Popen, PIPE
-from typing import Optional, List
+from typing import Optional, List, Any
 import json
 import select
 
 __all__ = ("Sweep",)
+
+
+SWEEP_SELECTED = "selected"
+SWEEP_KEYBINDING = "key_binding"
 
 
 class Sweep:
@@ -35,8 +39,8 @@ class Sweep:
         if tty is not None:
             args.extend(["--tty", tty])
         self.proc = Popen(
-            # ["cargo", "run", "--", "--rpc", *args],
-            ["sweep", "--rpc", *args],
+            ["cargo", "run", "--", "--rpc", *args],
+            # ["sweep", "--rpc", *args],
             stdout=PIPE,
             stdin=PIPE,
             # this is usefull if you want to redirecte to different `--tty` for debugging
@@ -56,6 +60,10 @@ class Sweep:
         """Set new niddle"""
         rpc_encode(self.proc.stdin, "niddle_set", niddle=niddle)
 
+    def key_binding(self, key: str, tag: Any):
+        """Register new hotkey"""
+        rpc_encode(self.proc.stdin, "key_binding", key=key, tag=tag)
+
     def terminate(self):
         """Terminate underlying sweep process"""
         if self.proc.poll() is None:
@@ -70,9 +78,10 @@ class Sweep:
         error = message.get("error")
         if error is not None:
             raise RuntimeError("remote error: {}".format(error))
-        selected = message.get("selected")
-        if selected is not None:
-            return selected
+        for type in (SWEEP_SELECTED, SWEEP_KEYBINDING):
+            result = message.get(type)
+            if result is not None:
+                return type, result
         raise RuntimeError("unknonw message type: {}".format(message))
 
     def __enter__(self):
@@ -120,7 +129,9 @@ def main():
         path = pathlib.Path(sys.argv[1])
 
     with Sweep(prompt="WALK", nth="1..") as sweep:
+        sweep.key_binding("ctrl+b", 0)
         while path.is_dir():
+
             items = list(path.iterdir())
             if not items:
                 break
@@ -131,11 +142,19 @@ def main():
                 candidates.append("{} {}".format(file_type, item.name))
             sweep.candidates_extend(candidates)
             sweep.niddle_set("")
-            item = sweep.poll()
-            if item is None:
-                return
-            _, name = item.split(maxsplit=1)
-            path = path / name
+
+            result = sweep.poll()
+            if result is None:
+                break
+            type, value = result
+            if type == SWEEP_SELECTED:
+                if value is None:
+                    return
+                _, name = value.split(maxsplit=1)
+                path = path / name
+            elif type == SWEEP_KEYBINDING:
+                if value == 0:
+                    path = path.parent
 
     print(path)
 

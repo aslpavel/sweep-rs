@@ -4,13 +4,15 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     sync::mpsc::{channel, Receiver},
 };
+use surf_n_term::Key;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RPCRequest {
     CandidatesExtend { items: Vec<String> },
     CandidatesClear,
     NiddleSet(String),
     Terminate,
+    KeyBinding { key: Vec<Key>, tag: Value },
 }
 
 impl RPCRequest {
@@ -50,6 +52,20 @@ impl RPCRequest {
             }
             "candidates_clear" => Ok(RPCRequest::CandidatesClear),
             "terminate" => Ok(RPCRequest::Terminate),
+            "key_binding" => {
+                let key = match map.get_mut("key").map(|v| v.take()) {
+                    Some(Value::String(key)) => match Key::chord(key) {
+                        Err(_) => return Err(format!("key_binding faild to parse key")),
+                        Ok(key) => key,
+                    },
+                    _ => return Err(format!("key_binding requrest must include ")),
+                };
+                let tag = match map.get_mut("tag").map(|v| v.take()) {
+                    Some(tag) => tag,
+                    _ => return Err(format!("key_binding request must include tag field")),
+                };
+                Ok(RPCRequest::KeyBinding { key, tag })
+            }
             _ => Err(format!("unknown request method: {}", method)),
         }
     }
@@ -57,6 +73,8 @@ impl RPCRequest {
     #[cfg(test)]
     pub fn to_value(&self) -> Value {
         use serde_json::json;
+        use std::fmt::Write;
+
         match self {
             RPCRequest::CandidatesExtend { items } => json!({
                 "method": "candidates_extend",
@@ -65,6 +83,16 @@ impl RPCRequest {
             RPCRequest::CandidatesClear => json!({ "method": "candidates_clear" }),
             RPCRequest::Terminate => json!({ "method": "terminate" }),
             RPCRequest::NiddleSet(niddle) => json!({ "method": "niddle_set", "niddle": niddle}),
+            RPCRequest::KeyBinding { key, tag } => {
+                let mut chord = String::new();
+                for (index, key) in key.iter().enumerate() {
+                    if index != 0 {
+                        chord.push_str(" ");
+                    }
+                    write!(&mut chord, "{:?}", *key).unwrap();
+                }
+                json!({ "key": chord, "tag": tag })
+            }
         }
     }
 }
