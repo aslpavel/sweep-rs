@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 from subprocess import Popen, PIPE
+from typing import Optional, List
 import json
 import select
 
@@ -7,8 +8,32 @@ __all__ = ("Sweep",)
 
 
 class Sweep:
-    def __init__(self, args=None):
-        args = [] if args is None else args
+    """RPC wrapper around sweep process
+    """
+
+    def __init__(
+        self,
+        prompt="INPUT",
+        nth: Optional[str] = None,
+        height: int = 11,
+        delimiter: Optional[str] = None,
+        theme: Optional[str] = None,
+        scorer: Optional[str] = None,
+        tty: Optional[str] = None,
+    ):
+        args = []
+        args.extend(["--prompt", prompt])
+        args.extend(["--height", str(height)])
+        if isinstance(nth, str):
+            args.extend(["--nth", nth])
+        if delimiter is not None:
+            args.extend(["--delimiter", delimiter])
+        if theme is not None:
+            args.extend(["--theme", theme])
+        if scorer is not None:
+            args.extend(["--scorer", scorer])
+        if tty is not None:
+            args.extend(["--tty", tty])
         self.proc = Popen(
             # ["cargo", "run", "--", "--rpc", *args],
             ["sweep", "--rpc", *args],
@@ -19,21 +44,26 @@ class Sweep:
             # start_new_session=True,
         )
 
-    def candidates_extend(self, items):
+    def candidates_extend(self, items: List[str]):
+        """Extend candidates set"""
         rpc_encode(self.proc.stdin, "candidates_extend", items=items)
 
     def candidates_clear(self):
+        """Clear all candidates"""
         rpc_encode(self.proc.stdin, "candidates_clear")
 
-    def niddle_set(self, niddle):
+    def niddle_set(self, niddle: str):
+        """Set new niddle"""
         rpc_encode(self.proc.stdin, "niddle_set", niddle=niddle)
 
     def terminate(self):
+        """Terminate underlying sweep process"""
         if self.proc.poll() is None:
             rpc_encode(self.proc.stdin, "terminate")
         self.proc.wait()
 
-    def poll(self, timeout=None):
+    def poll(self, timeout: Optional[float] = None):
+        """Wait for events from the sweep process"""
         message = rpc_decode(self.proc.stdout, timeout)
         if message is None:
             return
@@ -57,6 +87,7 @@ class Sweep:
 
 
 def rpc_encode(output, method, **args):
+    """Encode RPC method"""
     message = {
         "method": method,
         **args,
@@ -68,6 +99,7 @@ def rpc_encode(output, method, **args):
 
 
 def rpc_decode(input, timeout=None):
+    """Decode RPC message"""
     rlist, _, _ = select.select([input], [], [], timeout)
     if rlist:
         size = input.readline().strip()
@@ -87,7 +119,7 @@ def main():
     else:
         path = pathlib.Path(sys.argv[1])
 
-    with Sweep(["--nth", "1.."]) as sweep:
+    with Sweep(prompt="WALK", nth="1..") as sweep:
         while path.is_dir():
             items = list(path.iterdir())
             if not items:
