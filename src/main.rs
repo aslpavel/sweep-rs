@@ -1,10 +1,12 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 
 use anyhow::{anyhow, Error};
+use serde_json::json;
 use std::{
+    fmt,
     io::Write,
     os::unix::io::AsRawFd,
-    sync::Arc,
+    sync::{mpsc::TryRecvError, Arc},
     time::{Duration, Instant},
 };
 use surf_n_term::{
@@ -20,6 +22,8 @@ mod rank;
 use rank::{Ranker, RankerResult};
 mod candidate;
 use candidate::{Candidate, FieldSelector};
+mod rpc;
+use rpc::{rpc_encode, rpc_requests, RPCRequest};
 
 fn main() -> Result<(), Error> {
     let mut args = Args::new()?;
@@ -27,6 +31,9 @@ fn main() -> Result<(), Error> {
 
     if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
         return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
+    }
+    if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
+        return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
     }
 
     let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
@@ -39,11 +46,10 @@ fn main() -> Result<(), Error> {
     let separator_face = Face::new(Some(theme.accent), theme.input.bg, FaceAttrs::EMPTY);
 
     // size
-    let height_u = args.height;
-    let height = args.height as i32;
+    let height = args.height;
 
     // initialize terminal
-    let mut term = SystemTerminal::new()?;
+    let mut term = SystemTerminal::open(&args.tty_path)?;
     // term.duplicate_output("/tmp/sweep.log")?;
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
@@ -60,11 +66,11 @@ fn main() -> Result<(), Error> {
         _ => (),
     }
     let term_size = term.size()?;
-    if height_u > term_size.height {
+    if height > term_size.height {
         row_offset = 0;
-    } else if row_offset + height_u > term_size.height {
-        let scroll = row_offset + height_u - term_size.height;
-        row_offset = term_size.height - height_u;
+    } else if row_offset + height > term_size.height {
+        let scroll = row_offset + height - term_size.height;
+        row_offset = term_size.height - height;
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
@@ -73,7 +79,17 @@ fn main() -> Result<(), Error> {
     let ranker = Ranker::new(args.scorer.next(), args.keep_order, move || {
         waker.wake().is_ok()
     });
-    Candidate::load_stdin(ranker.clone(), args.delimiter, args.field_selector.clone());
+    let requests = if !args.rpc {
+        Candidate::load_stdin(
+            ranker.clone(),
+            args.field_delimiter,
+            args.field_selector.clone(),
+        );
+        None
+    } else {
+        let waker = term.waker();
+        Some(rpc_requests(std::io::stdin(), move || waker.wake().is_ok()))
+    };
 
     // initialize widgets
     let mut input = Input::new();
@@ -83,8 +99,7 @@ fn main() -> Result<(), Error> {
     ));
 
     // render loop
-    let mut result = None;
-    term.run_render(|term, event, view| -> Result<_, Error> {
+    let result = term.run_render(|term, event, view| -> Result<_, Error> {
         let frame_start = Instant::now();
 
         // handle events
@@ -92,21 +107,59 @@ fn main() -> Result<(), Error> {
             match *event {
                 TerminalEvent::Key(Key { name, mode }) if mode == KeyMod::CTRL => {
                     if name == KeyName::Char('c') {
-                        return Ok(TerminalAction::Quit);
+                        return Ok(TerminalAction::Quit(None));
                     } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
                         if let Some(candidate) = list.current() {
-                            result.replace(candidate.result.haystack);
-                            return Ok(TerminalAction::Quit);
+                            if args.rpc {
+                                let result = candidate.result.haystack.to_string();
+                                rpc_encode(std::io::stdout(), json!({ "selected": result }))?;
+                            } else {
+                                return Ok(TerminalAction::Quit(Some(candidate.result.haystack)));
+                            }
                         }
                     } else if name == KeyName::Char('s') {
                         ranker.scorer_set(args.scorer.next());
                     }
                 }
                 TerminalEvent::Resize(term_size) => {
-                    if height_u > term_size.height {
+                    if height > term_size.height {
                         row_offset = 0;
-                    } else if row_offset + height_u > term_size.height {
-                        row_offset = term_size.height - height_u;
+                    } else if row_offset + height > term_size.height {
+                        row_offset = term_size.height - height;
+                    }
+                }
+                TerminalEvent::Wake => {
+                    if let Some(requests) = requests.as_ref() {
+                        loop {
+                            let request = match requests.try_recv() {
+                                Ok(request) => request,
+                                Err(TryRecvError::Empty) => break,
+                                Err(TryRecvError::Disconnected) => {
+                                    return Ok(TerminalAction::Quit(None))
+                                }
+                            };
+                            match request {
+                                Ok(RPCRequest::NiddleSet(niddle)) => {
+                                    input.set(niddle.as_ref());
+                                }
+                                Ok(RPCRequest::CandidatesExtend { items }) => {
+                                    let items = items
+                                        .into_iter()
+                                        .map(|c| {
+                                            Candidate::new(
+                                                c,
+                                                args.field_delimiter,
+                                                &args.field_selector,
+                                            )
+                                        })
+                                        .collect();
+                                    ranker.haystack_extend(items);
+                                }
+                                Ok(RPCRequest::CandidatesClear) => ranker.haystack_clear(),
+                                Ok(RPCRequest::Terminate) => return Ok(TerminalAction::Quit(None)),
+                                Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
+                            }
+                        }
                     }
                 }
                 _ => (),
@@ -151,11 +204,12 @@ fn main() -> Result<(), Error> {
         if list.items().result.generation != result.generation {
             list.items_set(RankerResultThemed::new(theme.clone(), result));
         }
-        list.render(&theme, view.view_mut(1..height, ..))?;
+        list.render(&theme, view.view_mut(1..height as i32, ..))?;
 
         if args.debug {
             let frame_duration = Instant::now() - frame_start;
-            let mut debug = view.view_mut((height + 1)..(height + 7), ..);
+            let debug_height = (height as i32 + 1)..(height as i32 + 7);
+            let mut debug = view.view_mut(debug_height, ..);
             debug.erase(debug_face.bg);
             let mut debug_writer = debug.writer().face(debug_face);
             writeln!(&mut debug_writer, "row: {}", row_offset)?;
@@ -170,7 +224,7 @@ fn main() -> Result<(), Error> {
         }
 
         Ok(TerminalAction::Wait)
-    })?;
+    });
 
     // restore terminal
     term.execute(TerminalCommand::CursorTo(Position {
@@ -181,28 +235,54 @@ fn main() -> Result<(), Error> {
     std::mem::drop(term);
 
     // print result
-    if let Some(result) = result {
-        println!("{}", result.to_string());
+    match result {
+        Ok(result) => {
+            if let Some(result) = result {
+                println!("{}", result.to_string());
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
-
-    Ok(())
 }
 
+#[derive(Clone)]
 pub struct ScorerSelector {
     scorers: Vec<Arc<dyn Scorer>>,
     index: usize,
 }
 
+impl Default for ScorerSelector {
+    fn default() -> Self {
+        Self::new(vec![
+            Arc::new(FuzzyScorer::new()),
+            Arc::new(SubstrScorer::new()),
+        ])
+    }
+}
+
 impl ScorerSelector {
-    pub fn new(name: &str) -> Result<Self, Error> {
-        let scorers: Vec<Arc<dyn Scorer>> =
-            vec![Arc::new(FuzzyScorer::new()), Arc::new(SubstrScorer::new())];
-        let index = scorers
+    pub fn new(scorers: Vec<Arc<dyn Scorer>>) -> Self {
+        if scorers.is_empty() {
+            Default::default()
+        } else {
+            Self { scorers, index: 0 }
+        }
+    }
+
+    pub fn from_str(name: &str) -> Result<Self, Error> {
+        let this = Self::default();
+        let index = this
+            .scorers
             .iter()
             .enumerate()
             .find_map(|(i, s)| if s.name() == name { Some(i) } else { None })
             .ok_or_else(|| anyhow!("Unknown scorer: {}", name))?;
-        Ok(Self { scorers, index })
+        Ok(Self { index, ..this })
+    }
+
+    pub fn current(&self) -> &Arc<dyn Scorer> {
+        &self.scorers[self.index]
     }
 
     pub fn next(&mut self) -> Arc<dyn Scorer> {
@@ -212,16 +292,24 @@ impl ScorerSelector {
     }
 }
 
+impl fmt::Debug for ScorerSelector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ScorerSelector({})", self.current().name())
+    }
+}
+
 pub struct Args {
     pub height: usize,
     pub prompt: String,
     pub theme: Theme,
     pub field_selector: Option<FieldSelector>,
+    pub field_delimiter: char,
     pub keep_order: bool,
     pub reversed: bool,
     pub scorer: ScorerSelector,
     pub debug: bool,
-    pub delimiter: char,
+    pub rpc: bool,
+    pub tty_path: String,
 }
 
 impl Args {
@@ -287,6 +375,17 @@ impl Args {
                     .takes_value(true)
                     .help("field delimiter"),
             )
+            .arg(
+                Arg::with_name("rpc")
+                    .long("rpc")
+                    .help("use JSON RPC protocol to communicate"),
+            )
+            .arg(
+                Arg::with_name("tty")
+                    .long("tty")
+                    .default_value("/dev/tty")
+                    .help("path to the tty"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -314,13 +413,20 @@ impl Args {
 
         let reversed = matches.is_present("reversed");
 
-        let scorer = ScorerSelector::new(matches.value_of("scorer").unwrap_or("fuzzy"))?;
+        let scorer = ScorerSelector::from_str(matches.value_of("scorer").unwrap_or("fuzzy"))?;
 
         let debug = matches.is_present("debug");
 
-        let delimiter = match matches.value_of("delimiter") {
+        let field_delimiter = match matches.value_of("delimiter") {
             None => ' ',
             Some(delimiter) => delimiter.parse()?,
+        };
+
+        let rpc = matches.is_present("rpc");
+
+        let tty_path = match matches.value_of("tty") {
+            None => "/dev/tty".to_string(),
+            Some(tty) => tty.to_string(),
         };
 
         Ok(Self {
@@ -328,11 +434,13 @@ impl Args {
             height,
             theme,
             field_selector,
+            field_delimiter,
             keep_order,
             scorer,
             reversed,
             debug,
-            delimiter,
+            rpc,
+            tty_path,
         })
     }
 }

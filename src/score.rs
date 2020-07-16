@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, fmt::Debug, sync::Arc};
 
 /// Heystack
 ///
@@ -21,7 +21,7 @@ pub trait Haystack {
 /// Scorer
 ///
 /// Scorer is used to score haystack against provided niddle.
-pub trait Scorer: Send + Sync {
+pub trait Scorer: Send + Sync + Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
 
@@ -113,6 +113,7 @@ const SCORE_MATCH_DOT: Score = 0.6;
 ///
 /// This scorer splits needle into words and finds each word as uninterrupted sequence of
 /// characters inside the haystack.
+#[derive(Debug, Clone)]
 pub struct SubstrScorer;
 
 impl SubstrScorer {
@@ -216,6 +217,7 @@ impl<'a, T: PartialEq> KMPPattern<'a, T> {
 /// Fuzzy scorrer
 ///
 /// This will match any haystack item as long as the niddle is a sub-sequence of the heystack.
+#[derive(Clone, Debug)]
 pub struct FuzzyScorer;
 
 impl FuzzyScorer {

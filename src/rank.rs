@@ -36,7 +36,8 @@ where
 }
 
 enum RankerCmd<H> {
-    Haystack(Vec<H>),
+    HaystackClear,
+    HaystackAppend(Vec<H>),
     Niddle(String),
     Scorer(Arc<dyn Scorer>),
 }
@@ -105,8 +106,13 @@ where
                     let mut scorer_updated = false;
                     for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                         match cmd {
-                            RankerCmd::Haystack(haystack) => {
+                            RankerCmd::HaystackAppend(haystack) => {
                                 haystack_new.extend(haystack);
+                            }
+                            RankerCmd::HaystackClear => {
+                                haystack.clear();
+                                haystack_new.clear();
+                                scorer_updated = true;
                             }
                             RankerCmd::Niddle(niddle_new) if niddle_new != niddle => {
                                 niddle_updated = true;
@@ -204,8 +210,15 @@ where
     /// Extend haystack with new entries
     pub fn haystack_extend(&self, haystack: Vec<H>) {
         self.sender
-            .send(RankerCmd::Haystack(haystack))
+            .send(RankerCmd::HaystackAppend(haystack))
             .expect("failed to send haystack");
+    }
+
+    /// Clear haystack
+    pub fn haystack_clear(&self) {
+        self.sender
+            .send(RankerCmd::HaystackClear)
+            .expect("failed to clear haystack")
     }
 
     /// Set new needle
