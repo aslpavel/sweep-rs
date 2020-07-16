@@ -37,6 +37,7 @@ where
 
 enum RankerCmd<H> {
     HaystackClear,
+    HaystackReverse,
     HaystackAppend(Vec<H>),
     Niddle(String),
     Scorer(Arc<dyn Scorer>),
@@ -101,6 +102,7 @@ where
                         Err(_) => return,
                     };
                     let mut haystack_new = Vec::new();
+                    let mut haystack_reverse = false;
                     let mut niddle_updated = false; // niddle was updated
                     let mut niddle_prefix = true; // previous niddle is a prefix of the new one
                     let mut scorer_updated = false;
@@ -123,10 +125,17 @@ where
                                 scorer = scorer_new;
                                 scorer_updated = true;
                             }
+                            RankerCmd::HaystackReverse => {
+                                haystack_reverse = !haystack_reverse;
+                                scorer_updated = true;
+                            }
                             _ => continue,
                         }
                     }
                     haystack.extend(haystack_new.iter().cloned());
+                    if haystack_reverse {
+                        haystack.reverse();
+                    }
 
                     // rank haystack
                     let start = Instant::now();
@@ -218,6 +227,13 @@ where
     pub fn haystack_clear(&self) {
         self.sender
             .send(RankerCmd::HaystackClear)
+            .expect("failed to clear haystack")
+    }
+
+    /// Reverse order of elements in the haystack
+    pub fn haystack_reverse(&self) {
+        self.sender
+            .send(RankerCmd::HaystackReverse)
             .expect("failed to clear haystack")
     }
 

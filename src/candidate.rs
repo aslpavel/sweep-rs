@@ -53,9 +53,10 @@ impl Candidate {
         ranker: Ranker<Candidate>,
         delimiter: char,
         field_selector: Option<FieldSelector>,
+        sync: bool,
     ) {
         let mut buf_size = 10;
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             let stdin = std::io::stdin();
             let handle = stdin.lock();
             let mut lines = handle.lines();
@@ -70,6 +71,9 @@ impl Candidate {
             }
             ranker.haystack_extend(buf);
         });
+        if sync {
+            handle.join().expect("haystack loader has failed");
+        }
     }
 
     pub fn to_string(&self) -> String {

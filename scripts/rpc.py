@@ -3,11 +3,14 @@ from subprocess import Popen, PIPE
 import json
 import select
 
+__all__ = ("Sweep",)
+
 
 class Sweep:
     def __init__(self, args=None):
         args = [] if args is None else args
         self.proc = Popen(
+            # ["cargo", "run", "--", "--rpc", *args],
             ["sweep", "--rpc", *args],
             stdout=PIPE,
             stdin=PIPE,

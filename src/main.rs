@@ -1,4 +1,4 @@
-// #![deny(warnings)]
+#![deny(warnings)]
 
 use anyhow::{anyhow, Error};
 use serde_json::json;
@@ -84,7 +84,11 @@ fn main() -> Result<(), Error> {
             ranker.clone(),
             args.field_delimiter,
             args.field_selector.clone(),
+            args.reversed,
         );
+        if args.reversed {
+            ranker.haystack_reverse();
+        }
         None
     } else {
         let waker = term.waker();
