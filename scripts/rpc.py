@@ -148,21 +148,22 @@ def main():
     path = path.resolve()
 
     with Sweep(
-        sweep=["cargo", "run", "--"], height=20, prompt="WALK", nth="1.."
+        sweep=["cargo", "run", "--"], height=16, prompt="WALK", nth="1.."
     ) as sweep:
         sweep.key_binding("ctrl+b", 0)
         while path.is_dir():
-            sweep.prompt_set(f"WALK: {path}")
-
-            items = list(path.iterdir())
-            if not items:
+            paths = list(path.iterdir())
+            if not paths:
                 break
-            sweep.candidates_clear()
+
             candidates = []
-            for item in items:
+            for item in paths:
                 file_type = "D" if item.is_dir() else "F"
                 candidates.append("{} {}".format(file_type, item.name))
             candidates.sort()
+
+            sweep.prompt_set(f"WALK: {path}")
+            sweep.candidates_clear()
             sweep.candidates_extend(candidates)
             sweep.niddle_set("")
 

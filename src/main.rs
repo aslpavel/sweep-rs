@@ -338,9 +338,9 @@ impl Args {
         use clap::Arg;
 
         let matches = clap::App::new("sweep")
-            .version(env!("CARGO_PKG_VERSION"))
+            .version(format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("COMMIT_INFO")).as_ref())
             .about("Sweep is a command line fuzzy finder")
-            .author("Pavel Aslanov")
+            .author(env!("CARGO_PKG_AUTHORS"))
             .arg(
                 Arg::with_name("prompt")
                     .short("p")
