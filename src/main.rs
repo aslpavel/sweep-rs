@@ -335,9 +335,10 @@ pub struct Args {
 
 impl Args {
     pub fn new() -> Result<Self, Error> {
-        use clap::Arg;
+        use clap::{AppSettings, Arg};
 
         let matches = clap::App::new("sweep")
+            .setting(AppSettings::ColoredHelp)
             .version(format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("COMMIT_INFO")).as_ref())
             .about("Sweep is a command line fuzzy finder")
             .author(env!("CARGO_PKG_AUTHORS"))
