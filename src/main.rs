@@ -60,11 +60,10 @@ fn main() -> Result<(), Error> {
     // find current row offset
     let mut row_offset = 0;
     term.execute(TerminalCommand::CursorGet)?;
-    match term.poll(Some(Duration::from_millis(500)))? {
-        Some(TerminalEvent::CursorPosition { row, .. }) => {
-            row_offset = row;
-        }
-        _ => (),
+    if let Some(TerminalEvent::CursorPosition { row, .. }) =
+        term.poll(Some(Duration::from_millis(500)))?
+    {
+        row_offset = row;
     }
     let term_size = term.size()?;
     if height > term_size.height {

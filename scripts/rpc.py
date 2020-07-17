@@ -34,6 +34,7 @@ class Sweep:
         theme: Optional[str] = None,
         scorer: Optional[str] = None,
         tty: Optional[str] = None,
+        debug: bool = False,
     ):
         args = []
         args.extend(["--prompt", prompt])
@@ -48,6 +49,8 @@ class Sweep:
             args.extend(["--scorer", scorer])
         if tty is not None:
             args.extend(["--tty", tty])
+        if debug:
+            args.append("--debug")
         self.proc = Popen(
             [*sweep, "--rpc", *args],
             stdout=PIPE,
