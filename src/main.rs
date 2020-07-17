@@ -119,12 +119,18 @@ fn main() -> Result<(), Error> {
                     if name == KeyName::Char('c') {
                         return Ok(TerminalAction::Quit(None));
                     } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
-                        if let Some(candidate) = list.current() {
+                        let result = match list.current() {
+                            Some(candidate) => Some(candidate.result.haystack.to_string()),
+                            None if args.no_match_use_input => {
+                                Some(input.get().collect::<String>())
+                            }
+                            _ => None,
+                        };
+                        if let Some(result) = result {
                             if args.rpc {
-                                let result = candidate.result.haystack.to_string();
                                 rpc_encode(std::io::stdout(), json!({ "selected": result }))?;
                             } else {
-                                return Ok(TerminalAction::Quit(Some(candidate.result.haystack)));
+                                return Ok(TerminalAction::Quit(Some(result)));
                             }
                         }
                     } else if name == KeyName::Char('s') {
@@ -331,6 +337,7 @@ pub struct Args {
     pub debug: bool,
     pub rpc: bool,
     pub tty_path: String,
+    pub no_match_use_input: bool,
 }
 
 impl Args {
@@ -408,6 +415,14 @@ impl Args {
                     .default_value("/dev/tty")
                     .help("path to the tty"),
             )
+            .arg(
+                Arg::with_name("no-match")
+                    .long("no-match")
+                    .takes_value(true)
+                    .default_value("nothing")
+                    .possible_values(&["nothing", "input"])
+                    .help("string returned if there is no match"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -451,6 +466,11 @@ impl Args {
             Some(tty) => tty.to_string(),
         };
 
+        let no_match_use_input = match matches.value_of("no-match") {
+            Some("input") => true,
+            _ => false,
+        };
+
         Ok(Self {
             prompt,
             height,
@@ -463,6 +483,7 @@ impl Args {
             debug,
             rpc,
             tty_path,
+            no_match_use_input,
         })
     }
 }
