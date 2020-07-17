@@ -1,6 +1,8 @@
 #! /usr/bin/env python3
+"""Very simple RPC interface around sweep command
+"""
 from subprocess import Popen, PIPE
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Tuple
 import json
 import select
 
@@ -13,10 +15,18 @@ SWEEP_KEYBINDING = "key_binding"
 
 class Sweep:
     """RPC wrapper around sweep process
+
+    DEBUGGING:
+        - Load this file a python module.
+        - Open other terminal window and execute `$ tty` command, then something which
+          will not steal characters for sweep process like `$ sleep 1000`.
+        - Instantiate Sweep class with the tty device path of the other terminal.
+        - Now you can call all the methods of the Sweep class in an interractive mode.
     """
 
     def __init__(
         self,
+        sweep=["sweep"],
         prompt="INPUT",
         nth: Optional[str] = None,
         height: int = 11,
@@ -39,8 +49,7 @@ class Sweep:
         if tty is not None:
             args.extend(["--tty", tty])
         self.proc = Popen(
-            ["cargo", "run", "--", "--rpc", *args],
-            # ["sweep", "--rpc", *args],
+            [*sweep, "--rpc", *args],
             stdout=PIPE,
             stdin=PIPE,
             # this is usefull if you want to redirecte to different `--tty` for debugging
@@ -64,30 +73,34 @@ class Sweep:
         """Register new hotkey"""
         rpc_encode(self.proc.stdin, "key_binding", key=key, tag=tag)
 
+    def prompt_set(self, prompt: str):
+        """Set sweep's prompt string"""
+        rpc_encode(self.proc.stdin, "prompt_set", prompt=prompt)
+
     def terminate(self):
         """Terminate underlying sweep process"""
         if self.proc.poll() is None:
             rpc_encode(self.proc.stdin, "terminate")
         self.proc.wait()
 
-    def poll(self, timeout: Optional[float] = None):
+    def poll(self, timeout: Optional[float] = None) -> Optional[Tuple[str, Any]]:
         """Wait for events from the sweep process"""
-        message = rpc_decode(self.proc.stdout, timeout)
-        if message is None:
-            return
-        error = message.get("error")
+        msg = rpc_decode(self.proc.stdout, timeout)
+        if msg is None:
+            return None
+        error = msg.get("error")
         if error is not None:
             raise RuntimeError("remote error: {}".format(error))
-        for type in (SWEEP_SELECTED, SWEEP_KEYBINDING):
-            result = message.get(type)
+        for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING):
+            result = msg.get(msg_type)
             if result is not None:
-                return type, result
-        raise RuntimeError("unknonw message type: {}".format(message))
+                return msg_type, result
+        raise RuntimeError("unknonw message type: {}".format(msg))
 
     def __enter__(self):
         return self
 
-    def __exit__(self, et, oe, tb):
+    def __exit__(self, *_):
         self.terminate()
         return False
 
@@ -107,19 +120,24 @@ def rpc_encode(output, method, **args):
     output.flush()
 
 
-def rpc_decode(input, timeout=None):
+def rpc_decode(file, timeout=None):
     """Decode RPC message"""
-    rlist, _, _ = select.select([input], [], [], timeout)
+    rlist, _, _ = select.select([file], [], [], timeout)
     if rlist:
-        size = input.readline().strip()
+        size = file.readline().strip()
         if not size:
-            return
-        return json.loads(input.read(int(size)))
+            return None
+        return json.loads(file.read(int(size)))
+    return None
 
 
 def main():
-    """Dir traversal demo
+    """Simple example of using Sweep class
+
+    Walks directory tree. Returns path when file or empty directory is selected.
+    `ctrl+b` is used to go one level up.
     """
+    # noqa: import-outside-toplevel
     import sys
     import pathlib
 
@@ -127,10 +145,14 @@ def main():
         path = pathlib.Path()
     else:
         path = pathlib.Path(sys.argv[1])
+    path = path.resolve()
 
-    with Sweep(prompt="WALK", nth="1..") as sweep:
+    with Sweep(
+        sweep=["cargo", "run", "--"], height=20, prompt="WALK", nth="1.."
+    ) as sweep:
         sweep.key_binding("ctrl+b", 0)
         while path.is_dir():
+            sweep.prompt_set(f"WALK: {path}")
 
             items = list(path.iterdir())
             if not items:
@@ -140,19 +162,20 @@ def main():
             for item in items:
                 file_type = "D" if item.is_dir() else "F"
                 candidates.append("{} {}".format(file_type, item.name))
+            candidates.sort()
             sweep.candidates_extend(candidates)
             sweep.niddle_set("")
 
-            result = sweep.poll()
-            if result is None:
+            msg = sweep.poll()
+            if msg is None:
                 break
-            type, value = result
-            if type == SWEEP_SELECTED:
+            msg_type, value = msg
+            if msg_type == SWEEP_SELECTED:
                 if value is None:
                     return
                 _, name = value.split(maxsplit=1)
                 path = path / name
-            elif type == SWEEP_KEYBINDING:
+            elif msg_type == SWEEP_KEYBINDING:
                 if value == 0:
                     path = path.parent
 

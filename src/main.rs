@@ -97,6 +97,7 @@ fn main() -> Result<(), Error> {
     };
 
     // initialize widgets
+    let mut prompt = args.prompt.clone();
     let mut input = Input::new();
     let mut list = List::new(RankerResultThemed::new(
         theme.clone(),
@@ -147,14 +148,14 @@ fn main() -> Result<(), Error> {
                                     return Ok(TerminalAction::Quit(None))
                                 }
                             };
+                            use RPCRequest::*;
                             match request {
-                                Ok(RPCRequest::KeyBinding { key, tag }) => {
-                                    key_map.register(key.as_ref(), tag)
-                                }
-                                Ok(RPCRequest::NiddleSet(niddle)) => {
+                                Ok(PromptSet(new_prompt)) => prompt = new_prompt,
+                                Ok(KeyBinding { key, tag }) => key_map.register(key.as_ref(), tag),
+                                Ok(NiddleSet(niddle)) => {
                                     input.set(niddle.as_ref());
                                 }
-                                Ok(RPCRequest::CandidatesExtend { items }) => {
+                                Ok(CandidatesExtend { items }) => {
                                     let items = items
                                         .into_iter()
                                         .map(|c| {
@@ -167,8 +168,8 @@ fn main() -> Result<(), Error> {
                                         .collect();
                                     ranker.haystack_extend(items);
                                 }
-                                Ok(RPCRequest::CandidatesClear) => ranker.haystack_clear(),
-                                Ok(RPCRequest::Terminate) => return Ok(TerminalAction::Quit(None)),
+                                Ok(CandidatesClear) => ranker.haystack_clear(),
+                                Ok(Terminate) => return Ok(TerminalAction::Quit(None)),
                                 Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
                             }
                         }
@@ -197,7 +198,7 @@ fn main() -> Result<(), Error> {
         // label
         let mut label_view = view.view_mut(0, ..);
         let mut label = label_view.writer().face(label_face);
-        write!(&mut label, " {} ", args.prompt)?;
+        write!(&mut label, " {} ", prompt)?;
         let mut label = label.face(separator_face);
         write!(&mut label, " ")?;
         let input_start = label.position().1 as i32;

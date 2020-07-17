@@ -13,6 +13,7 @@ pub enum RPCRequest {
     NiddleSet(String),
     Terminate,
     KeyBinding { key: Vec<Key>, tag: Value },
+    PromptSet(String),
 }
 
 impl RPCRequest {
@@ -66,6 +67,13 @@ impl RPCRequest {
                 };
                 Ok(RPCRequest::KeyBinding { key, tag })
             }
+            "prompt_set" => {
+                let prompt = match map.get_mut("prompt").map(|v| v.take()) {
+                    Some(Value::String(prompt)) => prompt,
+                    _ => return Err(format!("prompt_set request must include prompt field")),
+                };
+                Ok(RPCRequest::PromptSet(prompt))
+            }
             _ => Err(format!("unknown request method: {}", method)),
         }
     }
@@ -91,8 +99,9 @@ impl RPCRequest {
                     }
                     write!(&mut chord, "{:?}", *key).unwrap();
                 }
-                json!({ "key": chord, "tag": tag })
+                json!({ "method": "key_binding", "key": chord, "tag": tag })
             }
+            RPCRequest::PromptSet(prompt) => json!({ "method": "prompt_set", "prompt": prompt }),
         }
     }
 }
@@ -178,6 +187,11 @@ mod tests {
             },
             RPCRequest::Terminate,
             RPCRequest::NiddleSet("test".to_string()),
+            RPCRequest::KeyBinding {
+                key: Key::chord("ctrl+c")?,
+                tag: "test".into(),
+            },
+            RPCRequest::PromptSet("prompt".to_string()),
         ];
 
         let mut buf = Cursor::new(Vec::new());
@@ -196,7 +210,7 @@ mod tests {
 
         let result = requests.iter().collect::<Result<_, _>>();
         assert_eq!(result, Ok(reference));
-        assert_eq!(count.load(Ordering::SeqCst), 5);
+        assert_eq!(count.load(Ordering::SeqCst), 7);
 
         Ok(())
     }
