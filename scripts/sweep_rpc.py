@@ -1,8 +1,9 @@
 #! /usr/bin/env python3
 """Very simple RPC interface around sweep command
 """
+from collections import deque
 from subprocess import Popen, PIPE
-from typing import Optional, List, Any, Tuple
+from typing import Optional, List, Any, Tuple, Dict
 import json
 import select
 
@@ -60,6 +61,7 @@ class Sweep:
             # and you want to ignore Ctrl-C comming from this pythone process.
             # start_new_session=True,
         )
+        self.queue: Dict[str, Any] = {}
 
     def candidates_extend(self, items: List[str]):
         """Extend candidates set"""
@@ -87,22 +89,38 @@ class Sweep:
             rpc_encode(self.proc.stdin, "terminate")
         self.proc.wait()
 
-    def current(self):
-        """Request currently selected element"""
+    def current(self, timeout=None):
+        """Currently selected element"""
         rpc_encode(self.proc.stdin, "current")
-
-    def poll(self, timeout: Optional[float] = None) -> Optional[Tuple[str, Any]]:
-        """Wait for events from the sweep process"""
-        msg = rpc_decode(self.proc.stdout, timeout)
+        msg = self.poll(timeout, wait_type=SWEEP_CURRENT)
         if msg is None:
             return None
-        error = msg.get("error")
-        if error is not None:
-            raise RuntimeError("remote error: {}".format(error))
-        for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING, SWEEP_CURRENT):
-            if msg_type in msg:
-                return msg_type, msg[msg_type]
-        raise RuntimeError("unknonw message type: {}".format(msg))
+        return msg[1]
+
+    def poll(
+        self, timeout: Optional[float] = None, wait_type=None
+    ) -> Optional[Tuple[str, Any]]:
+        """Wait for events from the sweep process"""
+        if wait_type is not None and wait_type in self.queue:
+            value = self.queue.pop(wait_type)
+            return wait_type, value
+        while True:
+            msg = rpc_decode(self.proc.stdout, timeout)
+            if msg is None:
+                return None
+            error = msg.get("error")
+            if error is not None:
+                raise RuntimeError("remote error: {}".format(error))
+            for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING, SWEEP_CURRENT):
+                if msg_type in msg:
+                    value = msg[msg_type]
+                    if wait_type is not None:
+                        if wait_type == msg_type:
+                            return msg_type, value
+                        self.queue[msg_type] = value
+                    else:
+                        return msg_type, value
+            raise RuntimeError("unknonw message type: {}".format(msg))
 
     def __enter__(self):
         return self

@@ -163,10 +163,12 @@ def main():
         key_dir_list = "ctrl+i"  # tab
         key_dir_up = "backspace"  # only triggered when input is empty
         key_dir_hist = "ctrl+h"
+        key_dir_open = "ctrl+o"
         with rpc.Sweep(theme=opts.theme) as sweep:
             sweep.key_binding(key_dir_list, key_dir_list)
             sweep.key_binding(key_dir_up, key_dir_up)
             sweep.key_binding(key_dir_hist, key_dir_hist)
+            sweep.key_binding(key_dir_open, key_dir_open)
 
             def history():
                 cwd = str(Path.cwd())
@@ -196,8 +198,8 @@ def main():
                 msg = sweep.poll()
                 if msg is None:
                     return
-
                 msg_type, value = msg
+
                 if msg_type == rpc.SWEEP_SELECTED:
                     if current_path is None:
                         result = value
@@ -205,25 +207,32 @@ def main():
                         result = current_path / value
                     break
 
-                if msg_type == rpc.SWEEP_KEYBINDING:
+                elif msg_type == rpc.SWEEP_KEYBINDING:
                     if value == key_dir_list:
-                        sweep.current()
+                        path = sweep.current()
+                        if path is None:
+                            continue
+                        if current_path is None:
+                            current_path = Path(path)
+                        else:
+                            current_path /= path
+                        load_path(current_path)
+
                     elif value == key_dir_up:
                         if current_path is not None:
                             current_path = current_path.parent
                             load_path(current_path)
+
                     elif value == key_dir_hist:
                         history()
                         current_path = None
 
-                elif msg_type == rpc.SWEEP_CURRENT:
-                    if value is None:
-                        continue
-                    if current_path is None:
-                        current_path = Path(value)
-                    else:
-                        current_path /= value
-                    load_path(current_path)
+                    elif value == key_dir_open:
+                        if current_path is not None:
+                            result = current_path
+                        else:
+                            result = Path(sweep.current())
+                        break
 
         if result is not None:
             print(result)
