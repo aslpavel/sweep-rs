@@ -160,12 +160,19 @@ def main():
         items.sort(reverse=True)
 
         result = None
-        tab = "ctrl+i"
-        backspace = "backspace"
-        with rpc.Sweep(prompt="PATH HISTORY", theme=opts.theme) as sweep:
-            sweep.candidates_extend([str(item[2]) for item in items])
-            sweep.key_binding(tab, tab)
-            sweep.key_binding(backspace, backspace)
+        key_dir_list = "ctrl+i"  # tab
+        key_dir_up = "backspace"  # only triggered when input is empty
+        key_dir_hist = "ctrl+h"
+        with rpc.Sweep(theme=opts.theme) as sweep:
+            sweep.key_binding(key_dir_list, key_dir_list)
+            sweep.key_binding(key_dir_up, key_dir_up)
+            sweep.key_binding(key_dir_hist, key_dir_hist)
+
+            def history():
+                sweep.prompt_set("PATH_HISTORY")
+                sweep.niddle_set("")
+                sweep.candidates_clear()
+                sweep.candidates_extend([str(item[2]) for item in items])
 
             def load_path(path):
                 candidates = candidates_from_path(current_path)
@@ -175,11 +182,13 @@ def main():
                     sweep.candidates_clear()
                     sweep.candidates_extend(candidates)
 
+            history()
             current_path = None
             while True:
                 msg = sweep.poll()
                 if msg is None:
                     return
+
                 msg_type, value = msg
                 if msg_type == rpc.SWEEP_SELECTED:
                     if current_path is None:
@@ -187,13 +196,18 @@ def main():
                     else:
                         result = current_path / value
                     break
+
                 if msg_type == rpc.SWEEP_KEYBINDING:
-                    if value == tab:
+                    if value == key_dir_list:
                         sweep.current()
-                    elif value == backspace:
+                    elif value == key_dir_up:
                         if current_path is not None:
                             current_path = current_path.parent
                             load_path(current_path)
+                    elif value == key_dir_hist:
+                        history()
+                        current_path = None
+
                 elif msg_type == rpc.SWEEP_CURRENT:
                     if value is None:
                         continue
