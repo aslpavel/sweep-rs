@@ -7,6 +7,7 @@ import io
 import os
 import sweep_rpc as rpc
 import time
+from collections import deque
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -82,23 +83,32 @@ def collapse_path(path):
     return Path().joinpath(*parts)
 
 
-def candidates_from_path(root, depth=3):
-    def walk(path, depth):
-        if depth < 0:
-            return
-        if not path.is_dir():
-            return
-        for item in path.iterdir():
-            if item.name in DEFAULT_IGNORE:
-                continue
-            candidates.append(str(item.relative_to(root)))
-            walk(item, depth - 1)
+def candidates_from_path(root, soft_limit=1024):
+    """Build candidates list from provided root path
 
-    root = Path(root)
-    if not root.is_dir():
-        return []
+    Soft limit determines the depth of traversal once soft limit
+    is reached none of the elements that are deeper will be returned
+    """
     candidates = []
-    walk(root, depth)
+    max_depth = soft_limit
+    queue = deque([(root, 0)])
+    while queue:
+        path, depth = queue.popleft()
+        if depth > max_depth:
+            break
+        if not path.is_dir():
+            continue
+        try:
+            for item in path.iterdir():
+                if item.name in DEFAULT_IGNORE:
+                    continue
+                candidates.append(str(item.relative_to(root)))
+                if len(candidates) >= soft_limit:
+                    max_depth = depth
+                queue.append((item, depth + 1))
+        except PermissionError:
+            pass
+    candidates.sort()
     return candidates
 
 
@@ -137,9 +147,7 @@ def main():
         result = None
         tab = "ctrl+i"
         backspace = "backspace"
-        with rpc.Sweep(
-            sweep=["cargo", "run", "--"], prompt="PATH HISTORY", theme=opts.theme
-        ) as sweep:
+        with rpc.Sweep(prompt="PATH HISTORY", theme=opts.theme) as sweep:
             sweep.candidates_extend([str(item[2]) for item in items])
             sweep.key_binding(tab, tab)
             sweep.key_binding(backspace, backspace)
@@ -159,7 +167,10 @@ def main():
                     return
                 msg_type, value = msg
                 if msg_type == rpc.SWEEP_SELECTED:
-                    result = value
+                    if current_path is None:
+                        result = value
+                    else:
+                        result = current_path / value
                     break
                 if msg_type == rpc.SWEEP_KEYBINDING:
                     if value == tab:
