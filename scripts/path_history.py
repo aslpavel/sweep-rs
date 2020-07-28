@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 import argparse
 import fcntl
 import io
 import os
+import re
 import sweep_rpc as rpc
 import time
-from collections import deque
 
 
 PATH_HISTORY_FILE = "~/.path_history"
-DEFAULT_IGNORE = {".git", ".hg", "__pycache__", ".DS_Store", ".mypy_cache", "target"}
+DEFAULT_IGNORE = re.compile(
+    "|".join(
+        [
+            "\\.git",
+            "\\.hg",
+            "__pycache__",
+            "\\.DS_Store",
+            "\\.mypy_cache",
+            "target",
+            ".*\\.elc",
+            ".*\\.pyo",
+            ".*\\.pyc",
+        ]
+    )
+)
 
 
 class PathHistory:
@@ -113,7 +128,7 @@ def candidates_from_path(root, soft_limit=1024):
             continue
         try:
             for item in path.iterdir():
-                if item.name in DEFAULT_IGNORE:
+                if DEFAULT_IGNORE.match(item.name):
                     continue
                 candidates.append(str(item.relative_to(root)))
                 if len(candidates) >= soft_limit:
