@@ -60,9 +60,7 @@ fn main() -> Result<(), Error> {
     // find current row offset
     let mut row_offset = 0;
     term.execute(TerminalCommand::CursorGet)?;
-    if let Some(TerminalEvent::CursorPosition { row, .. }) =
-        term.poll(Some(Duration::from_millis(500)))?
-    {
+    if let Some(TerminalEvent::CursorPosition { row, .. }) = term.poll(None)? {
         row_offset = row;
     }
     let term_size = term.size()?;
