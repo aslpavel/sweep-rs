@@ -40,17 +40,11 @@ class PathHistory:
             paths[Path(path.strip("\n"))] = (count, date)
         return mtime, paths
 
-    def add(self, path):
+    def update(self, update):
         """AddTo/Update path history"""
-        path = Path(path).expanduser().resolve()
-        if not path.exists():
-            return
-
         while True:
             mtime, paths = self.load()
-            count, _ = paths.get(path) or (0, datetime.now())
-            count += 1
-            paths[path] = (count, datetime.now())
+            update(paths)
 
             content = io.StringIO()
             content.write("{}\n".format(int(time.time())))
@@ -71,6 +65,25 @@ class PathHistory:
                     return
                 finally:
                     fcntl.lockf(file, fcntl.LOCK_UN)
+
+    def add(self, path):
+        def update_add(paths):
+            count, _ = paths.get(path) or (0, datetime.now())
+            count += 1
+            paths[path] = (count, datetime.now())
+
+        path = Path(path).expanduser().resolve()
+        if not path.exists():
+            return
+        self.update(update_add)
+
+    def cleanup(self):
+        def update_cleanup(paths):
+            for path in list(paths.keys()):
+                if not Path(path).exists():
+                    del paths[path]
+
+        self.update(update_cleanup)
 
 
 def collapse_path(path):
@@ -129,6 +142,7 @@ def main():
         path_history.add(path)
 
     elif opts.command == "list":
+        path_history.cleanup()
         _, paths = path_history.load()
         items = []
         for path, (count, date) in paths.items():
@@ -138,6 +152,7 @@ def main():
             print("{:<5} {} {}".format(count, date.strftime("[%F %T]"), path))
 
     elif opts.command == "select":
+        path_history.cleanup()
         _, paths = path_history.load()
         items = []
         for path, (count, date) in paths.items():
