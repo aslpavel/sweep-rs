@@ -179,16 +179,16 @@ def main():
                         continue
                     candidates.append(path)
 
-                sweep.prompt_set("PATH_HISTORY")
+                sweep.prompt_set("PATH HISTORY")
                 sweep.niddle_set("")
                 sweep.candidates_clear()
                 sweep.candidates_extend(candidates)
 
             def load_path(path):
+                sweep.niddle_set("")
+                sweep.prompt_set(str(collapse_path(current_path)))
                 candidates = candidates_from_path(current_path)
                 if candidates:
-                    sweep.prompt_set(str(collapse_path(current_path)))
-                    sweep.niddle_set("")
                     sweep.candidates_clear()
                     sweep.candidates_extend(candidates)
 
@@ -212,10 +212,13 @@ def main():
                         path = sweep.current()
                         if path is None:
                             continue
+                        path = Path(path)
                         if current_path is None:
-                            current_path = Path(path)
-                        else:
+                            current_path = path
+                        elif (current_path / path).is_dir():
                             current_path /= path
+                        else:
+                            continue
                         load_path(current_path)
 
                     elif value == key_dir_up:
