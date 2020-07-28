@@ -169,10 +169,18 @@ def main():
             sweep.key_binding(key_dir_hist, key_dir_hist)
 
             def history():
+                cwd = str(Path.cwd())
+                candidates = [cwd]
+                for item in items:
+                    path = str(item[2])
+                    if path == cwd:
+                        continue
+                    candidates.append(path)
+
                 sweep.prompt_set("PATH_HISTORY")
                 sweep.niddle_set("")
                 sweep.candidates_clear()
-                sweep.candidates_extend([str(item[2]) for item in items])
+                sweep.candidates_extend(candidates)
 
             def load_path(path):
                 candidates = candidates_from_path(current_path)
