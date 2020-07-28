@@ -11,6 +11,7 @@ pub enum RPCRequest {
     CandidatesExtend { items: Vec<String> },
     CandidatesClear,
     NiddleSet(String),
+    Current,
     Terminate,
     KeyBinding { key: Vec<Key>, tag: Value },
     PromptSet(String),
@@ -74,6 +75,7 @@ impl RPCRequest {
                 };
                 Ok(RPCRequest::PromptSet(prompt))
             }
+            "current" => Ok(RPCRequest::Current),
             _ => Err(format!("unknown request method: {}", method)),
         }
     }
@@ -102,6 +104,7 @@ impl RPCRequest {
                 json!({ "method": "key_binding", "key": chord, "tag": tag })
             }
             RPCRequest::PromptSet(prompt) => json!({ "method": "prompt_set", "prompt": prompt }),
+            RPCRequest::Current => json!({ "method": "current" }),
         }
     }
 }
@@ -192,6 +195,7 @@ mod tests {
                 tag: "test".into(),
             },
             RPCRequest::PromptSet("prompt".to_string()),
+            RPCRequest::Current,
         ];
 
         let mut buf = Cursor::new(Vec::new());
@@ -210,7 +214,7 @@ mod tests {
 
         let result = requests.iter().collect::<Result<_, _>>();
         assert_eq!(result, Ok(reference));
-        assert_eq!(count.load(Ordering::SeqCst), 7);
+        assert_eq!(count.load(Ordering::SeqCst), 8);
 
         Ok(())
     }

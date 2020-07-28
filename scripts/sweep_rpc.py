@@ -10,6 +10,7 @@ __all__ = ("Sweep",)
 
 
 SWEEP_SELECTED = "selected"
+SWEEP_CURRENT = "current"
 SWEEP_KEYBINDING = "key_binding"
 
 
@@ -86,6 +87,10 @@ class Sweep:
             rpc_encode(self.proc.stdin, "terminate")
         self.proc.wait()
 
+    def current(self):
+        """Request currently selected element"""
+        rpc_encode(self.proc.stdin, "current")
+
     def poll(self, timeout: Optional[float] = None) -> Optional[Tuple[str, Any]]:
         """Wait for events from the sweep process"""
         msg = rpc_decode(self.proc.stdout, timeout)
@@ -94,10 +99,9 @@ class Sweep:
         error = msg.get("error")
         if error is not None:
             raise RuntimeError("remote error: {}".format(error))
-        for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING):
-            result = msg.get(msg_type)
-            if result is not None:
-                return msg_type, result
+        for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING, SWEEP_CURRENT):
+            if msg_type in msg:
+                return msg_type, msg[msg_type]
         raise RuntimeError("unknonw message type: {}".format(msg))
 
     def __enter__(self):

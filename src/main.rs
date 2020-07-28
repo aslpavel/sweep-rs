@@ -175,6 +175,18 @@ fn main() -> Result<(), Error> {
                                 }
                                 Ok(CandidatesClear) => ranker.haystack_clear(),
                                 Ok(Terminate) => return Ok(TerminalAction::Quit(None)),
+                                Ok(Current) => {
+                                    let result = match list.current() {
+                                        Some(candidate) => {
+                                            Some(candidate.result.haystack.to_string())
+                                        }
+                                        None if args.no_match_use_input => {
+                                            Some(input.get().collect::<String>())
+                                        }
+                                        _ => None,
+                                    };
+                                    rpc_encode(std::io::stdout(), json!({ "current": result }))?;
+                                }
                                 Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
                             }
                         }
@@ -185,7 +197,11 @@ fn main() -> Result<(), Error> {
             match *event {
                 TerminalEvent::Key(key) => {
                     if let Some(tag) = key_map.lookup_state(&mut key_map_state, key) {
-                        rpc_encode(std::io::stdout(), json!({ "key_binding": tag.clone() }))?
+                        if key != Key::new(KeyName::Backspace, KeyMod::EMPTY)
+                            || input.get().count() == 0
+                        {
+                            rpc_encode(std::io::stdout(), json!({ "key_binding": tag.clone() }))?
+                        }
                     }
                 }
                 _ => (),
