@@ -537,16 +537,21 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
         Ok(())
     }
 
-    fn length_hint(&self) -> Option<usize> {
+    fn height_hint(&self, width: usize) -> Option<usize> {
         let mut length = 0;
         for field in self.result.haystack.fields() {
             let field = match field {
                 Ok(field) => field,
                 Err(field) => field,
             };
-            length += field.chars().count()
+            for c in field.chars() {
+                length += match c {
+                    '\n' => width - length % width,
+                    _ => 1,
+                }
+            }
         }
-        Some(length)
+        Some(length / width + (if length % width != 0 { 1 } else { 0 }))
     }
 }
 
