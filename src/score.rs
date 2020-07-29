@@ -4,18 +4,15 @@ use std::{collections::BTreeSet, fmt::Debug, sync::Arc};
 ///
 /// Item that can scored against the niddle by the scorer.
 pub trait Haystack {
-    /// Iterator over characters in the heystack. Characters from
-    /// inactive fields will not be present in this iterator.
-    fn chars(&self) -> Box<dyn Iterator<Item = char> + '_>;
+    /// Slice containing all searchable lowercased characters. Characters from
+    /// the inactive fields will not be present in this slice.
+    fn chars(&self) -> &[char];
 
     /// Fields
     ///
     /// Iterator over fields, only Ok items should be scored, and Err items
     /// should be ignored during scoring.
     fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_>;
-
-    /// Length of the iterator returned by `Self::chars`.
-    fn len(&self) -> usize;
 }
 
 /// Scorer
@@ -26,15 +23,15 @@ pub trait Scorer: Send + Sync + Debug {
     fn name(&self) -> &str;
 
     /// Actual scorer implementation which takes haystack as a dynamic referece.
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)>;
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)>;
 
     /// Generic implementation over anyting that implements `Haystack` trati.
-    fn score<H>(&self, niddle: &str, haystack: H) -> Option<ScoreResult<H>>
+    fn score<H>(&self, niddle: &[char], haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
         Self: Sized,
     {
-        let (score, positions) = self.score_ref(niddle, &haystack)?;
+        let (score, positions) = self.score_ref(niddle, haystack.chars())?;
         Some(ScoreResult {
             haystack,
             score,
@@ -56,25 +53,11 @@ pub struct ScoreResult<H> {
     pub positions: Positions,
 }
 
-impl<'a> Haystack for &'a str {
-    fn chars(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        Box::new(str::chars(&self))
-    }
-
-    fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
-        Box::new(std::iter::once(*self).map(Ok))
-    }
-
-    fn len(&self) -> usize {
-        str::chars(&self).count()
-    }
-}
-
 impl<'a, S: Scorer> Scorer for &'a S {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
         (*self).score_ref(niddle, haystack)
     }
 }
@@ -83,7 +66,7 @@ impl Scorer for Box<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
         (**self).score_ref(niddle, haystack)
     }
 }
@@ -92,7 +75,7 @@ impl Scorer for Arc<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
         (**self).score_ref(niddle, haystack)
     }
 }
@@ -127,28 +110,27 @@ impl Scorer for SubstrScorer {
         &"substr"
     }
 
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
         if niddle.is_empty() {
             return Some((SCORE_MAX, Positions::new()));
         }
 
-        let haystack: Vec<char> = haystack.chars().flat_map(char::to_lowercase).collect();
-        let words: Vec<Vec<char>> = niddle
-            .split(' ')
-            .filter_map(|word| {
-                if word.is_empty() {
-                    None
-                } else {
-                    Some(word.chars().flat_map(char::to_lowercase).collect())
-                }
-            })
-            .collect();
+        let words =
+            niddle.split(|c| *c == ' ').filter_map(
+                |word| {
+                    if word.is_empty() {
+                        None
+                    } else {
+                        Some(word)
+                    }
+                },
+            );
 
         let mut positions = Positions::new();
         let mut match_start = 0;
         let mut match_end = 0;
-        for (i, word) in words.into_iter().enumerate() {
-            match_end += KMPPattern::new(word.as_ref()).search(&haystack[match_end..])?;
+        for (i, word) in words.enumerate() {
+            match_end += KMPPattern::new(word).search(&haystack[match_end..])?;
             if i == 0 {
                 match_start = match_end;
             }
@@ -225,9 +207,9 @@ impl FuzzyScorer {
         FuzzyScorer
     }
 
-    fn bonus(haystack: &dyn Haystack, bonus: &mut [Score]) {
+    fn bonus(haystack: &[char], bonus: &mut [Score]) {
         let mut c_prev = '/';
-        for (i, c) in haystack.chars().enumerate() {
+        for (i, c) in haystack.iter().enumerate() {
             bonus[i] = if c.is_ascii_lowercase() || c.is_ascii_digit() {
                 match c_prev {
                     '/' => SCORE_MATCH_SLASH,
@@ -246,13 +228,13 @@ impl FuzzyScorer {
             } else {
                 0.0
             };
-            c_prev = c;
+            c_prev = *c;
         }
     }
 
-    fn subseq(niddle: &str, haystack: &dyn Haystack) -> bool {
-        let mut n_iter = niddle.chars().flat_map(char::to_lowercase);
-        let mut h_iter = haystack.chars().flat_map(char::to_lowercase);
+    fn subseq(niddle: &[char], haystack: &[char]) -> bool {
+        let mut n_iter = niddle.iter();
+        let mut h_iter = haystack.iter();
         let mut n = if let Some(n) = n_iter.next() {
             n
         } else {
@@ -272,8 +254,8 @@ impl FuzzyScorer {
 
     // This function is only called when we know that niddle is a sub-string of
     // the haystack string.
-    fn score_impl(niddle: &str, haystack: &dyn Haystack) -> (Score, Positions) {
-        let n_len = niddle.chars().flat_map(char::to_lowercase).count();
+    fn score_impl(niddle: &[char], haystack: &[char]) -> (Score, Positions) {
+        let n_len = niddle.len();
         let h_len = haystack.len();
 
         if n_len == 0 || n_len == h_len {
@@ -289,14 +271,14 @@ impl FuzzyScorer {
         Self::bonus(haystack, bonus_score);
         let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with niddle[..i]
         let mut m = ScoreMatrix::new(h_len, m_data); // best score for niddle[..i]
-        for (i, n_char) in niddle.chars().flat_map(char::to_lowercase).enumerate() {
+        for (i, n_char) in niddle.iter().enumerate() {
             let mut prev_score = SCORE_MIN;
             let gap_score = if i == n_len - 1 {
                 SCORE_GAP_TRAILING
             } else {
                 SCORE_GAP_INNER
             };
-            for (j, h_char) in haystack.chars().flat_map(char::to_lowercase).enumerate() {
+            for (j, h_char) in haystack.iter().enumerate() {
                 if n_char == h_char {
                     let score = if i == 0 {
                         (j as Score) * SCORE_GAP_LEADING + bonus_score[j]
@@ -343,7 +325,7 @@ impl Scorer for FuzzyScorer {
         &"fuzzy"
     }
 
-    fn score_ref(&self, niddle: &str, haystack: &dyn Haystack) -> Option<(Score, Positions)> {
+    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
         if Self::subseq(niddle, haystack) {
             Some(Self::score_impl(niddle, haystack))
         } else {
@@ -375,6 +357,29 @@ impl<'a> ScoreMatrix<'a> {
 mod tests {
     use super::*;
 
+    struct TestHaystack {
+        string: String,
+        chars: Vec<char>,
+    }
+
+    impl TestHaystack {
+        fn new(string: &str) -> Self {
+            let string = string.to_string();
+            let chars = string.chars().collect();
+            Self { string, chars }
+        }
+    }
+
+    impl Haystack for TestHaystack {
+        fn chars(&self) -> &[char] {
+            self.chars.as_slice()
+        }
+
+        fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
+            Box::new(std::iter::once(self.string.as_ref()).map(Ok))
+        }
+    }
+
     #[test]
     fn test_knuth_morris_pratt() {
         let pattern = KMPPattern::new("acat".as_bytes());
@@ -393,31 +398,41 @@ mod tests {
     #[test]
     fn test_subseq() {
         let subseq = FuzzyScorer::subseq;
-        assert!(subseq("one", &"On/e"));
-        assert!(subseq("one", &"w o ne"));
-        assert!(!subseq("one", &"net"));
-        assert!(subseq("", &"one"));
+        let one: Vec<_> = "one".chars().collect();
+        let net: Vec<_> = "net".chars().collect();
+        let one1: Vec<_> = "on/e".chars().collect();
+        let wone: Vec<_> = "w o ne".chars().collect();
+        assert!(subseq(&one, &one1));
+        assert!(subseq(&one, &wone));
+        assert!(!subseq(&one, &net));
+        assert!(subseq(&[], &one));
     }
 
     #[test]
     fn test_fuzzy_scorer() {
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new());
 
-        let result = scorer.score("one", " on/e two").unwrap();
+        let niddle: Vec<_> = "one".chars().collect();
+        let result = scorer
+            .score(&niddle, TestHaystack::new(" on/e two"))
+            .unwrap();
         assert_eq!(
             result.positions,
             [1, 2, 4].iter().copied().collect::<BTreeSet<_>>()
         );
         assert!((result.score - 2.665).abs() < 0.001);
 
-        assert!(scorer.score("one", "two").is_none());
+        assert!(scorer.score(&niddle, TestHaystack::new("two")).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new());
 
-        let score = scorer.score("one  ababc", " one babababcd ").unwrap();
+        let niddle: Vec<_> = "one  ababc".chars().collect();
+        let score = scorer
+            .score(&niddle, TestHaystack::new(" one babababcd "))
+            .unwrap();
         assert_eq!(
             score.positions,
             [1, 2, 3, 8, 9, 10, 11, 12]

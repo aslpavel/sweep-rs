@@ -23,9 +23,10 @@ where
     F: Fn(&H) -> FR + Send + Sync,
     FR: Haystack + Send,
 {
+    let niddle: Vec<_> = niddle.chars().collect();
     let mut result: Vec<_> = haystack
         .into_par_iter()
-        .filter_map(move |haystack| scorer.score(niddle, focus(haystack)))
+        .filter_map(move |haystack| scorer.score(&niddle, focus(haystack)))
         .collect();
     if !keep_order {
         result.par_sort_unstable_by(|a, b| {

@@ -8,9 +8,15 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Debug)]
+struct CandidateInner {
+    fields: Vec<Result<String, String>>,
+    chars: Vec<char>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Candidate {
-    fields: Arc<Vec<Result<String, String>>>,
+    inner: Arc<CandidateInner>,
 }
 
 impl Candidate {
@@ -32,8 +38,13 @@ impl Candidate {
                     .collect()
             }
         };
+        let chars = fields
+            .iter()
+            .filter_map(|f| Some(f.as_ref().ok()?.chars().flat_map(char::to_lowercase)))
+            .flatten()
+            .collect();
         Self {
-            fields: Arc::new(fields),
+            inner: Arc::new(CandidateInner { chars, fields }),
         }
     }
 
@@ -78,7 +89,7 @@ impl Candidate {
 
     pub fn to_string(&self) -> String {
         let mut result = String::new();
-        for (index, field) in self.fields.iter().enumerate() {
+        for (index, field) in self.inner.fields.iter().enumerate() {
             if index != 0 {
                 result.push(' ');
             }
@@ -143,29 +154,16 @@ impl<'a> Iterator for SplitInclusive<'a> {
 }
 
 impl Haystack for Candidate {
-    fn chars(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        let iter = self
-            .fields
-            .iter()
-            .filter_map(|field| match field {
-                Ok(field) => Some(field),
-                Err(_) => None,
-            })
-            .flat_map(|field| str::chars(field.as_ref()));
-        Box::new(iter)
+    fn chars(&self) -> &[char] {
+        &self.inner.chars
     }
 
     fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
-        let iter = self.fields.iter().map(|field| match field {
+        let iter = self.inner.fields.iter().map(|field| match field {
             Ok(field) => Ok(field.as_ref()),
             Err(field) => Err(field.as_ref()),
         });
         Box::new(iter)
-    }
-
-    fn len(&self) -> usize {
-        // TODO: make a field of the candidate
-        self.chars().count()
     }
 }
 

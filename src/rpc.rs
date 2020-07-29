@@ -115,11 +115,9 @@ impl RPCRequest {
 /// `BufRead` object, notify function will also be called on each request received.
 ///
 /// Message protocol
-/// ```
 /// <decimal string parsable as usize>\n
 /// <json encoded RPCRequest>
 /// ...
-/// ```
 pub fn rpc_requests<I, N>(input: I, mut notify: N) -> Receiver<Result<RPCRequest, String>>
 where
     I: Read + Send + 'static,
