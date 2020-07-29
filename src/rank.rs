@@ -23,7 +23,7 @@ where
     F: Fn(&H) -> FR + Send + Sync,
     FR: Haystack + Send,
 {
-    let niddle: Vec<_> = niddle.chars().collect();
+    let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
     let mut result: Vec<_> = haystack
         .into_par_iter()
         .filter_map(move |haystack| scorer.score(&niddle, focus(haystack)))
