@@ -51,20 +51,22 @@ class PathHistory:
         for line in content:
             count, timestamp, path = line.split("\t")
             count = int(count)
-            date = datetime.fromtimestamp(int(timestamp))
+            date = int(timestamp)
             paths[Path(path.strip("\n"))] = (count, date)
         return mtime, paths
 
     def update(self, update):
         """AddTo/Update path history"""
         while True:
-            mtime, paths = self.load()
-            update(paths)
+            now = int(time.time())
+            mtime_last, paths = self.load()
+            if not update(mtime_last, now, paths):
+                return
 
             content = io.StringIO()
-            content.write("{}\n".format(int(time.time())))
+            content.write("{}\n".format(now))
             for path, (count, date) in paths.items():
-                content.write("{}\t{}\t{}\n".format(count, int(date.timestamp()), path))
+                content.write("{}\t{}\t{}\n".format(count, date, path))
 
             with self.history_path.open("a+") as file:
                 try:
@@ -72,7 +74,7 @@ class PathHistory:
                     # check if file was modified after loading
                     file.seek(0)
                     mtime_now = int(file.readline().strip() or "0")
-                    if mtime_now != mtime:
+                    if mtime_now != mtime_last:
                         continue
                     file.seek(0)
                     file.truncate(0)
@@ -82,10 +84,15 @@ class PathHistory:
                     fcntl.lockf(file, fcntl.LOCK_UN)
 
     def add(self, path):
-        def update_add(paths):
-            count, _ = paths.get(path) or (0, datetime.now())
-            count += 1
-            paths[path] = (count, datetime.now())
+        def update_add(mtime_last, now, paths):
+            count, update_last = paths.get(path) or (0, now)
+            if mtime_last == update_last:
+                # last update was for the same path, do not update
+                return False
+            else:
+                count += 1
+                paths[path] = (count, now)
+                return True
 
         path = Path(path).expanduser().resolve()
         if not path.exists():
@@ -93,10 +100,13 @@ class PathHistory:
         self.update(update_add)
 
     def cleanup(self):
-        def update_cleanup(paths):
+        def update_cleanup(_mtime_last, _now, paths):
+            updated = False
             for path in list(paths.keys()):
                 if not Path(path).exists():
                     del paths[path]
+                    updated = True
+            return updated
 
         self.update(update_cleanup)
 
@@ -160,18 +170,19 @@ def main():
         path_history.cleanup()
         _, paths = path_history.load()
         items = []
-        for path, (count, date) in paths.items():
-            items.append([count, date, path])
+        for path, (count, timestamp) in paths.items():
+            items.append([count, timestamp, path])
         items.sort(reverse=True)
-        for count, date, path in items:
-            print("{:<5} {} {}".format(count, date.strftime("[%F %T]"), path))
+        for count, timestamp, path in items:
+            date = datetime.fromtimestamp(timestamp).strftime("[%F %T]")
+            print("{:<5} {} {}".format(count, date, path))
 
     elif opts.command == "select":
         path_history.cleanup()
         _, paths = path_history.load()
         items = []
-        for path, (count, date) in paths.items():
-            items.append([count, date, path])
+        for path, (count, timestamp) in paths.items():
+            items.append([count, timestamp, path])
         items.sort(reverse=True)
 
         result = None
