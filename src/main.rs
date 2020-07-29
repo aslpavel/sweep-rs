@@ -16,15 +16,10 @@ use surf_n_term::{
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt,
 };
-
-mod score;
-use score::{FuzzyScorer, Haystack, ScoreResult, Scorer, SubstrScorer};
-mod rank;
-use rank::{Ranker, RankerResult};
-mod candidate;
-use candidate::{Candidate, FieldSelector};
-mod rpc;
-use rpc::{rpc_encode, rpc_requests, RPCRequest};
+use sweep_lib::{
+    rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, Haystack, RPCRequest, Ranker,
+    RankerResult, ScoreResult, Scorer, SubstrScorer,
+};
 
 fn main() -> Result<(), Error> {
     let mut args = Args::new()?;
