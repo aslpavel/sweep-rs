@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use sweep_lib::{Candidate, FuzzyScorer, Scorer, SubstrScorer};
+use sweep_lib::{score::KMPPattern, Candidate, FuzzyScorer, Scorer, SubstrScorer};
 
 pub fn scorer_benchmark(c: &mut Criterion) {
     let candidate = String::from("./benchmark/target/release/.fingerprint/semver-parser-a5e84da67081840e/lib-semver_parser-a5e84da67081840e.json");
-    let haystack = Candidate::new(candidate, ' ', &None);
+    let haystack = Candidate::new(candidate.clone(), ' ', &None);
     let niddle = "test";
     let fuzzy = FuzzyScorer::new();
     let substr = SubstrScorer::new();
@@ -12,6 +12,12 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1 as u64));
     group.bench_function("fuzzy", |b| b.iter(|| fuzzy.score_ref(niddle, &haystack)));
     group.bench_function("substr", |b| b.iter(|| substr.score_ref(niddle, &haystack)));
+    group.bench_function("knuth-morris-pratt", |b| {
+        b.iter(|| {
+            let kmp = KMPPattern::new(niddle.as_bytes());
+            kmp.search(candidate.as_bytes())
+        })
+    });
     group.finish();
 }
 

@@ -1,4 +1,4 @@
-mod score;
+pub mod score;
 pub use score::{FuzzyScorer, Haystack, ScoreResult, Scorer, SubstrScorer};
 mod rank;
 pub use rank::{Ranker, RankerResult};
