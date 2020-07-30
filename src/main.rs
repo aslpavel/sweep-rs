@@ -140,6 +140,7 @@ fn main() -> Result<(), Error> {
                     }
                 }
                 TerminalEvent::Wake => {
+                    // handle rpc requests
                     if let Some(requests) = requests.as_ref() {
                         loop {
                             let request = match requests.try_recv() {
@@ -210,7 +211,7 @@ fn main() -> Result<(), Error> {
 
         // update niddle
         ranker.niddle_set(input.get().collect());
-        let result = ranker.result();
+        let ranker_result = ranker.result();
 
         // label
         let mut label_view = view.view_mut(0, ..);
@@ -223,10 +224,10 @@ fn main() -> Result<(), Error> {
         // stats
         let stats_str = format!(
             " {}/{} {:.2?} [{}] ",
-            result.result.len(),
-            result.haystack_size,
-            result.duration,
-            result.scorer.name(),
+            ranker_result.result.len(),
+            ranker_result.haystack_size,
+            ranker_result.duration,
+            ranker_result.scorer.name(),
         );
         let input_stop = -(stats_str.chars().count() as i32 + 1);
         let mut stats_view = view.view_mut(0, input_stop..);
@@ -239,19 +240,21 @@ fn main() -> Result<(), Error> {
         input.render(&theme, view.view_mut(0, input_start..input_stop))?;
 
         // list
-        if list.items().result.generation != result.generation {
-            list.items_set(RankerResultThemed::new(theme.clone(), result));
+        if list.items().generation() != ranker_result.generation {
+            let old_result = list.items_set(RankerResultThemed::new(theme.clone(), ranker_result));
+            // dropping old result might add noticeable delay for large lists
+            rayon::spawn(move || std::mem::drop(old_result));
         }
         list.render(&theme, view.view_mut(1..height as i32, ..))?;
 
         if args.debug {
-            let frame_duration = Instant::now() - frame_start;
+            let frame_time = Instant::now() - frame_start;
             let debug_height = (height as i32 + 1)..(height as i32 + 7);
             let mut debug = view.view_mut(debug_height, ..);
             debug.erase(debug_face.bg);
             let mut debug_writer = debug.writer().face(debug_face);
             writeln!(&mut debug_writer, "row: {}", row_offset)?;
-            writeln!(&mut debug_writer, "frame_time: {:.2?}", frame_duration)?;
+            writeln!(&mut debug_writer, "frame_time: {:?}", frame_time)?;
             writeln!(&mut debug_writer, "event: {:?}", event)?;
             writeln!(&mut debug_writer, "term: {:?}", term.stats())?;
             writeln!(
@@ -552,20 +555,29 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
 
 struct RankerResultThemed<H> {
     theme: Theme,
-    result: Arc<RankerResult<H>>,
+    ranker_result: Arc<RankerResult<H>>,
 }
 
 impl<H> RankerResultThemed<H> {
-    fn new(theme: Theme, result: Arc<RankerResult<H>>) -> Self {
-        Self { theme, result }
+    fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>) -> Self {
+        Self {
+            theme,
+            ranker_result,
+        }
+    }
+
+    fn generation(&self) -> usize {
+        self.ranker_result.generation
     }
 }
 
 impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
     type Item = ScoreResultThemed<H>;
+
     fn len(&self) -> usize {
-        self.result.result.len()
+        self.ranker_result.result.len()
     }
+
     fn get(&self, index: usize) -> Option<Self::Item> {
         let face_default = Face::default().with_fg(Some(self.theme.fg));
         let face_inactive = Face::default().with_fg(Some(
@@ -573,7 +585,7 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
                 .bg
                 .blend(self.theme.fg.with_alpha(0.6), Blend::Over),
         ));
-        self.result
+        self.ranker_result
             .result
             .get(index)
             .map(|result| ScoreResultThemed {
