@@ -121,7 +121,7 @@ def collapse_path(path):
     return Path().joinpath(*parts)
 
 
-def candidates_from_path(root, soft_limit=1024):
+def candidates_from_path(root, soft_limit=4096):
     """Build candidates list from provided root path
 
     Soft limit determines the depth of traversal once soft limit
