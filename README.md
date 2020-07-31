@@ -7,7 +7,7 @@ Sweep is a tool for interactive search through a list of entries. It is inspired
   - Beautiful
   
 ### Demo time!
-![demo](/resources/demo.gif "demo")
+![demo](resources/demo.gif)
 
 ### Installation
   - Clone
