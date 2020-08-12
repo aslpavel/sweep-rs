@@ -46,7 +46,9 @@ fn main() -> Result<(), Error> {
 
     // initialize terminal
     let mut term = SystemTerminal::open(&args.tty_path)?;
-    // term.duplicate_output("/tmp/sweep.log")?;
+    if args.debug {
+        term.duplicate_output("/tmp/sweep_output_dup.txt")?;
+    }
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
         mode: DecMode::VisibleCursor,
@@ -62,11 +64,11 @@ fn main() -> Result<(), Error> {
         }
     }
     let term_size = term.size()?;
-    if height > term_size.height {
+    if height > term_size.cells.height {
         row_offset = 0;
-    } else if row_offset + height > term_size.height {
-        let scroll = row_offset + height - term_size.height;
-        row_offset = term_size.height - height;
+    } else if row_offset + height > term_size.cells.height {
+        let scroll = row_offset + height - term_size.cells.height;
+        row_offset = term_size.cells.height - height;
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
@@ -133,10 +135,10 @@ fn main() -> Result<(), Error> {
                     }
                 }
                 TerminalEvent::Resize(term_size) => {
-                    if height > term_size.height {
+                    if height > term_size.cells.height {
                         row_offset = 0;
-                    } else if row_offset + height > term_size.height {
-                        row_offset = term_size.height - height;
+                    } else if row_offset + height > term_size.cells.height {
+                        row_offset = term_size.cells.height - height;
                     }
                 }
                 TerminalEvent::Wake => {
