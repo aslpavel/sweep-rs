@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
+"""Simple tool to maintain and navigate visited path history
+"""
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 import argparse
 import fcntl
+import inspect
 import io
 import os
 import re
-import sweep_rpc as rpc
 import time
+import sweep_rpc as rpc
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -84,15 +87,16 @@ class PathHistory:
                     fcntl.lockf(file, fcntl.LOCK_UN)
 
     def add(self, path):
+        """Add/Update path in the history"""
+
         def update_add(mtime_last, now, paths):
             count, update_last = paths.get(path) or (0, now)
             if mtime_last == update_last:
                 # last update was for the same path, do not update
                 return False
-            else:
-                count += 1
-                paths[path] = (count, now)
-                return True
+            count += 1
+            paths[path] = (count, now)
+            return True
 
         path = Path(path).expanduser().resolve()
         if not path.exists():
@@ -100,6 +104,8 @@ class PathHistory:
         self.update(update_add)
 
     def cleanup(self):
+        """Remove paths from the history which no longre exist"""
+
         def update_cleanup(_mtime_last, _now, paths):
             updated = False
             for path in list(paths.keys()):
@@ -112,6 +118,7 @@ class PathHistory:
 
 
 def collapse_path(path):
+    """Collapse long paths with ellipsis"""
     home = Path.home().parts
     parts = path.parts
     if home == parts[: len(home)]:
@@ -121,6 +128,13 @@ def collapse_path(path):
     return Path().joinpath(*parts)
 
 
+def candidates_path_key(path):
+    """Key used to order path candidates"""
+    hidden = 1 if path.name.startswith('.') else 0
+    not_dir = 0 if path.is_dir() else 1
+    return (hidden, not_dir, path)
+
+
 def candidates_from_path(root, soft_limit=4096):
     """Build candidates list from provided root path
 
@@ -128,36 +142,43 @@ def candidates_from_path(root, soft_limit=4096):
     is reached none of the elements that are deeper will be returned
     """
     candidates = []
-    max_depth = soft_limit
+    max_depth = None
     queue = deque([(root, 0)])
     while queue:
         path, depth = queue.popleft()
-        if depth > max_depth:
+        if max_depth and depth > max_depth:
             break
         if not path.is_dir():
             continue
         try:
-            for item in path.iterdir():
+            for item in sorted(path.iterdir(), key=candidates_path_key):
                 if DEFAULT_IGNORE.match(item.name):
                     continue
-                candidates.append(str(item.relative_to(root)))
+                candidates.append("{}{}".format(
+                    item.relative_to(root),
+                    "/" if item.is_dir() else ""
+                ))
                 if len(candidates) >= soft_limit:
                     max_depth = depth
                 queue.append((item, depth + 1))
         except PermissionError:
             pass
-    candidates.sort()
     return candidates
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    """Maintain and navigate visited path history"""
+    parser = argparse.ArgumentParser(description=inspect.getdoc(main))
     subparsers = parser.add_subparsers(dest="command", required=True)
-    parser_add = subparsers.add_parser("add")
-    parser_add.add_argument("path", nargs="?")
-    subparsers.add_parser("list")
-    parser_select = subparsers.add_parser("select")
-    parser_select.add_argument("--theme")
+    parser_add = subparsers.add_parser("add", help="add/update path in the history")
+    parser_add.add_argument("path", nargs="?", help="target path")
+    subparsers.add_parser("list", help="list all entries in the history")
+    parser_select = subparsers.add_parser(
+        "select", help="interactively select path from the history or its subpaths"
+    )
+    parser_select.add_argument(
+        "--theme", help="sweep theme, see sweep help from more info"
+    )
     opts = parser.parse_args()
 
     path_history = PathHistory()
@@ -212,8 +233,8 @@ def main():
 
             def load_path(path):
                 sweep.niddle_set("")
-                sweep.prompt_set(str(collapse_path(current_path)))
-                candidates = candidates_from_path(current_path)
+                sweep.prompt_set(str(collapse_path(path)))
+                candidates = candidates_from_path(path)
                 if candidates:
                     sweep.candidates_clear()
                     sweep.candidates_extend(candidates)
