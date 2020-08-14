@@ -1,6 +1,7 @@
 use crate::{rank::Ranker, score::Haystack};
 use anyhow::Error;
 use std::{
+    fmt,
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
@@ -86,19 +87,20 @@ impl Candidate {
             handle.join().expect("haystack loader has failed");
         }
     }
+}
 
-    pub fn to_string(&self) -> String {
-        let mut result = String::new();
+impl fmt::Display for Candidate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (index, field) in self.inner.fields.iter().enumerate() {
             if index != 0 {
-                result.push(' ');
+                f.write_str(" ")?;
             }
             match field {
-                Ok(field) => result.push_str(field.as_ref()),
-                Err(field) => result.push_str(field.as_ref()),
+                Ok(field) => f.write_str(field.as_ref())?,
+                Err(field) => f.write_str(field.as_ref())?,
             }
         }
-        result
+        Ok(())
     }
 }
 
@@ -106,7 +108,7 @@ impl Candidate {
 ///
 /// Separated a glued to the begining of the chunk. Adjacent separators are treated as
 /// one separator.
-pub fn split_inclusive<'a>(sep: char, string: &'a str) -> impl Iterator<Item = &'a str> {
+pub fn split_inclusive(sep: char, string: &str) -> impl Iterator<Item = &'_ str> {
     SplitInclusive {
         indices: string.char_indices(),
         string,

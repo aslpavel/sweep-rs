@@ -99,6 +99,12 @@ const SCORE_MATCH_DOT: Score = 0.6;
 #[derive(Debug, Clone)]
 pub struct SubstrScorer;
 
+impl Default for SubstrScorer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubstrScorer {
     pub fn new() -> Self {
         SubstrScorer
@@ -114,17 +120,7 @@ impl Scorer for SubstrScorer {
         if niddle.is_empty() {
             return Some((SCORE_MAX, Positions::new()));
         }
-
-        let words =
-            niddle.split(|c| *c == ' ').filter_map(
-                |word| {
-                    if word.is_empty() {
-                        None
-                    } else {
-                        Some(word)
-                    }
-                },
-            );
+        let words = niddle.split(|c| *c == ' ').filter(|word| !word.is_empty());
 
         let mut positions = Positions::new();
         let mut match_start = 0;
@@ -181,11 +177,11 @@ impl<'a, T: PartialEq> KMPPattern<'a, T> {
 
     pub fn search(&self, haystack: &[T]) -> Option<usize> {
         let mut n_index = 0;
-        for h_index in 0..haystack.len() {
-            while n_index > 0 && self.niddle[n_index] != haystack[h_index] {
+        for (h_index, h) in haystack.iter().enumerate() {
+            while n_index > 0 && self.niddle[n_index] != *h {
                 n_index = self.table[n_index - 1];
             }
-            if self.niddle[n_index] == haystack[h_index] {
+            if self.niddle[n_index] == *h {
                 n_index += 1;
             }
             if n_index == self.niddle.len() {
@@ -201,6 +197,12 @@ impl<'a, T: PartialEq> KMPPattern<'a, T> {
 /// This will match any haystack item as long as the niddle is a sub-sequence of the heystack.
 #[derive(Clone, Debug)]
 pub struct FuzzyScorer;
+
+impl Default for FuzzyScorer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FuzzyScorer {
     pub fn new() -> Self {
@@ -234,13 +236,12 @@ impl FuzzyScorer {
 
     fn subseq(niddle: &[char], haystack: &[char]) -> bool {
         let mut n_iter = niddle.iter();
-        let mut h_iter = haystack.iter();
         let mut n = if let Some(n) = n_iter.next() {
             n
         } else {
             return true;
         };
-        while let Some(h) = h_iter.next() {
+        for h in haystack {
             if n == h {
                 n = if let Some(n_next) = n_iter.next() {
                     n_next
@@ -249,7 +250,7 @@ impl FuzzyScorer {
                 };
             }
         }
-        return false;
+        false
     }
 
     // This function is only called when we know that niddle is a sub-string of
@@ -306,10 +307,13 @@ impl FuzzyScorer {
         let mut h_iter = (0..h_len).rev();
         for i in (0..n_len).rev() {
             while let Some(j) = h_iter.next() {
-                if (match_required || d.get(i, j) == m.get(i, j)) && d.get(i, j) != SCORE_MIN {
+                if (match_required || (d.get(i, j) - m.get(i, j)).abs() < Score::EPSILON)
+                    && d.get(i, j) != SCORE_MIN
+                {
                     match_required = i > 0
                         && j > 0
-                        && m.get(i, j) == d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
+                        && (m.get(i, j) - (d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE)).abs()
+                            < Score::EPSILON;
                     positions.insert(j);
                     break;
                 }

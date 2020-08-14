@@ -25,7 +25,7 @@ impl RPCRequest {
         };
         let method = match map.get_mut("method").map(|v| v.take()) {
             Some(Value::String(method)) => method,
-            _ => return Err(format!("request method must be a string and present")),
+            _ => return Err("request method must be a string and present".to_string()),
         };
         match method.as_ref() {
             "candidates_extend" => {
@@ -34,13 +34,11 @@ impl RPCRequest {
                         .into_iter()
                         .map(|item| match item {
                             Value::String(item) => Ok(item),
-                            _ => Err(format!("candidate_extend items must be strings")),
+                            _ => Err("candidate_extend items must be strings".to_string()),
                         })
                         .collect::<Result<_, _>>()?,
                     _ => {
-                        return Err(format!(
-                            "candidates_extend request must include items field"
-                        ))
+                        return Err("candidates_extend request must include items field".to_string())
                     }
                 };
                 Ok(RPCRequest::CandidatesExtend { items })
@@ -48,7 +46,7 @@ impl RPCRequest {
             "niddle_set" => {
                 let niddle = match map.get_mut("niddle").map(|v| v.take()) {
                     Some(Value::String(niddle)) => niddle,
-                    _ => return Err(format!("niddle_set request must include niddle field")),
+                    _ => return Err("niddle_set request must include niddle field".to_string()),
                 };
                 Ok(RPCRequest::NiddleSet(niddle))
             }
@@ -57,21 +55,21 @@ impl RPCRequest {
             "key_binding" => {
                 let key = match map.get_mut("key").map(|v| v.take()) {
                     Some(Value::String(key)) => match Key::chord(key) {
-                        Err(_) => return Err(format!("key_binding faild to parse key")),
+                        Err(_) => return Err("key_binding faild to parse key".to_string()),
                         Ok(key) => key,
                     },
-                    _ => return Err(format!("key_binding requrest must include ")),
+                    _ => return Err("key_binding requrest must include ".to_string()),
                 };
                 let tag = match map.get_mut("tag").map(|v| v.take()) {
                     Some(tag) => tag,
-                    _ => return Err(format!("key_binding request must include tag field")),
+                    _ => return Err("key_binding request must include tag field".to_string()),
                 };
                 Ok(RPCRequest::KeyBinding { key, tag })
             }
             "prompt_set" => {
                 let prompt = match map.get_mut("prompt").map(|v| v.take()) {
                     Some(Value::String(prompt)) => prompt,
-                    _ => return Err(format!("prompt_set request must include prompt field")),
+                    _ => return Err("prompt_set request must include prompt field".to_string()),
                 };
                 Ok(RPCRequest::PromptSet(prompt))
             }
@@ -162,7 +160,7 @@ where
 /// Encode JSON Value as a RPC message
 pub fn rpc_encode<W: Write>(mut out: W, value: Value) -> Result<(), Error> {
     let message = serde_json::to_vec(&value)?;
-    write!(&mut out, "{}\n", message.len())?;
+    writeln!(&mut out, "{}", message.len())?;
     out.write_all(message.as_slice())?;
     out.flush()?;
     Ok(())

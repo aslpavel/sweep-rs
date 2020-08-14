@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![allow(clippy::reversed_empty_ranges)]
 
 use anyhow::{anyhow, Error};
 use serde_json::json;
@@ -6,6 +7,7 @@ use std::{
     fmt,
     io::Write,
     os::unix::io::AsRawFd,
+    str::FromStr,
     sync::{mpsc::TryRecvError, Arc},
     time::{Duration, Instant},
 };
@@ -74,7 +76,7 @@ fn main() -> Result<(), Error> {
 
     // initialize ranker
     let waker = term.waker();
-    let ranker = Ranker::new(args.scorer.next(), args.keep_order, move || {
+    let ranker = Ranker::new(args.scorer.toggle(), args.keep_order, move || {
         waker.wake().is_ok()
     });
     let requests = if !args.rpc {
@@ -131,7 +133,7 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     } else if name == KeyName::Char('s') {
-                        ranker.scorer_set(args.scorer.next());
+                        ranker.scorer_set(args.scorer.toggle());
                     }
                 }
                 TerminalEvent::Resize(term_size) => {
@@ -193,17 +195,14 @@ fn main() -> Result<(), Error> {
                 }
                 _ => (),
             }
-            match *event {
-                TerminalEvent::Key(key) => {
-                    if let Some(tag) = key_map.lookup_state(&mut key_map_state, key) {
-                        if key != Key::new(KeyName::Backspace, KeyMod::EMPTY)
-                            || input.get().count() == 0
-                        {
-                            rpc_encode(std::io::stdout(), json!({ "key_binding": tag.clone() }))?
-                        }
+            if let TerminalEvent::Key(key) = *event {
+                if let Some(tag) = key_map.lookup_state(&mut key_map_state, key) {
+                    if key != Key::new(KeyName::Backspace, KeyMod::EMPTY)
+                        || input.get().count() == 0
+                    {
+                        rpc_encode(std::io::stdout(), json!({ "key_binding": tag.clone() }))?
                     }
                 }
-                _ => (),
             }
             input.handle(event);
             list.handle(event);
@@ -281,7 +280,7 @@ fn main() -> Result<(), Error> {
     match result {
         Ok(result) => {
             if let Some(result) = result {
-                println!("{}", result.to_string());
+                println!("{}", result);
             }
             Ok(())
         }
@@ -313,7 +312,21 @@ impl ScorerSelector {
         }
     }
 
-    pub fn from_str(name: &str) -> Result<Self, Error> {
+    pub fn current(&self) -> &Arc<dyn Scorer> {
+        &self.scorers[self.index]
+    }
+
+    pub fn toggle(&mut self) -> Arc<dyn Scorer> {
+        let scorer = self.scorers[self.index].clone();
+        self.index = (self.index + 1) % self.scorers.len();
+        scorer
+    }
+}
+
+impl FromStr for ScorerSelector {
+    type Err = Error;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
         let this = Self::default();
         let index = this
             .scorers
@@ -322,16 +335,6 @@ impl ScorerSelector {
             .find_map(|(i, s)| if s.name() == name { Some(i) } else { None })
             .ok_or_else(|| anyhow!("Unknown scorer: {}", name))?;
         Ok(Self { index, ..this })
-    }
-
-    pub fn current(&self) -> &Arc<dyn Scorer> {
-        &self.scorers[self.index]
-    }
-
-    pub fn next(&mut self) -> Arc<dyn Scorer> {
-        let scorer = self.scorers[self.index].clone();
-        self.index = (self.index + 1) % self.scorers.len();
-        scorer
     }
 }
 
@@ -466,7 +469,7 @@ impl Args {
 
         let reversed = matches.is_present("reversed");
 
-        let scorer = ScorerSelector::from_str(matches.value_of("scorer").unwrap_or("fuzzy"))?;
+        let scorer = matches.value_of("scorer").unwrap_or("fuzzy").parse()?;
 
         let debug = matches.is_present("debug");
 
@@ -482,10 +485,7 @@ impl Args {
             Some(tty) => tty.to_string(),
         };
 
-        let no_match_use_input = match matches.value_of("no-match") {
-            Some("input") => true,
-            _ => false,
-        };
+        let no_match_use_input = matches!(matches.value_of("no-match"), Some("input"));
 
         Ok(Self {
             prompt,
