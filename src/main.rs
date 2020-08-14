@@ -136,12 +136,9 @@ fn main() -> Result<(), Error> {
                         ranker.scorer_set(args.scorer.toggle());
                     }
                 }
-                TerminalEvent::Resize(term_size) => {
-                    if height > term_size.cells.height {
-                        row_offset = 0;
-                    } else if row_offset + height > term_size.cells.height {
-                        row_offset = term_size.cells.height - height;
-                    }
+                TerminalEvent::Resize(_term_size) => {
+                    term.execute(TerminalCommand::Scroll(row_offset as i32))?;
+                    row_offset = 0;
                 }
                 TerminalEvent::Wake => {
                     // handle rpc requests
