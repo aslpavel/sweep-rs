@@ -278,10 +278,15 @@ def main():
                         current_path = None
 
                     elif value == key_dir_open:
-                        if current_path is not None:
+                        current = sweep.current()
+                        if current is None:
                             result = current_path
                         else:
-                            result = Path(sweep.current())
+                            if current_path is None:
+                                path = Path(current)
+                            else:
+                                path = current_path / current
+                            result = path if path.is_dir() else path.parent
                         break
 
         if result is not None:
