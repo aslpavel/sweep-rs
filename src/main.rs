@@ -55,6 +55,7 @@ fn main() -> Result<(), Error> {
         enable: false,
         mode: DecMode::VisibleCursor,
     })?;
+    term.execute(TerminalCommand::Title(args.title.clone()))?;
 
     // find current row offset
     let mut row_offset = 0;
@@ -354,6 +355,7 @@ pub struct Args {
     pub rpc: bool,
     pub tty_path: String,
     pub no_match_use_input: bool,
+    pub title: String,
 }
 
 impl Args {
@@ -439,6 +441,13 @@ impl Args {
                     .possible_values(&["nothing", "input"])
                     .help("string returned if there is no match"),
             )
+            .arg(
+                Arg::with_name("title")
+                    .long("title")
+                    .takes_value(true)
+                    .default_value("sweep")
+                    .help("set terminal title"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -484,6 +493,8 @@ impl Args {
 
         let no_match_use_input = matches!(matches.value_of("no-match"), Some("input"));
 
+        let title = matches.value_of("title").unwrap_or("sweep").to_string();
+
         Ok(Self {
             prompt,
             height,
@@ -497,6 +508,7 @@ impl Args {
             rpc,
             tty_path,
             no_match_use_input,
+            title,
         })
     }
 }

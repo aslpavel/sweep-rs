@@ -32,7 +32,9 @@ def main():
     opts = parser.parse_args()
 
     result = None
-    with Sweep(nth="2..", prompt="HISTORY", theme=opts.theme) as sweep:
+    with Sweep(
+        nth="2..", prompt="HISTORY", theme=opts.theme, title="command history"
+    ) as sweep:
         candidates = ["{} {}".format(d.strftime("[%F %T]"), e) for d, e in history()]
         sweep.candidates_extend(candidates)
 

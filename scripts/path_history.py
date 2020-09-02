@@ -130,7 +130,7 @@ def collapse_path(path):
 
 def candidates_path_key(path):
     """Key used to order path candidates"""
-    hidden = 1 if path.name.startswith('.') else 0
+    hidden = 1 if path.name.startswith(".") else 0
     not_dir = 0 if path.is_dir() else 1
     return (hidden, not_dir, path)
 
@@ -154,10 +154,9 @@ def candidates_from_path(root, soft_limit=4096):
             for item in sorted(path.iterdir(), key=candidates_path_key):
                 if DEFAULT_IGNORE.match(item.name):
                     continue
-                candidates.append("{}{}".format(
-                    item.relative_to(root),
-                    "/" if item.is_dir() else ""
-                ))
+                candidates.append(
+                    "{}{}".format(item.relative_to(root), "/" if item.is_dir() else "")
+                )
                 if len(candidates) >= soft_limit:
                     max_depth = depth
                 queue.append((item, depth + 1))
@@ -211,7 +210,7 @@ def main():
         key_dir_up = "backspace"  # only triggered when input is empty
         key_dir_hist = "ctrl+h"
         key_dir_open = "ctrl+o"
-        with rpc.Sweep(theme=opts.theme) as sweep:
+        with rpc.Sweep(theme=opts.theme, title="path history") as sweep:
             sweep.key_binding(key_dir_list, key_dir_list)
             sweep.key_binding(key_dir_up, key_dir_up)
             sweep.key_binding(key_dir_hist, key_dir_hist)
