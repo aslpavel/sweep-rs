@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 BASH_HISTORY_FILE = Path("~/.bash_history").expanduser().resolve()
-SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>[^#]+)\n")
+SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>([^#][^\n]+\n)+)")
 
 
 def history():
