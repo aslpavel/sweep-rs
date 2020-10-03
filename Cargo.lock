@@ -409,6 +409,7 @@ dependencies = [
 [[package]]
 name = "rasterize"
 version = "0.1.0"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#d4db346426ff0a37ffd4c8322bee861316be5e08"
 dependencies = [
  "log",
  "surface",
@@ -575,6 +576,7 @@ checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 [[package]]
 name = "surf_n_term"
 version = "0.1.0"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#d4db346426ff0a37ffd4c8322bee861316be5e08"
 dependencies = [
  "flate2",
  "fnv",
@@ -589,6 +591,7 @@ dependencies = [
 [[package]]
 name = "surface"
 version = "0.1.0"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#d4db346426ff0a37ffd4c8322bee861316be5e08"
 dependencies = [
  "fnv",
 ]

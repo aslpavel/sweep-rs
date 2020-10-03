@@ -14,7 +14,7 @@ name = "sweep"
 path = "src/main.rs"
 
 [dependencies]
-surf_n_term = { path = "../" }
+surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git", branch = "main" }
 rayon = "1.4"
 clap = "2.33"
 anyhow = "1.0.*"
