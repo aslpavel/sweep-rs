@@ -49,7 +49,7 @@ def main():
 
     if result is not None:
         _0, _1, entry = result.split(maxsplit=2)
-        print(entry)
+        print(entry, end="")
 
 
 if __name__ == "__main__":
