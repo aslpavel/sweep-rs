@@ -10,7 +10,10 @@ import inspect
 import io
 import os
 import re
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sweep_rpc as rpc
 
 

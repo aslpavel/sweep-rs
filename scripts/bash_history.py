@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-import argparse
-import re
-from sweep_rpc import Sweep, SWEEP_SELECTED
+"""Interactively choose entry from bash history
+"""
 from datetime import datetime
 from pathlib import Path
+import argparse
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sweep_rpc import Sweep, SWEEP_SELECTED
 
 BASH_HISTORY_FILE = Path("~/.bash_history").expanduser().resolve()
 SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>([^#][^\n]+\n)+)")
