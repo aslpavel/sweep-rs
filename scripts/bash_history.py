@@ -11,14 +11,16 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from sweep_rpc import Sweep, SWEEP_SELECTED
 
-BASH_HISTORY_FILE = Path("~/.bash_history").expanduser().resolve()
+BASH_HISTORY_FILE = "~/.bash_history"
 SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>([^#][^\n]+\n)+)")
 
 
-def history():
+def history(history_file=None):
     """List all bash history entries
     """
-    text = BASH_HISTORY_FILE.read_text()
+    if history_file is None:
+        history_file = BASH_HISTORY_FILE
+    text = Path(history_file).expanduser().resolve().read_text()
     unique = set()
     entries = []
     for entry in SPLITTER_RE.finditer(text):
@@ -34,14 +36,20 @@ def history():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--theme")
+    parser.add_argument("--theme", help="sweep theme (see sweep help)")
+    parser.add_argument(
+        "--history-file", default=BASH_HISTORY_FILE, help="path to history file"
+    )
     opts = parser.parse_args()
 
     result = None
     with Sweep(
         nth="2..", prompt="HISTORY", theme=opts.theme, title="command history"
     ) as sweep:
-        candidates = ["{} {}".format(d.strftime("[%F %T]"), e) for d, e in history()]
+        candidates = [
+            "{} {}".format(d.strftime("[%F %T]"), e)
+            for d, e in history(opts.history_file)
+        ]
         sweep.candidates_extend(candidates)
 
         while True:
