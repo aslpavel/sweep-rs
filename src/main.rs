@@ -155,7 +155,9 @@ fn main() -> Result<(), Error> {
                             use RPCRequest::*;
                             match request {
                                 Ok(PromptSet(new_prompt)) => prompt = new_prompt,
-                                Ok(KeyBinding { key, tag }) => key_map.register(key.as_ref(), tag),
+                                Ok(KeyBinding { key, tag }) => {
+                                    key_map.register(key.as_ref(), tag);
+                                }
                                 Ok(NiddleSet(niddle)) => {
                                     input.set(niddle.as_ref());
                                 }
