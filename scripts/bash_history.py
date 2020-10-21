@@ -44,7 +44,11 @@ def main():
 
     result = None
     with Sweep(
-        nth="2..", prompt="HISTORY", theme=opts.theme, title="command history"
+        nth="2..",
+        prompt="HISTORY",
+        theme=opts.theme,
+        title="command history",
+        keep_order=True,
     ) as sweep:
         candidates = [
             "{} {}".format(d.strftime("[%F %T]"), e)

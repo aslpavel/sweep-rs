@@ -38,6 +38,7 @@ class Sweep:
         tty: Optional[str] = None,
         debug: bool = False,
         title: Optional[str] = None,
+        keep_order=False,
     ):
         args = []
         args.extend(["--prompt", prompt])
@@ -56,6 +57,8 @@ class Sweep:
             args.append("--debug")
         if title:
             args.extend(["--title", title])
+        if keep_order:
+            args.append("--keep-order")
         self.proc = Popen(
             [*sweep, "--rpc", *args],
             stdout=PIPE,
