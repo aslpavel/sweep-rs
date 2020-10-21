@@ -247,7 +247,7 @@ impl FromStr for FieldSelect {
 }
 
 #[derive(Debug, Clone)]
-pub struct FieldSelector(Arc<Vec<FieldSelect>>);
+pub struct FieldSelector(Arc<[FieldSelect]>);
 
 impl FieldSelector {
     pub fn matches(&self, index: usize, size: usize) -> bool {
@@ -268,7 +268,7 @@ impl FromStr for FieldSelector {
         for select in string.split(',') {
             selector.push(select.trim().parse()?);
         }
-        Ok(FieldSelector(Arc::new(selector)))
+        Ok(FieldSelector(selector.into()))
     }
 }
 
