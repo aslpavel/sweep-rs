@@ -24,7 +24,7 @@ def history(history_file=None):
     entries = {}
     for entry in SPLITTER_RE.finditer(text):
         date = datetime.fromtimestamp(int(entry.group("date")))
-        entry = entry.group("entry")
+        entry = entry.group("entry").strip()
         entries[entry] = date
     entries = [(d, e) for e, d in entries.items()]
     entries.sort(key=lambda e: e[0], reverse=True)
