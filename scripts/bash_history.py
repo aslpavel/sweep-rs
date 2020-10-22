@@ -46,6 +46,7 @@ def main():
         theme=opts.theme,
         title="command history",
         keep_order=True,
+        scorer="substr",
     ) as sweep:
         candidates = [
             "{} {}".format(d.strftime("[%F %T]"), e)
