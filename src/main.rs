@@ -4,7 +4,6 @@
 use anyhow::{anyhow, Error};
 use serde_json::json;
 use std::{
-    fmt,
     io::Write,
     os::unix::io::AsRawFd,
     str::FromStr,
@@ -20,7 +19,7 @@ use surf_n_term::{
 };
 use sweep_lib::{
     rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, Haystack, RPCRequest, Ranker,
-    RankerResult, ScoreResult, Scorer, SubstrScorer,
+    RankerResult, ScoreResult, Scorer, ScorerBuilder, SubstrScorer,
 };
 
 fn main() -> Result<(), Error> {
@@ -290,21 +289,27 @@ fn main() -> Result<(), Error> {
 
 #[derive(Clone)]
 pub struct ScorerSelector {
-    scorers: Vec<Arc<dyn Scorer>>,
+    scorers: Vec<ScorerBuilder>,
     index: usize,
 }
 
 impl Default for ScorerSelector {
     fn default() -> Self {
         Self::new(vec![
-            Arc::new(FuzzyScorer::new()),
-            Arc::new(SubstrScorer::new()),
+            Arc::new(|niddle: &str| {
+                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
+                Arc::new(FuzzyScorer::new(niddle))
+            }),
+            Arc::new(|niddle: &str| {
+                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
+                Arc::new(SubstrScorer::new(niddle))
+            }),
         ])
     }
 }
 
 impl ScorerSelector {
-    pub fn new(scorers: Vec<Arc<dyn Scorer>>) -> Self {
+    pub fn new(scorers: Vec<ScorerBuilder>) -> Self {
         if scorers.is_empty() {
             Default::default()
         } else {
@@ -312,11 +317,7 @@ impl ScorerSelector {
         }
     }
 
-    pub fn current(&self) -> &Arc<dyn Scorer> {
-        &self.scorers[self.index]
-    }
-
-    pub fn toggle(&mut self) -> Arc<dyn Scorer> {
+    pub fn toggle(&mut self) -> ScorerBuilder {
         let scorer = self.scorers[self.index].clone();
         self.index = (self.index + 1) % self.scorers.len();
         scorer
@@ -332,15 +333,9 @@ impl FromStr for ScorerSelector {
             .scorers
             .iter()
             .enumerate()
-            .find_map(|(i, s)| if s.name() == name { Some(i) } else { None })
+            .find_map(|(i, s)| if s("").name() == name { Some(i) } else { None })
             .ok_or_else(|| anyhow!("Unknown scorer: {}", name))?;
         Ok(Self { index, ..this })
-    }
-}
-
-impl fmt::Debug for ScorerSelector {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ScorerSelector({})", self.current().name())
     }
 }
 

@@ -1,7 +1,7 @@
 pub mod score;
 pub use score::{FuzzyScorer, Haystack, ScoreResult, Scorer, SubstrScorer};
 mod rank;
-pub use rank::{Ranker, RankerResult};
+pub use rank::{Ranker, RankerResult, ScorerBuilder};
 mod candidate;
 pub use candidate::{Candidate, FieldSelector};
 mod rpc;

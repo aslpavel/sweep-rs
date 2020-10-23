@@ -13,7 +13,6 @@ use std::{
 pub fn rank<S, H, F, FR>(
     scorer: S,
     keep_order: bool,
-    niddle: &str,
     haystack: &[H],
     focus: F,
 ) -> Vec<ScoreResult<FR>>
@@ -23,10 +22,9 @@ where
     F: Fn(&H) -> FR + Send + Sync,
     FR: Haystack + Send,
 {
-    let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
     let mut result: Vec<_> = haystack
         .into_par_iter()
-        .filter_map(move |haystack| scorer.score(&niddle, focus(haystack)))
+        .filter_map(move |haystack| scorer.score(focus(haystack)))
         .collect();
     if !keep_order {
         result.par_sort_unstable_by(|a, b| {
@@ -36,12 +34,14 @@ where
     result
 }
 
+pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
+
 enum RankerCmd<H> {
     HaystackClear,
     HaystackReverse,
     HaystackAppend(Vec<H>),
     Niddle(String),
-    Scorer(Arc<dyn Scorer>),
+    Scorer(ScorerBuilder),
 }
 
 /// Ranker result
@@ -62,7 +62,7 @@ impl<H> Default for RankerResult<H> {
     fn default() -> Self {
         Self {
             result: Default::default(),
-            scorer: Arc::new(FuzzyScorer::new()),
+            scorer: Arc::new(FuzzyScorer::new(Vec::new())),
             duration: Duration::new(0, 0),
             haystack_size: 0,
             generation: 0,
@@ -84,7 +84,7 @@ where
     /// Create new ranker
     ///
     /// It will also spawn worker thread during construction.
-    pub fn new<N>(mut scorer: Arc<dyn Scorer>, keep_order: bool, mut notify: N) -> Self
+    pub fn new<N>(mut scorer_builder: ScorerBuilder, keep_order: bool, mut notify: N) -> Self
     where
         N: FnMut() -> bool + Send + 'static,
     {
@@ -107,6 +107,7 @@ where
                     let mut niddle_updated = false; // niddle was updated
                     let mut niddle_prefix = true; // previous niddle is a prefix of the new one
                     let mut scorer_updated = false;
+                    let mut scorer: Arc<dyn Scorer> = Arc::new(FuzzyScorer::new(Vec::new()));
                     for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                         match cmd {
                             RankerCmd::HaystackAppend(haystack) => {
@@ -123,7 +124,7 @@ where
                                 niddle = niddle_new;
                             }
                             RankerCmd::Scorer(scorer_new) => {
-                                scorer = scorer_new;
+                                scorer_builder = scorer_new;
                                 scorer_updated = true;
                             }
                             RankerCmd::HaystackReverse => {
@@ -142,45 +143,26 @@ where
                     let start = Instant::now();
                     let result_new = if scorer_updated {
                         // re-rank all data
-                        rank(
-                            &scorer,
-                            keep_order,
-                            niddle.as_ref(),
-                            haystack.as_ref(),
-                            Clone::clone,
-                        )
+                        scorer = scorer_builder(niddle.as_ref());
+                        rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
                     } else if !niddle_updated && haystack_new.is_empty() {
                         continue;
                     } else if niddle_updated {
+                        scorer = scorer_builder(niddle.as_ref());
                         if niddle_prefix && haystack_new.is_empty() {
                             // incremental ranking
                             let result_old = result.with(|result| Arc::clone(result));
-                            rank(
-                                &scorer,
-                                keep_order,
-                                niddle.as_ref(),
-                                result_old.result.as_ref(),
-                                |r| r.haystack.clone(),
-                            )
+                            rank(&scorer, keep_order, result_old.result.as_ref(), |r| {
+                                r.haystack.clone()
+                            })
                         } else {
                             // re-rank all data
-                            rank(
-                                &scorer,
-                                keep_order,
-                                niddle.as_ref(),
-                                haystack.as_ref(),
-                                Clone::clone,
-                            )
+                            rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
                         }
                     } else {
                         // rank only new data
-                        let result_add = rank(
-                            &scorer,
-                            keep_order,
-                            niddle.as_ref(),
-                            haystack_new.as_ref(),
-                            Clone::clone,
-                        );
+                        let result_add =
+                            rank(&scorer, keep_order, haystack_new.as_ref(), Clone::clone);
                         let result_old = result.with(|result| Arc::clone(result));
                         let mut result_new =
                             Vec::with_capacity(result_old.result.len() + result_add.len());
@@ -246,7 +228,7 @@ where
     }
 
     /// Set new scorer
-    pub fn scorer_set(&self, scorer: Arc<dyn Scorer>) {
+    pub fn scorer_set(&self, scorer: ScorerBuilder) {
         self.sender
             .send(RankerCmd::Scorer(scorer))
             .expect("failed to send scorer");

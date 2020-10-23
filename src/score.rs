@@ -17,21 +17,21 @@ pub trait Haystack {
 
 /// Scorer
 ///
-/// Scorer is used to score haystack against provided niddle.
+/// Scorer is used to score haystack against the niddle stored inside the scorer
 pub trait Scorer: Send + Sync + Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
 
     /// Actual scorer implementation which takes haystack as a dynamic referece.
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)>;
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)>;
 
     /// Generic implementation over anyting that implements `Haystack` trati.
-    fn score<H>(&self, niddle: &[char], haystack: H) -> Option<ScoreResult<H>>
+    fn score<H>(&self, haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
         Self: Sized,
     {
-        let (score, positions) = self.score_ref(niddle, haystack.chars())?;
+        let (score, positions) = self.score_ref(haystack.chars())?;
         Some(ScoreResult {
             haystack,
             score,
@@ -57,8 +57,8 @@ impl<'a, S: Scorer> Scorer for &'a S {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
-        (*self).score_ref(niddle, haystack)
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+        (*self).score_ref(haystack)
     }
 }
 
@@ -66,8 +66,8 @@ impl Scorer for Box<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
-        (**self).score_ref(niddle, haystack)
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+        (**self).score_ref(haystack)
     }
 }
 
@@ -75,8 +75,8 @@ impl Scorer for Arc<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
-        (**self).score_ref(niddle, haystack)
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+        (**self).score_ref(haystack)
     }
 }
 
@@ -97,17 +97,23 @@ const SCORE_MATCH_DOT: Score = 0.6;
 /// This scorer splits needle into words and finds each word as uninterrupted sequence of
 /// characters inside the haystack.
 #[derive(Debug, Clone)]
-pub struct SubstrScorer;
-
-impl Default for SubstrScorer {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct SubstrScorer {
+    words: Vec<KMPPattern<char>>,
 }
 
 impl SubstrScorer {
-    pub fn new() -> Self {
-        SubstrScorer
+    pub fn new(niddle: Vec<char>) -> Self {
+        let words = niddle
+            .split(|c| *c == ' ')
+            .filter_map(|word| {
+                if word.is_empty() {
+                    None
+                } else {
+                    Some(KMPPattern::new(word.to_vec()))
+                }
+            })
+            .collect();
+        Self { words }
     }
 }
 
@@ -116,17 +122,16 @@ impl Scorer for SubstrScorer {
         &"substr"
     }
 
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
-        if niddle.is_empty() {
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+        if self.words.is_empty() {
             return Some((SCORE_MAX, Positions::new()));
         }
-        let words = niddle.split(|c| *c == ' ').filter(|word| !word.is_empty());
 
         let mut positions = Positions::new();
         let mut match_start = 0;
         let mut match_end = 0;
-        for (i, word) in words.enumerate() {
-            match_end += KMPPattern::new(word).search(&haystack[match_end..])?;
+        for (i, word) in self.words.iter().enumerate() {
+            match_end += word.search(&haystack[match_end..])?;
             if i == 0 {
                 match_start = match_end;
             }
@@ -148,13 +153,14 @@ impl Scorer for SubstrScorer {
 }
 
 /// Knuth-Morris-Pratt pattern
-pub struct KMPPattern<'a, T> {
-    niddle: &'a [T],
+#[derive(Debug, Clone)]
+pub struct KMPPattern<T> {
+    niddle: Vec<T>,
     table: Vec<usize>,
 }
 
-impl<'a, T: PartialEq> KMPPattern<'a, T> {
-    pub fn new(niddle: &'a [T]) -> Self {
+impl<T: PartialEq> KMPPattern<T> {
+    pub fn new(niddle: Vec<T>) -> Self {
         if niddle.is_empty() {
             return Self {
                 niddle,
@@ -175,9 +181,20 @@ impl<'a, T: PartialEq> KMPPattern<'a, T> {
         Self { niddle, table }
     }
 
-    pub fn search(&self, haystack: &[T]) -> Option<usize> {
+    pub fn len(&self) -> usize {
+        self.niddle.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.niddle.is_empty()
+    }
+
+    pub fn search(&self, haystack: impl AsRef<[T]>) -> Option<usize> {
+        if self.niddle.is_empty() {
+            return None;
+        }
         let mut n_index = 0;
-        for (h_index, h) in haystack.iter().enumerate() {
+        for (h_index, h) in haystack.as_ref().iter().enumerate() {
             while n_index > 0 && self.niddle[n_index] != *h {
                 n_index = self.table[n_index - 1];
             }
@@ -196,17 +213,13 @@ impl<'a, T: PartialEq> KMPPattern<'a, T> {
 ///
 /// This will match any haystack item as long as the niddle is a sub-sequence of the heystack.
 #[derive(Clone, Debug)]
-pub struct FuzzyScorer;
-
-impl Default for FuzzyScorer {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct FuzzyScorer {
+    niddle: Vec<char>,
 }
 
 impl FuzzyScorer {
-    pub fn new() -> Self {
-        FuzzyScorer
+    pub fn new(niddle: Vec<char>) -> Self {
+        Self { niddle }
     }
 
     fn bonus(haystack: &[char], bonus: &mut [Score]) {
@@ -329,9 +342,9 @@ impl Scorer for FuzzyScorer {
         &"fuzzy"
     }
 
-    fn score_ref(&self, niddle: &[char], haystack: &[char]) -> Option<(Score, Positions)> {
-        if Self::subseq(niddle, haystack) {
-            Some(Self::score_impl(niddle, haystack))
+    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+        if Self::subseq(self.niddle.as_ref(), haystack) {
+            Some(Self::score_impl(self.niddle.as_ref(), haystack))
         } else {
             None
         }
@@ -386,16 +399,16 @@ mod tests {
 
     #[test]
     fn test_knuth_morris_pratt() {
-        let pattern = KMPPattern::new("acat".as_bytes());
+        let pattern = KMPPattern::new("acat".bytes().collect());
         assert_eq!(pattern.table, vec![0, 0, 1, 0]);
 
-        let pattern = KMPPattern::new("acacagt".as_bytes());
+        let pattern = KMPPattern::new("acacagt".bytes().collect());
         assert_eq!(pattern.table, vec![0, 0, 1, 2, 3, 0, 0]);
 
-        let pattern = KMPPattern::new("abcdabd".as_bytes());
-        assert_eq!(Some(13), pattern.search("abcabcdababcdabcdabde".as_bytes()));
+        let pattern = KMPPattern::new("abcdabd".bytes().collect());
+        assert_eq!(Some(13), pattern.search("abcabcdababcdabcdabde"));
 
-        let pattern = KMPPattern::new("abcabcd".as_bytes());
+        let pattern = KMPPattern::new("abcabcd".bytes().collect());
         assert_eq!(pattern.table, vec![0, 0, 0, 1, 2, 3, 0]);
     }
 
@@ -414,29 +427,25 @@ mod tests {
 
     #[test]
     fn test_fuzzy_scorer() {
-        let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new());
-
         let niddle: Vec<_> = "one".chars().collect();
-        let result = scorer
-            .score(&niddle, TestHaystack::new(" on/e two"))
-            .unwrap();
+        let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(niddle));
+
+        let result = scorer.score(TestHaystack::new(" on/e two")).unwrap();
         assert_eq!(
             result.positions,
             [1, 2, 4].iter().copied().collect::<BTreeSet<_>>()
         );
         assert!((result.score - 2.665).abs() < 0.001);
 
-        assert!(scorer.score(&niddle, TestHaystack::new("two")).is_none());
+        assert!(scorer.score(TestHaystack::new("two")).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
-        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new());
-
         let niddle: Vec<_> = "one  ababc".chars().collect();
-        let score = scorer
-            .score(&niddle, TestHaystack::new(" one babababcd "))
-            .unwrap();
+        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
+
+        let score = scorer.score(TestHaystack::new(" one babababcd ")).unwrap();
         assert_eq!(
             score.positions,
             [1, 2, 3, 8, 9, 10, 11, 12]

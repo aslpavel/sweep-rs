@@ -5,22 +5,16 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     let candidate = String::from("./benchmark/target/release/.fingerprint/semver-parser-a5e84da67081840e/test/lib-semver_parser-a5e84da67081840e.json");
     let haystack = Candidate::new(candidate.clone(), ' ', &None);
     let niddle: Vec<_> = "test".chars().collect();
-    let fuzzy = FuzzyScorer::new();
-    let substr = SubstrScorer::new();
+    let fuzzy = FuzzyScorer::new(niddle.clone());
+    let substr = SubstrScorer::new(niddle.clone());
+    let kmp = KMPPattern::new(niddle);
 
     let mut group = c.benchmark_group("scorer");
     group.throughput(Throughput::Elements(1 as u64));
-    group.bench_function("fuzzy", |b| {
-        b.iter(|| fuzzy.score_ref(&niddle, haystack.chars()))
-    });
-    group.bench_function("substr", |b| {
-        b.iter(|| substr.score_ref(&niddle, haystack.chars()))
-    });
+    group.bench_function("fuzzy", |b| b.iter(|| fuzzy.score_ref(haystack.chars())));
+    group.bench_function("substr", |b| b.iter(|| substr.score_ref(haystack.chars())));
     group.bench_function("knuth-morris-pratt", |b| {
-        b.iter(|| {
-            let kmp = KMPPattern::new(&niddle);
-            kmp.search(haystack.chars())
-        })
+        b.iter(|| kmp.search(haystack.chars()))
     });
     group.finish();
 }
