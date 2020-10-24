@@ -1,4 +1,4 @@
-use crate::{rank::Ranker, score::Haystack};
+use crate::{Haystack, Ranker};
 use anyhow::Error;
 use std::{
     fmt,

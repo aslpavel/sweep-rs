@@ -317,6 +317,10 @@ impl ScorerSelector {
         }
     }
 
+    pub fn name(&self) -> String {
+        self.scorers[self.index]("").name().to_string()
+    }
+
     pub fn toggle(&mut self) -> ScorerBuilder {
         let scorer = self.scorers[self.index].clone();
         self.index = (self.index + 1) % self.scorers.len();

@@ -1,4 +1,4 @@
-use crate::score::{FuzzyScorer, Haystack, ScoreResult, Scorer};
+use crate::{FuzzyScorer, Haystack, ScoreResult, Scorer};
 use rayon::prelude::*;
 use std::{
     sync::{mpsc, Arc, Mutex},
@@ -107,7 +107,7 @@ where
                     let mut niddle_updated = false; // niddle was updated
                     let mut niddle_prefix = true; // previous niddle is a prefix of the new one
                     let mut scorer_updated = false;
-                    let mut scorer: Arc<dyn Scorer> = Arc::new(FuzzyScorer::new(Vec::new()));
+                    let mut scorer = scorer_builder("");
                     for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                         match cmd {
                             RankerCmd::HaystackAppend(haystack) => {

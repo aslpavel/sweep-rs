@@ -1,5 +1,5 @@
-pub mod score;
-pub use score::{FuzzyScorer, Haystack, ScoreResult, Scorer, SubstrScorer};
+pub mod scorer;
+pub use scorer::{FuzzyScorer, Haystack, ScoreResult, Scorer, SubstrScorer};
 mod rank;
 pub use rank::{Ranker, RankerResult, ScorerBuilder};
 mod candidate;
