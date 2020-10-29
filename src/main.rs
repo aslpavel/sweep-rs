@@ -17,7 +17,7 @@ use surf_n_term::{
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt,
 };
-use sweep_lib::{
+use sweep::{
     rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, Haystack, RPCRequest, Ranker,
     RankerResult, ScoreResult, Scorer, ScorerBuilder, SubstrScorer,
 };

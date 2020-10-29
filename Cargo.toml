@@ -6,7 +6,7 @@ name = "sweep"
 version = "0.1.0"
 
 [lib]
-name = "sweep_lib"
+name = "sweep"
 path = "src/lib.rs"
 
 [[bin]]

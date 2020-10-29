@@ -174,6 +174,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd01a6eb3daaafa260f6fc94c3a6c36390abc2080e38e3e34ced87393fb77d80"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -206,6 +220,16 @@ dependencies = [
  "lazy_static",
  "memoffset",
  "scopeguard",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b2a58563f049aa3bae172bc4120f093b5901161c629f280a1f40ba55317d774"
+dependencies = [
+ "cfg-if 1.0.0",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -323,9 +347,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.79"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2448f6066e80e3bfc792e9c98bf705b4b0fc6e8ef5b43e5889aff0eaa9c58743"
+checksum = "4d58d1b70b004888f764dfbf6a26a3b0342a1632d33968e4a179d8011c760614"
 
 [[package]]
 name = "log"
@@ -344,9 +368,9 @@ checksum = "111b945ac72ec09eb7bc62a0fbdc3cc6e80555a7245f52a69d3921a75b53b153"
 
 [[package]]
 name = "memchr"
-version = "2.3.3"
+version = "2.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
+checksum = "0ee1c47aaa256ecabcaea351eae4a9b01ef39ed810004e298d2511ed284b1525"
 
 [[package]]
 name = "memoffset"
@@ -458,7 +482,7 @@ dependencies = [
 [[package]]
 name = "rasterize"
 version = "0.1.0"
-source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#411a46d508eb98363b01c8fd9580717072398de3"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#079c9219ea09b6ffd2fb68008c59d03c62ad6328"
 dependencies = [
  "log",
  "surface",
@@ -625,7 +649,7 @@ checksum = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 [[package]]
 name = "surf_n_term"
 version = "0.1.0"
-source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#411a46d508eb98363b01c8fd9580717072398de3"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#079c9219ea09b6ffd2fb68008c59d03c62ad6328"
 dependencies = [
  "flate2",
  "fnv",
@@ -642,7 +666,7 @@ dependencies = [
 [[package]]
 name = "surface"
 version = "0.1.0"
-source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#411a46d508eb98363b01c8fd9580717072398de3"
+source = "git+https://github.com/aslpavel/surf-n-term.git?branch=main#079c9219ea09b6ffd2fb68008c59d03c62ad6328"
 dependencies = [
  "fnv",
 ]
@@ -654,6 +678,7 @@ dependencies = [
  "anyhow",
  "clap",
  "criterion",
+ "crossbeam",
  "nix",
  "rayon",
  "serde_json",
@@ -662,9 +687,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.46"
+version = "1.0.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad5de3220ea04da322618ded2c42233d02baca219d6f160a3e9c87cda16c942"
+checksum = "cc371affeffc477f42a221a1e4297aedcea33d47d19b61455588bd9d8f6b19ac"
 dependencies = [
  "proc-macro2",
  "quote",
