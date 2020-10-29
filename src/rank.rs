@@ -1,7 +1,8 @@
 use crate::{FuzzyScorer, Haystack, ScoreResult, Scorer};
+use crossbeam::channel;
 use rayon::prelude::*;
 use std::{
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -73,7 +74,7 @@ impl<H> Default for RankerResult<H> {
 /// Asynchronous ranker
 #[derive(Clone)]
 pub struct Ranker<H> {
-    sender: mpsc::Sender<RankerCmd<H>>,
+    sender: channel::Sender<RankerCmd<H>>,
     result: Arc<Mutex<Arc<RankerResult<H>>>>,
 }
 
@@ -92,7 +93,7 @@ where
         let mut niddle = String::new();
         let mut haystack = Vec::new();
         let mut generation = 0usize;
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = channel::unbounded();
         std::thread::spawn({
             let result = result.clone();
             move || {

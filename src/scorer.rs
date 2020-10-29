@@ -1,9 +1,14 @@
-use std::{collections::BTreeSet, fmt::Debug, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fmt::{self, Debug},
+    ops::Deref,
+    sync::Arc,
+};
 
 /// Heystack
 ///
 /// Item that can scored against the niddle by the scorer.
-pub trait Haystack {
+pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// Slice containing all searchable lowercased characters. Characters from
     /// the inactive fields will not be present in this slice.
     fn chars(&self) -> &[char];
@@ -13,6 +18,50 @@ pub trait Haystack {
     /// Iterator over fields, only Ok items should be scored, and Err items
     /// should be ignored during scoring.
     fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_>;
+}
+
+#[derive(Clone)]
+pub struct StringHaystack {
+    string: String,
+    chars: Vec<char>,
+}
+
+impl StringHaystack {
+    fn new(string: &str) -> Self {
+        let string = string.to_string();
+        let chars = string.chars().collect();
+        Self { string, chars }
+    }
+}
+
+impl Deref for StringHaystack {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.string.as_ref()
+    }
+}
+
+impl Debug for StringHaystack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.string.fmt(f)
+    }
+}
+
+impl<S: AsRef<str>> From<S> for StringHaystack {
+    fn from(string: S) -> Self {
+        StringHaystack::new(string.as_ref())
+    }
+}
+
+impl Haystack for StringHaystack {
+    fn chars(&self) -> &[char] {
+        self.chars.as_slice()
+    }
+
+    fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
+        Box::new(std::iter::once(self.string.as_ref()).map(Ok))
+    }
 }
 
 /// Scorer
@@ -374,29 +423,6 @@ impl<'a> ScoreMatrix<'a> {
 mod tests {
     use super::*;
 
-    struct TestHaystack {
-        string: String,
-        chars: Vec<char>,
-    }
-
-    impl TestHaystack {
-        fn new(string: &str) -> Self {
-            let string = string.to_string();
-            let chars = string.chars().collect();
-            Self { string, chars }
-        }
-    }
-
-    impl Haystack for TestHaystack {
-        fn chars(&self) -> &[char] {
-            self.chars.as_slice()
-        }
-
-        fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
-            Box::new(std::iter::once(self.string.as_ref()).map(Ok))
-        }
-    }
-
     #[test]
     fn test_knuth_morris_pratt() {
         let pattern = KMPPattern::new("acat".bytes().collect());
@@ -430,14 +456,14 @@ mod tests {
         let niddle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(niddle));
 
-        let result = scorer.score(TestHaystack::new(" on/e two")).unwrap();
+        let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
         assert_eq!(
             result.positions,
             [1, 2, 4].iter().copied().collect::<BTreeSet<_>>()
         );
         assert!((result.score - 2.665).abs() < 0.001);
 
-        assert!(scorer.score(TestHaystack::new("two")).is_none());
+        assert!(scorer.score(StringHaystack::new("two")).is_none());
     }
 
     #[test]
@@ -445,7 +471,9 @@ mod tests {
         let niddle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
 
-        let score = scorer.score(TestHaystack::new(" one babababcd ")).unwrap();
+        let score = scorer
+            .score(StringHaystack::new(" one babababcd "))
+            .unwrap();
         assert_eq!(
             score.positions,
             [1, 2, 3, 8, 9, 10, 11, 12]

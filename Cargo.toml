@@ -16,10 +16,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.*"
 clap = "2.33"
+crossbeam = "0.8"
 nix = "0.18"
 rayon = "1.4"
 serde_json = "1.0"
 surf_n_term = {git = "https://github.com/aslpavel/surf-n-term.git", branch = "main"}
+# surf_n_term = {path = "../surf-n-term"}
 
 [dev-dependencies]
 criterion = "0.3.*"
