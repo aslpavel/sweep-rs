@@ -21,7 +21,7 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub fn new(string: String, delimiter: char, field_selector: &Option<FieldSelector>) -> Self {
+    pub fn new(string: String, delimiter: char, field_selector: Option<&FieldSelector>) -> Self {
         let fields = match field_selector {
             None => vec![Ok(string)],
             Some(field_selector) => {
@@ -53,15 +53,15 @@ impl Candidate {
     pub fn load_file<P: AsRef<Path>>(
         path: P,
         delimiter: char,
-        field_selector: &Option<FieldSelector>,
+        field_selector: Option<&FieldSelector>,
     ) -> std::io::Result<Vec<Self>> {
         let file = BufReader::new(File::open(path)?);
         file.lines()
-            .map(|l| Ok(Candidate::new(l?, delimiter, &field_selector)))
+            .map(|l| Ok(Candidate::new(l?, delimiter, field_selector)))
             .collect()
     }
 
-    pub fn load_stdin<F: Fn(Vec<Candidate>) -> () + Send + Sync + 'static>(
+    pub fn load_stdin<F: Fn(Vec<Candidate>) + Send + Sync + 'static>(
         delimiter: char,
         field_selector: Option<FieldSelector>,
         sync: bool,
@@ -74,7 +74,7 @@ impl Candidate {
             let mut lines = handle.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {
-                buf.push(Candidate::new(line, delimiter, &field_selector));
+                buf.push(Candidate::new(line, delimiter, field_selector.as_ref()));
                 if buf.len() >= buf_size {
                     buf_size *= 2;
                     callback(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));

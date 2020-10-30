@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 use std::{os::unix::io::AsRawFd, str::FromStr, sync::Arc};
 use surf_n_term::{widgets::Theme, Key};
 use sweep::{
-    rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, RPCRequest, Scorer,
-    ScorerBuilder, SubstrScorer, Sweep, SweepEvent, SweepOptions,
+    rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
+    SubstrScorer, Sweep, SweepEvent, SweepOptions, SweepRequest,
 };
 
 const SCORER_NEXT_TAG: &str = "scorer_next";
@@ -32,7 +32,7 @@ fn main() -> Result<(), Error> {
         title: args.title.clone(),
         scorer_builder: args.scorer.toggle(),
     })?;
-    sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into())?;
+    sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 
     if !args.rpc {
         Candidate::load_stdin(
@@ -60,7 +60,6 @@ fn main() -> Result<(), Error> {
                     }
                     _ => {}
                 },
-                _ => {}
             }
         }
     } else {
@@ -69,7 +68,7 @@ fn main() -> Result<(), Error> {
         loop {
             select! {
                 recv(rpc) -> request => {
-                    use RPCRequest::*;
+                    use SweepRequest::*;
                     match request? {
                         Ok(CandidatesExtend { items }) => {
                             let items = items
@@ -78,7 +77,7 @@ fn main() -> Result<(), Error> {
                                     Candidate::new(
                                         candidate,
                                         args.field_delimiter,
-                                        &args.field_selector,
+                                        args.field_selector.as_ref(),
                                     )
                                 });
                             sweep.haystack_extend(items);
@@ -87,19 +86,21 @@ fn main() -> Result<(), Error> {
                             sweep.haystack_clear()
                         }
                         Ok(NiddleSet(niddle)) => {
-                            sweep.niddle_set(niddle)?;
+                            sweep.niddle_set(niddle);
                         }
                         Ok(Current) => {
-                            sweep.current()?;
+                            let current = sweep.current()?.map(|current| current.to_string());
+                            rpc_encode(std::io::stdout(), json!({ "current": current }))?;
+
                         }
                         Ok(Terminate) => {
                             break;
                         }
                         Ok(KeyBinding { key, tag }) => {
-                            sweep.bind(key, tag)?;
+                            sweep.bind(key, tag);
                         }
                         Ok(PromptSet(prompt)) => {
-                            sweep.prompt_set(prompt)?;
+                            sweep.prompt_set(prompt);
                         }
                         Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
                     }
@@ -116,10 +117,6 @@ fn main() -> Result<(), Error> {
                                 }
                                 _ => rpc_encode(std::io::stdout(), json!({ "key_binding": tag }))?,
                             }
-                        }
-                        Ok(SweepEvent::Current(current)) => {
-                            let current = current.map(|current| current.to_string());
-                            rpc_encode(std::io::stdout(), json!({ "current": current }))?;
                         }
                         Err(_) => break,
                     }

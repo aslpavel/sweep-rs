@@ -8,6 +8,6 @@ pub use rank::{Ranker, RankerResult, ScorerBuilder};
 mod candidate;
 pub use candidate::{Candidate, FieldSelector};
 mod rpc;
-pub use rpc::{rpc_encode, rpc_requests, RPCErrorKind, RPCHandler, RPCRequest};
+pub use rpc::{rpc_encode, rpc_requests, RPCError, RPCErrorKind, RPCRequest, SweepRequest};
 mod sweep;
-pub use sweep::{sweep, Sweep, SweepEvent, SweepOptions};
+pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions};

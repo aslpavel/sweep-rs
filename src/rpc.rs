@@ -1,11 +1,15 @@
 use anyhow::Error;
 use crossbeam::channel::{unbounded, Receiver};
-use serde_json::{Map, Value};
-use std::io::{BufRead, BufReader, Read, Write};
+use serde_json::{json, Map, Value};
+use std::{
+    convert::TryFrom,
+    io::{BufRead, BufReader, Read, Write},
+    str::FromStr,
+};
 use surf_n_term::Key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RPCRequest {
+pub enum SweepRequest {
     CandidatesExtend { items: Vec<String> },
     CandidatesClear,
     NiddleSet(String),
@@ -15,7 +19,7 @@ pub enum RPCRequest {
     PromptSet(String),
 }
 
-impl RPCRequest {
+impl SweepRequest {
     pub fn from_value(value: Value) -> Result<Self, String> {
         let mut map = match value {
             Value::Object(map) => map,
@@ -39,17 +43,17 @@ impl RPCRequest {
                         return Err("candidates_extend request must include items field".to_string())
                     }
                 };
-                Ok(RPCRequest::CandidatesExtend { items })
+                Ok(SweepRequest::CandidatesExtend { items })
             }
             "niddle_set" => {
                 let niddle = match map.get_mut("niddle").map(|v| v.take()) {
                     Some(Value::String(niddle)) => niddle,
                     _ => return Err("niddle_set request must include niddle field".to_string()),
                 };
-                Ok(RPCRequest::NiddleSet(niddle))
+                Ok(SweepRequest::NiddleSet(niddle))
             }
-            "candidates_clear" => Ok(RPCRequest::CandidatesClear),
-            "terminate" => Ok(RPCRequest::Terminate),
+            "candidates_clear" => Ok(SweepRequest::CandidatesClear),
+            "terminate" => Ok(SweepRequest::Terminate),
             "key_binding" => {
                 let key = match map.get_mut("key").map(|v| v.take()) {
                     Some(Value::String(key)) => match Key::chord(key) {
@@ -62,34 +66,33 @@ impl RPCRequest {
                     Some(tag) => tag,
                     _ => return Err("key_binding request must include tag field".to_string()),
                 };
-                Ok(RPCRequest::KeyBinding { key, tag })
+                Ok(SweepRequest::KeyBinding { key, tag })
             }
             "prompt_set" => {
                 let prompt = match map.get_mut("prompt").map(|v| v.take()) {
                     Some(Value::String(prompt)) => prompt,
                     _ => return Err("prompt_set request must include prompt field".to_string()),
                 };
-                Ok(RPCRequest::PromptSet(prompt))
+                Ok(SweepRequest::PromptSet(prompt))
             }
-            "current" => Ok(RPCRequest::Current),
+            "current" => Ok(SweepRequest::Current),
             _ => Err(format!("unknown request method: {}", method)),
         }
     }
 
     #[cfg(test)]
     pub fn to_value(&self) -> Value {
-        use serde_json::json;
         use std::fmt::Write;
 
         match self {
-            RPCRequest::CandidatesExtend { items } => json!({
+            SweepRequest::CandidatesExtend { items } => json!({
                 "method": "candidates_extend",
                 "items": items,
             }),
-            RPCRequest::CandidatesClear => json!({ "method": "candidates_clear" }),
-            RPCRequest::Terminate => json!({ "method": "terminate" }),
-            RPCRequest::NiddleSet(niddle) => json!({ "method": "niddle_set", "niddle": niddle}),
-            RPCRequest::KeyBinding { key, tag } => {
+            SweepRequest::CandidatesClear => json!({ "method": "candidates_clear" }),
+            SweepRequest::Terminate => json!({ "method": "terminate" }),
+            SweepRequest::NiddleSet(niddle) => json!({ "method": "niddle_set", "niddle": niddle}),
+            SweepRequest::KeyBinding { key, tag } => {
                 let mut chord = String::new();
                 for (index, key) in key.iter().enumerate() {
                     if index != 0 {
@@ -99,8 +102,8 @@ impl RPCRequest {
                 }
                 json!({ "method": "key_binding", "key": chord, "tag": tag })
             }
-            RPCRequest::PromptSet(prompt) => json!({ "method": "prompt_set", "prompt": prompt }),
-            RPCRequest::Current => json!({ "method": "current" }),
+            SweepRequest::PromptSet(prompt) => json!({ "method": "prompt_set", "prompt": prompt }),
+            SweepRequest::Current => json!({ "method": "current" }),
         }
     }
 }
@@ -114,7 +117,7 @@ impl RPCRequest {
 /// <decimal string parsable as usize>\n
 /// <json encoded RPCRequest>
 /// ...
-pub fn rpc_requests<I, N>(input: I, mut notify: N) -> Receiver<Result<RPCRequest, String>>
+pub fn rpc_requests<I, N>(input: I, mut notify: N) -> Receiver<Result<SweepRequest, String>>
 where
     I: Read + Send + 'static,
     N: FnMut() -> bool + Send + 'static,
@@ -143,7 +146,7 @@ where
             request_buf.clear();
             request_buf.resize_with(size, || 0u8);
             input.read_exact(request_buf.as_mut_slice())?;
-            let request = RPCRequest::from_value(serde_json::from_slice(request_buf.as_slice())?);
+            let request = SweepRequest::from_value(serde_json::from_slice(request_buf.as_slice())?);
             send.send(request)?;
             if !notify() {
                 break;
@@ -175,20 +178,23 @@ pub enum RPCErrorKind {
 
 pub struct RPCError {
     kind: RPCErrorKind,
+    id: Value,
     data: Option<Value>,
 }
 
 impl RPCError {
-    pub fn new(kind: RPCErrorKind, data: Option<impl Into<Value>>) -> Self {
+    pub fn new(kind: RPCErrorKind, id: Option<Value>, data: Option<impl Into<Value>>) -> Self {
         Self {
             kind,
+            id: id.unwrap_or(Value::Null),
             data: data.map(|data| data.into()),
         }
     }
 
-    pub fn new_other(code: i32, message: String, data: Option<Value>) -> Self {
+    pub fn new_other(code: i32, message: String, id: Option<Value>, data: Option<Value>) -> Self {
         Self {
             kind: RPCErrorKind::Other(code, message),
+            id: id.unwrap_or(Value::Null),
             data,
         }
     }
@@ -205,135 +211,129 @@ impl From<RPCError> for Value {
             InternalError => (-32603, "Internal error"),
             Other(code, message) => (*code, message.as_ref()),
         };
-        let mut object = Map::new();
-        object.insert("code".to_string(), code.into());
-        object.insert("message".to_string(), message.into());
+        let mut error_obj = Map::new();
+        error_obj.insert("code".to_string(), code.into());
+        error_obj.insert("message".to_string(), message.into());
         if let Some(data) = error.data {
-            object.insert("data".to_string(), data);
+            error_obj.insert("data".to_string(), data);
         }
-        object.into()
+        json!({
+            "jsonrpc": "2.0",
+            "error": error_obj,
+            "id": error.id,
+        })
     }
 }
 
-pub struct RPCHandler<M> {
-    method_handler: M,
+pub struct RPCRequest {
+    pub method: String,
+    pub params: Value,
+    pub id: Option<Value>,
 }
 
-fn rpc_response(id: Value, result: Result<Value, RPCError>) -> Value {
-    let mut object = Map::with_capacity(3);
-    object.insert("jsonrpc".to_string(), "2.0".into());
-    object.insert("id".to_string(), id);
-    match result {
-        Ok(value) => object.insert("result".to_string(), value),
-        Err(error) => object.insert("error".to_string(), error.into()),
-    };
-    object.into()
-}
-
-impl<M> RPCHandler<M>
-where
-    M: FnMut(String, Option<Value>) -> Result<Value, RPCError>,
-{
-    pub fn new(method_handler: M) -> Self {
-        Self { method_handler }
-    }
-
-    /// Handle JSON-RPC requests according to [sepecification](https://www.jsonrpc.org/specification)
-    pub fn handle(&mut self, request: impl AsRef<[u8]>) -> Option<Value> {
-        // parse request
-        let request_object = match serde_json::from_slice(request.as_ref()) {
-            Ok(request) => request,
-            Err(error) => {
-                let error = RPCError::new(RPCErrorKind::ParseError, Some(error.to_string()));
-                return Some(rpc_response(Value::Null, Err(error)));
-            }
-        };
-        let (calls, is_batch) = match request_object {
-            Value::Array(calls) if !calls.is_empty() => (calls, true),
-            call @ Value::Object(_) => (vec![call], false),
-            _ => {
-                let error = RPCError::new(
-                    RPCErrorKind::InvalidRequest,
-                    Some("Request can only be non-empty Array or Object"),
-                );
-                return Some(rpc_response(Value::Null, Err(error)));
-            }
-        };
-        let mut response = Vec::new();
-        for call in calls {
-            // make sure call is a JSON object
-            let mut call_object = match call {
-                Value::Object(object) => object,
-                _ => {
-                    let error = RPCError::new(
-                        RPCErrorKind::InvalidRequest,
-                        Some("Request can only be an Object"),
-                    );
-                    response.push(rpc_response(Value::Null, Err(error)));
-                    continue;
-                }
-            };
-            // extract id
-            let id = match call_object.get_mut("id").map(|v| v.take()) {
-                None => None,
-                Some(id) => {
-                    if id.is_number() || id.is_string() || id.is_null() {
-                        Some(id)
-                    } else {
-                        let error = RPCError::new(
-                            RPCErrorKind::InvalidRequest,
-                            Some("Request id can only be String, Number of Null"),
-                        );
-                        response.push(rpc_response(Value::Null, Err(error)));
-                        continue;
-                    }
-                }
-            };
-            // check json RPC version
-            match call_object.get("jsonrpc") {
-                Some(Value::String(version)) => {
-                    if version != "2.0" {
-                        let error = RPCError::new(
-                            RPCErrorKind::InvalidRequest,
-                            Some(format!("Unsupported protocol version: {}", version)),
-                        );
-                        response.push(rpc_response(id.unwrap_or(Value::Null), Err(error)));
-                        continue;
-                    }
-                }
-                _ => {
-                    let error = RPCError::new(
-                        RPCErrorKind::InvalidRequest,
-                        Some("Protocol version must be provided and be a string"),
-                    );
-                    response.push(rpc_response(id.unwrap_or(Value::Null), Err(error)));
-                    continue;
-                }
-            };
-            // get method and params
-            let method = match call_object.get_mut("method").map(|v| v.take()) {
-                Some(Value::String(method)) => method,
-                _ => {
-                    let error = RPCError::new(
-                        RPCErrorKind::InvalidRequest,
-                        Some("Method must be provided and be a string"),
-                    );
-                    response.push(rpc_response(id.unwrap_or(Value::Null), Err(error)));
-                    continue;
-                }
-            };
-            let params = call_object.get_mut("params").map(|v| v.take());
-            // execute method
-            let result = (self.method_handler)(method, params);
-            if let Some(id) = id {
-                response.push(rpc_response(id, result));
-            }
-        }
-        if is_batch {
-            Some(response.into())
+impl RPCRequest {
+    pub fn response_ok(self, result: impl Into<Value>) -> Option<Value> {
+        if let Some(id) = self.id {
+            Some(json!({
+                "jsonrpc": "2.0",
+                "result": result.into(),
+                "id": id,
+            }))
         } else {
-            response.into_iter().next()
+            None
         }
+    }
+
+    pub fn response_err(self, kind: RPCErrorKind, data: Option<impl Into<Value>>) -> Value {
+        RPCError::new(kind, self.id, data).into()
+    }
+
+    pub fn from_value(value: Value) -> Result<Self, RPCError> {
+        // make sure call is an object
+        let mut request = match value {
+            Value::Object(object) => object,
+            _ => {
+                return Err(RPCError::new(
+                    RPCErrorKind::InvalidRequest,
+                    None,
+                    Some("Request can only be an Object"),
+                ));
+            }
+        };
+        // extract id
+        let id = request
+            .get_mut("id")
+            .map(|value| {
+                let id = value.take();
+                if id.is_number() || id.is_string() || id.is_null() {
+                    Ok(id)
+                } else {
+                    Err(RPCError::new(
+                        RPCErrorKind::InvalidRequest,
+                        None,
+                        Some("Request id can only be String, Number of Null"),
+                    ))
+                }
+            })
+            .transpose()?;
+        // check json RPC version
+        match request.get("jsonrpc") {
+            Some(Value::String(version)) => {
+                if version != "2.0" {
+                    return Err(RPCError::new(
+                        RPCErrorKind::InvalidRequest,
+                        id,
+                        Some(format!("Unsupported protocol version: {}", version)),
+                    ));
+                }
+            }
+            _ => {
+                return Err(RPCError::new(
+                    RPCErrorKind::InvalidRequest,
+                    id,
+                    Some("Protocol version must be provided and be a string"),
+                ));
+            }
+        };
+        // extract method name
+        let method = match request.get_mut("method").map(|v| v.take()) {
+            Some(Value::String(method)) => method,
+            _ => {
+                return Err(RPCError::new(
+                    RPCErrorKind::InvalidRequest,
+                    id,
+                    Some("Method must be provided and be a string"),
+                ));
+            }
+        };
+        // extract params
+        let params = request
+            .get_mut("params")
+            .map_or_else(|| Value::Null, |v| v.take());
+        Ok(Self { method, params, id })
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for RPCRequest {
+    type Error = RPCError;
+
+    fn try_from(slice: &'a [u8]) -> Result<Self, Self::Error> {
+        match serde_json::from_slice(slice) {
+            Ok(value) => Self::from_value(value),
+            Err(error) => Err(RPCError::new(
+                RPCErrorKind::ParseError,
+                None,
+                Some(error.to_string()),
+            )),
+        }
+    }
+}
+
+impl FromStr for RPCRequest {
+    type Err = RPCError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s.as_bytes())
     }
 }
 
@@ -351,18 +351,18 @@ mod tests {
     #[test]
     fn test_rpc_request_encode_decode() -> Result<(), Error> {
         let reference = vec![
-            RPCRequest::CandidatesClear,
-            RPCRequest::CandidatesExtend {
+            SweepRequest::CandidatesClear,
+            SweepRequest::CandidatesExtend {
                 items: vec!["one".to_string(), "two".to_string()],
             },
-            RPCRequest::Terminate,
-            RPCRequest::NiddleSet("test".to_string()),
-            RPCRequest::KeyBinding {
+            SweepRequest::Terminate,
+            SweepRequest::NiddleSet("test".to_string()),
+            SweepRequest::KeyBinding {
                 key: Key::chord("ctrl+c")?,
                 tag: "test".into(),
             },
-            RPCRequest::PromptSet("prompt".to_string()),
-            RPCRequest::Current,
+            SweepRequest::PromptSet("prompt".to_string()),
+            SweepRequest::Current,
         ];
 
         let mut buf = Cursor::new(Vec::new());
