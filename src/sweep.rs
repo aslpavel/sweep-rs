@@ -43,6 +43,22 @@ impl Default for SweepOptions {
     }
 }
 
+/// Simple sweep function when you just need to select single entry from the list
+pub fn sweep<H, HS>(options: SweepOptions, haystack: HS) -> Result<Option<H>, Error>
+where
+    HS: IntoIterator,
+    H: Haystack + From<HS::Item>,
+{
+    let sweep = Sweep::new(options)?;
+    sweep.haystack_extend(haystack);
+    for event in sweep.events().iter() {
+        if let SweepEvent::Select(entry) = event {
+            return Ok(Some(entry));
+        }
+    }
+    Ok(None)
+}
+
 enum SweepCommand {
     NiddleSet(String),
     PromptSet(String),

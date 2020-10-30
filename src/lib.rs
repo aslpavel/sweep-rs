@@ -10,4 +10,4 @@ pub use candidate::{Candidate, FieldSelector};
 mod rpc;
 pub use rpc::{rpc_encode, rpc_requests, RPCErrorKind, RPCHandler, RPCRequest};
 mod sweep;
-pub use sweep::{Sweep, SweepEvent, SweepOptions};
+pub use sweep::{sweep, Sweep, SweepEvent, SweepOptions};

@@ -74,9 +74,9 @@ fn main() -> Result<(), Error> {
                         Ok(CandidatesExtend { items }) => {
                             let items = items
                                 .into_iter()
-                                .map(|c| {
+                                .map(|candidate| {
                                     Candidate::new(
-                                        c,
+                                        candidate,
                                         args.field_delimiter,
                                         &args.field_selector,
                                     )
