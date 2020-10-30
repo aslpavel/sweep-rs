@@ -1,9 +1,7 @@
 use anyhow::Error;
+use crossbeam::channel::{unbounded, Receiver};
 use serde_json::{Map, Value};
-use std::{
-    io::{BufRead, BufReader, Read, Write},
-    sync::mpsc::{channel, Receiver},
-};
+use std::io::{BufRead, BufReader, Read, Write};
 use surf_n_term::Key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +119,7 @@ where
     I: Read + Send + 'static,
     N: FnMut() -> bool + Send + 'static,
 {
-    let (send, recv) = channel();
+    let (send, recv) = unbounded();
     let mut input = BufReader::new(input);
     std::thread::spawn(move || -> Result<(), Error> {
         let mut size_buf = String::new();

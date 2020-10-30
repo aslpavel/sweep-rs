@@ -1,4 +1,4 @@
-use crate::{Haystack, Ranker};
+use crate::Haystack;
 use anyhow::Error;
 use std::{
     fmt,
@@ -61,11 +61,11 @@ impl Candidate {
             .collect()
     }
 
-    pub fn load_stdin(
-        ranker: Ranker<Candidate>,
+    pub fn load_stdin<F: Fn(Vec<Candidate>) -> () + Send + Sync + 'static>(
         delimiter: char,
         field_selector: Option<FieldSelector>,
         sync: bool,
+        callback: F,
     ) {
         let mut buf_size = 10;
         let handle = std::thread::spawn(move || {
@@ -77,11 +77,10 @@ impl Candidate {
                 buf.push(Candidate::new(line, delimiter, &field_selector));
                 if buf.len() >= buf_size {
                     buf_size *= 2;
-                    ranker
-                        .haystack_extend(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));
+                    callback(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));
                 }
             }
-            ranker.haystack_extend(buf);
+            callback(buf);
         });
         if sync {
             handle.join().expect("haystack loader has failed");
