@@ -181,6 +181,10 @@ def main():
     parser_select.add_argument(
         "--theme", help="sweep theme, see sweep help from more info"
     )
+    parser_select.add_argument(
+        "--sweep", default="sweep", help="path to the sweep command"
+    )
+    parser_select.add_argument("--tty", help="path to the tty")
     opts = parser.parse_args()
 
     path_history = PathHistory()
@@ -213,7 +217,9 @@ def main():
         key_dir_up = "backspace"  # only triggered when input is empty
         key_dir_hist = "ctrl+h"
         key_dir_open = "ctrl+o"
-        with rpc.Sweep(theme=opts.theme, title="path history") as sweep:
+        with rpc.Sweep(
+            sweep=[opts.sweep], theme=opts.theme, title="path history", tty=opts.tty
+        ) as sweep:
             sweep.key_binding(key_dir_list, key_dir_list)
             sweep.key_binding(key_dir_up, key_dir_up)
             sweep.key_binding(key_dir_hist, key_dir_hist)

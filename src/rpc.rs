@@ -6,107 +6,6 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     str::FromStr,
 };
-use surf_n_term::Key;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SweepRequest {
-    CandidatesExtend { items: Vec<String> },
-    CandidatesClear,
-    NiddleSet(String),
-    Current,
-    Terminate,
-    KeyBinding { key: Vec<Key>, tag: Value },
-    PromptSet(String),
-}
-
-impl SweepRequest {
-    pub fn from_value(value: Value) -> Result<Self, String> {
-        let mut map = match value {
-            Value::Object(map) => map,
-            _ => return Err(format!("request must be an object: {}", value)),
-        };
-        let method = match map.get_mut("method").map(|v| v.take()) {
-            Some(Value::String(method)) => method,
-            _ => return Err("request method must be a string and present".to_string()),
-        };
-        match method.as_ref() {
-            "candidates_extend" => {
-                let items = match map.get_mut("items").map(|v| v.take()) {
-                    Some(Value::Array(items)) => items
-                        .into_iter()
-                        .map(|item| match item {
-                            Value::String(item) => Ok(item),
-                            _ => Err("candidate_extend items must be strings".to_string()),
-                        })
-                        .collect::<Result<_, _>>()?,
-                    _ => {
-                        return Err("candidates_extend request must include items field".to_string())
-                    }
-                };
-                Ok(SweepRequest::CandidatesExtend { items })
-            }
-            "niddle_set" => {
-                let niddle = match map.get_mut("niddle").map(|v| v.take()) {
-                    Some(Value::String(niddle)) => niddle,
-                    _ => return Err("niddle_set request must include niddle field".to_string()),
-                };
-                Ok(SweepRequest::NiddleSet(niddle))
-            }
-            "candidates_clear" => Ok(SweepRequest::CandidatesClear),
-            "terminate" => Ok(SweepRequest::Terminate),
-            "key_binding" => {
-                let key = match map.get_mut("key").map(|v| v.take()) {
-                    Some(Value::String(key)) => match Key::chord(key) {
-                        Err(_) => return Err("key_binding faild to parse key".to_string()),
-                        Ok(key) => key,
-                    },
-                    _ => return Err("key_binding requrest must include ".to_string()),
-                };
-                let tag = match map.get_mut("tag").map(|v| v.take()) {
-                    Some(tag) => tag,
-                    _ => return Err("key_binding request must include tag field".to_string()),
-                };
-                Ok(SweepRequest::KeyBinding { key, tag })
-            }
-            "prompt_set" => {
-                let prompt = match map.get_mut("prompt").map(|v| v.take()) {
-                    Some(Value::String(prompt)) => prompt,
-                    _ => return Err("prompt_set request must include prompt field".to_string()),
-                };
-                Ok(SweepRequest::PromptSet(prompt))
-            }
-            "current" => Ok(SweepRequest::Current),
-            _ => Err(format!("unknown request method: {}", method)),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn to_value(&self) -> Value {
-        use std::fmt::Write;
-
-        match self {
-            SweepRequest::CandidatesExtend { items } => json!({
-                "method": "candidates_extend",
-                "items": items,
-            }),
-            SweepRequest::CandidatesClear => json!({ "method": "candidates_clear" }),
-            SweepRequest::Terminate => json!({ "method": "terminate" }),
-            SweepRequest::NiddleSet(niddle) => json!({ "method": "niddle_set", "niddle": niddle}),
-            SweepRequest::KeyBinding { key, tag } => {
-                let mut chord = String::new();
-                for (index, key) in key.iter().enumerate() {
-                    if index != 0 {
-                        chord.push_str(" ");
-                    }
-                    write!(&mut chord, "{:?}", *key).unwrap();
-                }
-                json!({ "method": "key_binding", "key": chord, "tag": tag })
-            }
-            SweepRequest::PromptSet(prompt) => json!({ "method": "prompt_set", "prompt": prompt }),
-            SweepRequest::Current => json!({ "method": "current" }),
-        }
-    }
-}
 
 /// Create request receiver channel
 ///
@@ -117,7 +16,7 @@ impl SweepRequest {
 /// <decimal string parsable as usize>\n
 /// <json encoded RPCRequest>
 /// ...
-pub fn rpc_requests<I, N>(input: I, mut notify: N) -> Receiver<Result<SweepRequest, String>>
+pub fn rpc_decode<I, N>(input: I, mut notify: N) -> Receiver<Result<RPCRequest, RPCError>>
 where
     I: Read + Send + 'static,
     N: FnMut() -> bool + Send + 'static,
@@ -137,7 +36,11 @@ where
             let size = match size_buf.trim().parse::<usize>() {
                 Ok(size) => size,
                 Err(_) => {
-                    send.send(Err(format!("failed to parse request size: {}", size_buf)))?;
+                    send.send(Err(RPCError::new(
+                        RPCErrorKind::ParseError,
+                        None,
+                        Some("failed to parse request size"),
+                    )))?;
                     break;
                 }
             };
@@ -146,8 +49,7 @@ where
             request_buf.clear();
             request_buf.resize_with(size, || 0u8);
             input.read_exact(request_buf.as_mut_slice())?;
-            let request = SweepRequest::from_value(serde_json::from_slice(request_buf.as_slice())?);
-            send.send(request)?;
+            send.send(RPCRequest::try_from(request_buf.as_slice()))?;
             if !notify() {
                 break;
             }
@@ -165,6 +67,21 @@ pub fn rpc_encode<W: Write>(mut out: W, value: Value) -> Result<(), Error> {
     out.write_all(message.as_slice())?;
     out.flush()?;
     Ok(())
+}
+
+pub fn rpc_call<W: Write>(
+    out: W,
+    method: impl AsRef<str>,
+    params: impl Into<Value>,
+) -> Result<(), Error> {
+    rpc_encode(
+        out,
+        json!({
+            "jsonrpc": "2.0",
+            "method": method.as_ref(),
+            "params": params.into(),
+        }),
+    )
 }
 
 pub enum RPCErrorKind {
@@ -334,55 +251,5 @@ impl FromStr for RPCRequest {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::try_from(s.as_bytes())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        io::Cursor,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        },
-    };
-
-    #[test]
-    fn test_rpc_request_encode_decode() -> Result<(), Error> {
-        let reference = vec![
-            SweepRequest::CandidatesClear,
-            SweepRequest::CandidatesExtend {
-                items: vec!["one".to_string(), "two".to_string()],
-            },
-            SweepRequest::Terminate,
-            SweepRequest::NiddleSet("test".to_string()),
-            SweepRequest::KeyBinding {
-                key: Key::chord("ctrl+c")?,
-                tag: "test".into(),
-            },
-            SweepRequest::PromptSet("prompt".to_string()),
-            SweepRequest::Current,
-        ];
-
-        let mut buf = Cursor::new(Vec::new());
-        for request in reference.iter() {
-            rpc_encode(buf.get_mut(), request.to_value())?;
-        }
-
-        let count = Arc::new(AtomicUsize::new(0));
-        let requests = rpc_requests(buf, {
-            let count = count.clone();
-            move || {
-                count.fetch_add(1, Ordering::SeqCst);
-                true
-            }
-        });
-
-        let result = requests.iter().collect::<Result<_, _>>();
-        assert_eq!(result, Ok(reference));
-        assert_eq!(count.load(Ordering::SeqCst), 8);
-
-        Ok(())
     }
 }

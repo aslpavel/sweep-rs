@@ -37,16 +37,20 @@ def main():
     parser.add_argument(
         "--history-file", default=BASH_HISTORY_FILE, help="path to history file"
     )
+    parser.add_argument("--sweep", default="sweep", help="path to the sweep command")
+    parser.add_argument("--tty", help="path to the tty")
     opts = parser.parse_args()
 
     result = None
     with Sweep(
+        sweep=[opts.sweep],
         nth="2..",
         prompt="HISTORY",
         theme=opts.theme,
         title="command history",
         keep_order=True,
         scorer="substr",
+        tty=opts.tty,
     ) as sweep:
         candidates = [
             "{} {}".format(d.strftime("[%F %T]"), e)

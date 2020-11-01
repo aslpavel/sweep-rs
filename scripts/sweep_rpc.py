@@ -2,7 +2,7 @@
 """Very simple RPC interface around sweep command
 """
 from collections import deque
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, TimeoutExpired
 from typing import Optional, List, Any, Tuple, Dict
 import json
 import select
@@ -10,9 +10,9 @@ import select
 __all__ = ("Sweep",)
 
 
-SWEEP_SELECTED = "selected"
-SWEEP_CURRENT = "current"
-SWEEP_KEYBINDING = "key_binding"
+NOT_USED = object()
+SWEEP_SELECTED = "select"
+SWEEP_KEYBINDING = "bind"
 
 
 class Sweep:
@@ -67,66 +67,87 @@ class Sweep:
             # and you want to ignore Ctrl-C comming from this pythone process.
             # start_new_session=True,
         )
-        self.queue: Dict[str, Any] = {}
+        self.events: List[Tuple[str, Any]] = deque()
+        self.last_id = 0
 
     def candidates_extend(self, items: List[str]):
         """Extend candidates set"""
-        rpc_encode(self.proc.stdin, "candidates_extend", items=items)
+        return self.call("haystack_extend", items)
 
     def candidates_clear(self):
         """Clear all candidates"""
-        rpc_encode(self.proc.stdin, "candidates_clear")
+        return self.call("haystack_clear")
 
     def niddle_set(self, niddle: str):
         """Set new niddle"""
-        rpc_encode(self.proc.stdin, "niddle_set", niddle=niddle)
+        return self.call("niddle_set", niddle)
 
     def key_binding(self, key: str, tag: Any):
         """Register new hotkey"""
-        rpc_encode(self.proc.stdin, "key_binding", key=key, tag=tag)
+        return self.call("key_binding", {"key": key, "tag": tag})
 
     def prompt_set(self, prompt: str):
         """Set sweep's prompt string"""
-        rpc_encode(self.proc.stdin, "prompt_set", prompt=prompt)
-
-    def terminate(self):
-        """Terminate underlying sweep process"""
-        if self.proc.poll() is None:
-            rpc_encode(self.proc.stdin, "terminate")
-        self.proc.wait()
+        return self.call("prompt_set", prompt)
 
     def current(self, timeout=None):
         """Currently selected element"""
-        rpc_encode(self.proc.stdin, "current")
-        msg = self.poll(timeout, wait_type=SWEEP_CURRENT)
-        if msg is None:
-            return None
-        return msg[1]
+        return self.call("current")
 
-    def poll(
-        self, timeout: Optional[float] = None, wait_type=None
-    ) -> Optional[Tuple[str, Any]]:
-        """Wait for events from the sweep process"""
-        if wait_type is not None and wait_type in self.queue:
-            value = self.queue.pop(wait_type)
-            return wait_type, value
+    def terminate(self):
+        """Terminate underlying sweep process"""
+        if not hasattr(self, "proc"):
+            return
+        if self.proc.poll() is None:
+            self.call("terminate", timeout=1)
+        try:
+            self.proc.wait(1)
+        except TimeoutExpired:
+            self.proc.terminate()
+
+    def call(
+        self, method: str, params: Any = None, timeout: Optional[float] = None
+    ) -> Any:
+        """Call remote sweep method and wait for response"""
+        self.last_id += 1
+        rpc_encode(self.proc.stdin, method, params, id=self.last_id)
+        return self.poll(timeout, self.last_id)
+
+    def poll(self, timeout: Optional[float] = None, id=None) -> Any:
+        """Wait for responses/events from the sweep process
+        """
+        if id is None and self.events:
+            return self.events.popleft()
         while True:
             msg = rpc_decode(self.proc.stdout, timeout)
             if msg is None:
                 return None
+
+            # handle errors
             error = msg.get("error")
             if error is not None:
-                raise RuntimeError("remote error: {}".format(error))
-            for msg_type in (SWEEP_SELECTED, SWEEP_KEYBINDING, SWEEP_CURRENT):
-                if msg_type in msg:
-                    value = msg[msg_type]
-                    if wait_type is not None:
-                        if wait_type == msg_type:
-                            return msg_type, value
-                        self.queue[msg_type] = value
-                    else:
-                        return msg_type, value
-            raise RuntimeError("unknonw message type: {}".format(msg))
+                if not isinstance(error, dict):
+                    raise RPCError(
+                        -32700, "Parse error", "Error must be an object: {}".format(msg)
+                    )
+                raise RPCError(
+                    error.get("code", -32603),
+                    error.get("message"),
+                    error.get("data", ""),
+                )
+
+            # collect events events
+            method = msg.get("method")
+            if method:
+                event = (method, msg.get("params"))
+                if id is None:
+                    return event
+                self.events.append(event)
+
+            # ignore all but matching events
+            result = msg.get("result")
+            if msg.get("id") == id:
+                return result
 
     def __enter__(self):
         return self
@@ -139,12 +160,26 @@ class Sweep:
         self.terminate()
 
 
-def rpc_encode(output, method, **args):
-    """Encode RPC method"""
+class RPCError(Exception):
+    def __init__(self, code, message, data):
+        self.code = code
+        self.message = message
+        self.data = data
+
+    def __str__(self):
+        return "{} ({})".format(self.message, self.data)
+
+
+def rpc_encode(output, method, params=NOT_USED, id=NOT_USED):
+    """Encode JSON-RPC method"""
     message = {
+        "jsonrpc": "2.0",
         "method": method,
-        **args,
     }
+    if params is not NOT_USED:
+        message["params"] = params
+    if id is not NOT_USED:
+        message["id"] = id
     data = json.dumps(message).encode()
     output.write(f"{len(data)}\n".encode())
     output.write(data)
@@ -152,7 +187,7 @@ def rpc_encode(output, method, **args):
 
 
 def rpc_decode(file, timeout=None):
-    """Decode RPC message"""
+    """Decode JSON-RPC message"""
     rlist, _, _ = select.select([file], [], [], timeout)
     if rlist:
         size = file.readline().strip()

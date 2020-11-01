@@ -3,12 +3,12 @@
 
 use anyhow::{anyhow, Error};
 use crossbeam::channel::select;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{os::unix::io::AsRawFd, str::FromStr, sync::Arc};
 use surf_n_term::{widgets::Theme, Key};
 use sweep::{
-    rpc_encode, rpc_requests, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
-    SubstrScorer, Sweep, SweepEvent, SweepOptions, SweepRequest,
+    rpc_call, rpc_decode, rpc_encode, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
+    SubstrScorer, Sweep, SweepEvent, SweepOptions,
 };
 
 const SCORER_NEXT_TAG: &str = "scorer_next";
@@ -63,59 +63,38 @@ fn main() -> Result<(), Error> {
             }
         }
     } else {
-        let rpc = rpc_requests(std::io::stdin(), || true);
+        let rpc = rpc_decode(std::io::stdin(), || true);
         let events = sweep.events();
         loop {
             select! {
                 recv(rpc) -> request => {
-                    use SweepRequest::*;
-                    match request? {
-                        Ok(CandidatesExtend { items }) => {
-                            let items = items
-                                .into_iter()
-                                .map(|candidate| {
-                                    Candidate::new(
-                                        candidate,
-                                        args.field_delimiter,
-                                        args.field_selector.as_ref(),
-                                    )
-                                });
-                            sweep.haystack_extend(items);
+                    let request = match request? {
+                        Ok(request) => request,
+                        Err(error) => {
+                            rpc_encode(std::io::stdout(), error.into())?;
+                            continue
                         }
-                        Ok(CandidatesClear) => {
-                            sweep.haystack_clear()
-                        }
-                        Ok(NiddleSet(niddle)) => {
-                            sweep.niddle_set(niddle);
-                        }
-                        Ok(Current) => {
-                            let current = sweep.current()?.map(|current| current.to_string());
-                            rpc_encode(std::io::stdout(), json!({ "current": current }))?;
-
-                        }
-                        Ok(Terminate) => {
-                            break;
-                        }
-                        Ok(KeyBinding { key, tag }) => {
-                            sweep.bind(key, tag);
-                        }
-                        Ok(PromptSet(prompt)) => {
-                            sweep.prompt_set(prompt);
-                        }
-                        Err(msg) => rpc_encode(std::io::stdout(), json!({ "error": msg }))?,
+                    };
+                    let response = sweep.process_request(
+                        request,
+                        args.field_delimiter,
+                        args.field_selector.as_ref()
+                    );
+                    if let Some(response) = response {
+                        rpc_encode(std::io::stdout(), response)?;
                     }
                 }
                 recv(events) -> event => {
                     match event {
                         Ok(SweepEvent::Select(result)) => {
-                            rpc_encode(std::io::stdout(), json!({ "selected": result.to_string() }))?;
+                            rpc_call(std::io::stdout(), "select", result.to_string())?;
                         }
                         Ok(SweepEvent::Bind(tag)) => {
                             match tag {
                                 Value::String(tag) if tag == SCORER_NEXT_TAG => {
                                     sweep.scorer_set(args.scorer.toggle());
                                 }
-                                _ => rpc_encode(std::io::stdout(), json!({ "key_binding": tag }))?,
+                                _ => rpc_call(std::io::stdout(), "bind", tag)?,
                             }
                         }
                         Err(_) => break,
