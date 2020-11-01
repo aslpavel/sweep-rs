@@ -1,5 +1,5 @@
 use anyhow::Error;
-use crossbeam::channel::{unbounded, Receiver};
+use crossbeam_channel::{unbounded, Receiver};
 use serde_json::{json, Map, Value};
 use std::{
     convert::TryFrom,

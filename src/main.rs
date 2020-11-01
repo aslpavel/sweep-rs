@@ -2,7 +2,7 @@
 #![allow(clippy::reversed_empty_ranges)]
 
 use anyhow::{anyhow, Error};
-use crossbeam::channel::select;
+use crossbeam_channel::select;
 use serde_json::Value;
 use std::{os::unix::io::AsRawFd, str::FromStr, sync::Arc};
 use surf_n_term::{widgets::Theme, Key};
