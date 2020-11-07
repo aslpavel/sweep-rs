@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use sweep::{scorer::KMPPattern, Candidate, FuzzyScorer, Haystack, Scorer, SubstrScorer};
+use sweep::{Candidate, FuzzyScorer, Haystack, KMPPattern, Scorer, SubstrScorer};
 
 pub fn scorer_benchmark(c: &mut Criterion) {
     let candidate = String::from("./benchmark/target/release/.fingerprint/semver-parser-a5e84da67081840e/test/lib-semver_parser-a5e84da67081840e.json");
