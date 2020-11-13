@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
                 recv(events) -> event => {
                     match event {
                         Ok(SweepEvent::Select(result)) => {
-                            rpc_call(std::io::stdout(), "select", result.to_string())?;
+                            rpc_call(std::io::stdout(), "select", result.to_json())?;
                         }
                         Ok(SweepEvent::Bind(tag)) => {
                             match tag {

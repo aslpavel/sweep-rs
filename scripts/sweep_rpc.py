@@ -19,8 +19,8 @@ class Sweep:
     """RPC wrapper around sweep process
 
     DEBUGGING:
-        - Load this file a python module.
-        - Open other terminal window and execute `$ tty` command, then something which
+        - Load this file as python module.
+        - Open other terminal window and execute `$ tty` command, then run something that
           will not steal characters for sweep process like `$ sleep 1000`.
         - Instantiate Sweep class with the tty device path of the other terminal.
         - Now you can call all the methods of the Sweep class in an interractive mode.
@@ -195,6 +195,21 @@ def rpc_decode(file, timeout=None):
             return None
         return json.loads(file.read(int(size)))
     return None
+
+
+def sweep(chandidates: List[Any], **options: Dict[str, Any]) -> Any:
+    """Convinience wrapper around `Sweep` when you only need to select one
+    candidate from the list
+    """
+    with Sweep(**options) as sweep:
+        sweep.candidates_extend(chandidates)
+        while True:
+            msg = sweep.poll()
+            if msg is None:
+                break
+            msg_type, value = msg
+            if msg_type == SWEEP_SELECTED:
+                return value
 
 
 def main():

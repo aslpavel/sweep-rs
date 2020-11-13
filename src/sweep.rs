@@ -246,14 +246,15 @@ impl Sweep<Candidate> {
                 };
                 let mut candidates = Vec::new();
                 for item in items {
-                    if let Value::String(string) = item {
-                        candidates.push(Candidate::new(string, delimiter, field_selector));
-                    } else {
-                        let error = request.response_err(
-                            RPCErrorKind::InvalidParams,
-                            Some("[haystack_extend] item must be a string"),
-                        );
-                        return Some(error);
+                    match Candidate::from_json(item, delimiter, field_selector) {
+                        Some(candidate) => candidates.push(candidate),
+                        None => {
+                            let error = request.response_err(
+                                RPCErrorKind::InvalidParams,
+                                Some("[haystack_extend] item must be a string or an object with \"string\" field"),
+                            );
+                            return Some(error);
+                        }
                     }
                 }
                 self.haystack_extend(candidates);

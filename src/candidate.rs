@@ -1,5 +1,6 @@
 use crate::Haystack;
 use anyhow::Error;
+use serde_json::Value;
 use std::{
     fmt,
     fs::File,
@@ -13,6 +14,9 @@ use std::{
 struct CandidateInner {
     fields: Vec<Result<String, String>>,
     chars: Vec<char>,
+    // base JSON object that was used to constract the candidate, this
+    // can be useful when candidate some additional data assocaited with it
+    json: Option<Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -21,7 +25,12 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub fn new(string: String, delimiter: char, field_selector: Option<&FieldSelector>) -> Self {
+    pub fn new(
+        string: String,
+        delimiter: char,
+        field_selector: Option<&FieldSelector>,
+        json: Option<Value>,
+    ) -> Self {
         let fields = match field_selector {
             None => vec![Ok(string)],
             Some(field_selector) => {
@@ -45,8 +54,37 @@ impl Candidate {
             .flatten()
             .collect();
         Self {
-            inner: Arc::new(CandidateInner { chars, fields }),
+            inner: Arc::new(CandidateInner {
+                chars,
+                fields,
+                json,
+            }),
         }
+    }
+
+    pub fn to_json(&self) -> Value {
+        self.inner
+            .json
+            .as_ref()
+            .map_or_else(|| Value::String(self.to_string()), |json| json.clone())
+    }
+
+    pub fn from_json(
+        json: Value,
+        delimiter: char,
+        field_selector: Option<&FieldSelector>,
+    ) -> Option<Self> {
+        let string = match &json {
+            Value::String(string) => string.clone(),
+            Value::Object(map) => map.get("string")?.as_str()?.to_string(),
+            _ => return None,
+        };
+        Some(Candidate::new(
+            string,
+            delimiter,
+            field_selector,
+            Some(json),
+        ))
     }
 
     #[allow(unused)]
@@ -57,7 +95,7 @@ impl Candidate {
     ) -> std::io::Result<Vec<Self>> {
         let file = BufReader::new(File::open(path)?);
         file.lines()
-            .map(|l| Ok(Candidate::new(l?, delimiter, field_selector)))
+            .map(|l| Ok(Candidate::new(l?, delimiter, field_selector, None)))
             .collect()
     }
 
@@ -74,7 +112,12 @@ impl Candidate {
             let mut lines = handle.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {
-                buf.push(Candidate::new(line, delimiter, field_selector.as_ref()));
+                buf.push(Candidate::new(
+                    line,
+                    delimiter,
+                    field_selector.as_ref(),
+                    None,
+                ));
                 if buf.len() >= buf_size {
                     buf_size *= 2;
                     callback(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));
