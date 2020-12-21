@@ -112,7 +112,12 @@ class PathHistory:
         def update_cleanup(_mtime_last, _now, paths):
             updated = False
             for path in list(paths.keys()):
-                if not Path(path).exists():
+                exists = False
+                try:
+                    exists = Path(path).exists()
+                except PermissionError:
+                    pass
+                if not exists:
                     del paths[path]
                     updated = True
             return updated

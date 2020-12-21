@@ -436,7 +436,6 @@ where
                         return Ok(TerminalAction::Quit(()));
                     } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
                         if let Some(result) = list.current() {
-                            // return Ok(TerminalAction::Quit(Some(result)));
                             events.send(SweepEvent::Select(result.result.haystack))?
                         }
                     }
