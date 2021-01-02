@@ -448,6 +448,12 @@ where
                         }
                     }
                 }
+                TerminalEvent::Key(Key {
+                    name: KeyName::Esc,
+                    mode: KeyMod::EMPTY,
+                }) => {
+                    return Ok(TerminalAction::Quit(()));
+                }
                 TerminalEvent::Resize(_term_size) => {
                     term.execute(TerminalCommand::Scroll(row_offset as i32))?;
                     row_offset = 0;
