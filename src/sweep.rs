@@ -27,6 +27,7 @@ pub struct SweepOptions {
     pub tty_path: String,
     pub title: String,
     pub scorer_builder: ScorerBuilder,
+    pub altscreen: bool,
 }
 
 impl Default for SweepOptions {
@@ -42,6 +43,7 @@ impl Default for SweepOptions {
                 let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
                 Arc::new(FuzzyScorer::new(niddle))
             }),
+            altscreen: false,
         }
     }
 }
@@ -391,6 +393,12 @@ where
         mode: DecMode::VisibleCursor,
     })?;
     term.execute(TerminalCommand::Title(options.title.clone()))?;
+    if options.altscreen {
+        term.execute(TerminalCommand::DecModeSet {
+            enable: true,
+            mode: DecMode::AltScreen,
+        })?;
+    }
 
     // find current row offset
     let mut row_offset = 0;
@@ -550,6 +558,12 @@ where
         row: row_offset,
         col: 0,
     }))?;
+    if options.altscreen {
+        term.execute(TerminalCommand::DecModeSet {
+            enable: false,
+            mode: DecMode::AltScreen,
+        })?;
+    }
     term.poll(Some(Duration::new(0, 0)))?;
     std::mem::drop(term);
 

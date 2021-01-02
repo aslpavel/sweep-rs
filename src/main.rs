@@ -31,6 +31,7 @@ fn main() -> Result<(), Error> {
         tty_path: args.tty_path.clone(),
         title: args.title.clone(),
         scorer_builder: args.scorer.toggle(),
+        altscreen: args.altscreen,
     })?;
     sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 
@@ -177,6 +178,7 @@ pub struct Args {
     pub tty_path: String,
     pub no_match_use_input: bool,
     pub title: String,
+    pub altscreen: bool,
 }
 
 impl Args {
@@ -269,6 +271,11 @@ impl Args {
                     .default_value("sweep")
                     .help("set terminal title"),
             )
+            .arg(
+                Arg::with_name("altscreen")
+                    .long("altscreen")
+                    .help("use alternative screen"),
+            )
             .get_matches();
 
         let prompt = match matches.value_of("prompt") {
@@ -316,6 +323,8 @@ impl Args {
 
         let title = matches.value_of("title").unwrap_or("sweep").to_string();
 
+        let altscreen = matches.is_present("altscreen");
+
         Ok(Self {
             prompt,
             height,
@@ -330,6 +339,7 @@ impl Args {
             tty_path,
             no_match_use_input,
             title,
+            altscreen,
         })
     }
 }
