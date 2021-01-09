@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Error};
 use crossbeam_channel::select;
-use serde_json::Value;
+use serde_json::{self, Value};
 use std::{os::unix::io::AsRawFd, str::FromStr, sync::Arc};
 use surf_n_term::{widgets::Theme, Key};
 use sweep::{
@@ -36,15 +36,34 @@ fn main() -> Result<(), Error> {
     sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 
     if !args.rpc {
-        Candidate::load_stdin(
-            args.field_delimiter,
-            args.field_selector.clone(),
-            args.reversed,
-            {
-                let sweep = sweep.clone();
-                move |haystack| sweep.haystack_extend(haystack)
-            },
-        );
+        if args.json {
+            let request = serde_json::from_reader(std::io::stdin())?;
+            let items = match request {
+                Value::Array(items) => items,
+                _ => return Err(anyhow!("JSON array expected as an input")),
+            };
+            let mut candidates = Vec::new();
+            for item in items {
+                let candidate = Candidate::from_json(
+                    item.clone(),
+                    args.field_delimiter,
+                    args.field_selector.as_ref(),
+                )
+                .ok_or_else(|| anyhow!("Failed parse item as a candidate: {}", item))?;
+                candidates.push(candidate);
+            }
+            sweep.haystack_extend(candidates);
+        } else {
+            Candidate::load_stdin(
+                args.field_delimiter,
+                args.field_selector.clone(),
+                args.reversed,
+                {
+                    let sweep = sweep.clone();
+                    move |haystack| sweep.haystack_extend(haystack)
+                },
+            );
+        }
         if args.reversed {
             sweep.haystack_reverse();
         }
@@ -52,7 +71,12 @@ fn main() -> Result<(), Error> {
             match event {
                 SweepEvent::Select(result) => {
                     std::mem::drop(sweep);
-                    println!("{}", result);
+                    if args.json {
+                        serde_json::to_writer(std::io::stdout(), &result.to_json())?;
+                        println!();
+                    } else {
+                        println!("{}", result);
+                    }
                     break;
                 }
                 SweepEvent::Bind(tag) => match tag {
@@ -179,6 +203,7 @@ pub struct Args {
     pub no_match_use_input: bool,
     pub title: String,
     pub altscreen: bool,
+    pub json: bool,
 }
 
 impl Args {
@@ -248,7 +273,7 @@ impl Args {
             .arg(
                 Arg::with_name("rpc")
                     .long("rpc")
-                    .help("use JSON RPC protocol to communicate"),
+                    .help("use JSON-RPC protocol to communicate"),
             )
             .arg(
                 Arg::with_name("tty")
@@ -275,6 +300,11 @@ impl Args {
                 Arg::with_name("altscreen")
                     .long("altscreen")
                     .help("use alternative screen"),
+            )
+            .arg(
+                Arg::with_name("json")
+                    .long("json")
+                    .help("expect candidates in JOSN format"),
             )
             .get_matches();
 
@@ -323,8 +353,6 @@ impl Args {
 
         let title = matches.value_of("title").unwrap_or("sweep").to_string();
 
-        let altscreen = matches.is_present("altscreen");
-
         Ok(Self {
             prompt,
             height,
@@ -339,7 +367,8 @@ impl Args {
             tty_path,
             no_match_use_input,
             title,
-            altscreen,
+            altscreen: matches.is_present("altscreen"),
+            json: matches.is_present("json"),
         })
     }
 }
