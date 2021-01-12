@@ -4,20 +4,20 @@
 from datetime import datetime
 from pathlib import Path
 import argparse
+import asyncio
 import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from sweep_rpc import Sweep, SWEEP_SELECTED
+sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
+from sweep import sweep
 
 BASH_HISTORY_FILE = "~/.bash_history"
 SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>([^#][^\n]+\n)+)")
 
 
 def history(history_file=None):
-    """List all bash history entries
-    """
+    """List all bash history entries"""
     if history_file is None:
         history_file = BASH_HISTORY_FILE
     text = Path(history_file).expanduser().resolve().read_text()
@@ -31,7 +31,7 @@ def history(history_file=None):
     return entries
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--theme", help="sweep theme (see sweep help)")
     parser.add_argument(
@@ -41,8 +41,15 @@ def main():
     parser.add_argument("--tty", help="path to the tty")
     opts = parser.parse_args()
 
-    result = None
-    with Sweep(
+    candidates = []
+    for date, entry in history(opts.history_file):
+        candidates.append({
+            "string": "{} {}".format(date.strftime("[%F %T]"), entry),
+            "entry": entry,
+        })
+
+    result = await sweep(
+        candidates,
         sweep=[opts.sweep],
         nth="2..",
         prompt="HISTORY",
@@ -51,26 +58,11 @@ def main():
         keep_order=True,
         scorer="substr",
         tty=opts.tty,
-    ) as sweep:
-        candidates = [
-            "{} {}".format(d.strftime("[%F %T]"), e)
-            for d, e in history(opts.history_file)
-        ]
-        sweep.candidates_extend(candidates)
-
-        while True:
-            msg = sweep.poll()
-            if msg is None:
-                break
-            msg_type, value = msg
-            if msg_type == SWEEP_SELECTED:
-                result = value
-                break
+    )
 
     if result is not None:
-        _0, _1, entry = result.split(maxsplit=2)
-        print(entry, end="")
+        print(result["entry"], end="")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

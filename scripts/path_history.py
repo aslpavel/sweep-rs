@@ -5,6 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 import argparse
+import asyncio
 import fcntl
 import inspect
 import io
@@ -13,8 +14,8 @@ import re
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import sweep_rpc as rpc
+sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
+from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -173,7 +174,7 @@ def candidates_from_path(root, soft_limit=4096):
     return candidates
 
 
-def main():
+async def main():
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=inspect.getdoc(main))
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -222,15 +223,15 @@ def main():
         key_dir_up = "backspace"  # only triggered when input is empty
         key_dir_hist = "ctrl+h"
         key_dir_open = "ctrl+o"
-        with rpc.Sweep(
+        async with Sweep(
             sweep=[opts.sweep], theme=opts.theme, title="path history", tty=opts.tty
         ) as sweep:
-            sweep.key_binding(key_dir_list, key_dir_list)
-            sweep.key_binding(key_dir_up, key_dir_up)
-            sweep.key_binding(key_dir_hist, key_dir_hist)
-            sweep.key_binding(key_dir_open, key_dir_open)
+            await sweep.key_binding(key_dir_list, key_dir_list)
+            await sweep.key_binding(key_dir_up, key_dir_up)
+            await sweep.key_binding(key_dir_hist, key_dir_hist)
+            await sweep.key_binding(key_dir_open, key_dir_open)
 
-            def history():
+            async def history():
                 cwd = str(Path.cwd())
                 candidates = [cwd]
                 for item in items:
@@ -239,37 +240,34 @@ def main():
                         continue
                     candidates.append(path)
 
-                sweep.prompt_set("PATH HISTORY")
-                sweep.niddle_set("")
-                sweep.candidates_clear()
-                sweep.candidates_extend(candidates)
+                await sweep.prompt_set("PATH HISTORY")
+                await sweep.niddle_set("")
+                await sweep.candidates_clear()
+                await sweep.candidates_extend(candidates)
 
-            def load_path(path):
-                sweep.niddle_set("")
-                sweep.prompt_set(str(collapse_path(path)))
+            async def load_path(path):
+                await sweep.niddle_set("")
+                await sweep.prompt_set(str(collapse_path(path)))
                 candidates = candidates_from_path(path)
                 if candidates:
-                    sweep.candidates_clear()
-                    sweep.candidates_extend(candidates)
+                    await sweep.candidates_clear()
+                    await sweep.candidates_extend(candidates)
 
-            history()
+            await history()
             current_path = None
-            while True:
-                msg = sweep.poll()
-                if msg is None:
-                    return
-                msg_type, value = msg
-
-                if msg_type == rpc.SWEEP_SELECTED:
+            async for event in sweep:
+                if event.method == SWEEP_SELECTED:
+                    value = event.params
                     if current_path is None:
                         result = value
                     else:
                         result = current_path / value
                     break
 
-                elif msg_type == rpc.SWEEP_KEYBINDING:
-                    if value == key_dir_list:
-                        path = sweep.current()
+                elif event.method == SWEEP_KEYBINDING:
+                    tag = event.params
+                    if tag == key_dir_list:
+                        path = await sweep.current()
                         if path is None:
                             continue
                         path = Path(path)
@@ -279,19 +277,19 @@ def main():
                             current_path /= path
                         else:
                             continue
-                        load_path(current_path)
+                        await load_path(current_path)
 
-                    elif value == key_dir_up:
+                    elif tag == key_dir_up:
                         if current_path is not None:
                             current_path = current_path.parent
-                            load_path(current_path)
+                            await load_path(current_path)
 
-                    elif value == key_dir_hist:
-                        history()
+                    elif tag == key_dir_hist:
+                        await history()
                         current_path = None
 
-                    elif value == key_dir_open:
-                        current = sweep.current()
+                    elif tag == key_dir_open:
+                        current = await sweep.current()
                         if current is None:
                             result = current_path
                         else:
@@ -307,4 +305,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
