@@ -433,7 +433,7 @@ where
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
-    term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
+    let result = term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
         let frame_start = Instant::now();
 
         // handle events
@@ -557,7 +557,7 @@ where
         }
 
         Ok(TerminalAction::Wait)
-    })?;
+    });
 
     // restore terminal
     term.execute(TerminalCommand::CursorTo(Position {
@@ -572,6 +572,8 @@ where
     }
     term.poll(Some(Duration::new(0, 0)))?;
     std::mem::drop(term);
+
+    let _ = result?;
 
     Ok(())
 }
