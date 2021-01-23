@@ -54,7 +54,8 @@ fn main() -> Result<(), Error> {
             }
             sweep.haystack_extend(candidates);
         } else {
-            Candidate::load_stdin(
+            Candidate::load_from_reader(
+                std::io::stdin(),
                 args.field_delimiter,
                 args.field_selector.clone(),
                 args.reversed,

@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{
     fmt,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     path::Path,
     str::FromStr,
     sync::Arc,
@@ -99,17 +99,20 @@ impl Candidate {
             .collect()
     }
 
-    pub fn load_stdin<F: Fn(Vec<Candidate>) + Send + Sync + 'static>(
+    pub fn load_from_reader<R, F>(
+        reader: R,
         delimiter: char,
         field_selector: Option<FieldSelector>,
         sync: bool,
         callback: F,
-    ) {
+    ) where
+        R: Read + Send + Sync + 'static,
+        F: Fn(Vec<Candidate>) + Send + Sync + 'static,
+    {
         let mut buf_size = 10;
         let handle = std::thread::spawn(move || {
-            let stdin = std::io::stdin();
-            let handle = stdin.lock();
-            let mut lines = handle.lines();
+            let reader = BufReader::new(reader);
+            let mut lines = reader.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {
                 buf.push(Candidate::new(
