@@ -4,7 +4,7 @@
 use anyhow::{anyhow, Error};
 use crossbeam_channel::select;
 use serde_json::{self, Value};
-use std::{os::unix::io::AsRawFd, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 use surf_n_term::{widgets::Theme, Key};
 use sweep::{
     rpc_call, rpc_decode, rpc_encode, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
@@ -16,11 +16,19 @@ const SCORER_NEXT_TAG: &str = "scorer_next";
 fn main() -> Result<(), Error> {
     let mut args = Args::new()?;
 
-    if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
-        return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
-    }
-    if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
-        return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
+    // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
+    // from asyncio python interface, sweep subprocess is created with
+    // socketpair as its {stdin|stdout}, but `isatty` when used on socket
+    // under MacOS causes "Operation not supported on socket" error.
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::os::unix::io::AsRawFd;
+        if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
+            return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
+        }
+        if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
+            return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
+        }
     }
 
     let sweep: Sweep<Candidate> = Sweep::new(SweepOptions {
