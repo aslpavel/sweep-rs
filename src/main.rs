@@ -6,10 +6,7 @@ use crossbeam_channel::{never, select, unbounded};
 use serde_json::{self, Value};
 use std::{
     io::{Read, Write},
-    os::unix::{
-        io::FromRawFd,
-        net::{UnixListener, UnixStream},
-    },
+    os::unix::{io::FromRawFd, net::UnixStream},
     str::FromStr,
     sync::Arc,
 };
@@ -45,12 +42,9 @@ fn main() -> Result<(), Error> {
         Some(address) => {
             let input = match address.parse() {
                 Ok(fd) => unsafe { UnixStream::from_raw_fd(fd) },
-                Err(_) => UnixListener::bind(&address).and_then(|listener| {
-                    let client = listener.accept();
-                    let _ = std::fs::remove_file(&address);
-                    let (input, _addr) = client?;
-                    Ok(input)
-                })?,
+                Err(_) => {
+                    UnixStream::connect(&address).context("failed to connnect to io-socket")?
+                }
             };
             let output = input.try_clone().context("failed to duplicate io-socket")?;
             (Box::new(input), Box::new(output))

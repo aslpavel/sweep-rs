@@ -84,6 +84,7 @@ pub fn rpc_call<W: Write>(
     )
 }
 
+#[derive(Debug)]
 pub enum RPCErrorKind {
     ParseError,
     InvalidRequest,
@@ -93,6 +94,7 @@ pub enum RPCErrorKind {
     Other(i32, String),
 }
 
+#[derive(Debug)]
 pub struct RPCError {
     kind: RPCErrorKind,
     id: Value,
@@ -142,6 +144,7 @@ impl From<RPCError> for Value {
     }
 }
 
+#[derive(Debug)]
 pub struct RPCRequest {
     pub method: String,
     pub params: Value,

@@ -39,7 +39,7 @@ class Sweep:
         - Now you can call all the methods of the Sweep class in an interractive mode.
     """
 
-    __slsots__ = [
+    __slots__ = [
         "_args",
         "_proc",
         "_io_sock",
@@ -183,22 +183,23 @@ class Sweep:
     async def __aenter__(self):
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
-        local_io_sock, remote_io_sock = socket.socketpair()
-        self._io_sock = local_io_sock
-        os.set_inheritable(remote_io_sock.fileno(), True)
-        self._args.extend(["--io-socket", str(remote_io_sock.fileno())])
+
+        io_sock_path = "/tmp/sweep-io-{}.socket".format(os.getpid())
+        io_sock_future = asyncio.create_task(unix_server_once(io_sock_path))
+
         prog, *args = self._args
         self._proc = await asyncio.create_subprocess_exec(
             prog,
-            *args,
-            close_fds=False,
+            *[*args, "--io-socket", io_sock_path],
         )
-        remote_io_sock.close()
+
+        self._io_sock = await asyncio.wait_for(io_sock_future, 1.0)
         worker = asyncio.create_task(
-            self._worker_main(local_io_sock),
+            self._worker_main(self._io_sock),
             name="sweep_main",
         )
         worker.add_done_callback(lambda _: None)  # worker should not raise
+
         return self
 
     async def __aexit__(self, *_):
@@ -232,7 +233,7 @@ class Sweep:
         proc, self._proc = self._proc, None
         io_sock, self._io_sock = self._io_sock, None
         if io_sock:
-            io_sock.shutdown(socket.SHUT_RDWR)
+            io_sock.close()
         if proc is None:
             return
 
@@ -318,6 +319,26 @@ class Event:
         self.on(future.set_result)
         value = yield from future
         return value
+
+
+async def unix_server_once(path):
+    """Create unix server socket and accept one connection"""
+    loop = asyncio.get_running_loop()
+    if os.path.exists(path):
+        os.unlink(path)
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(path)
+    server.listen()
+    try:
+        accept = loop.create_future()
+        loop.add_reader(server.fileno(), lambda: accept.set_result(None))
+        await accept
+        (client, _address) = server.accept()
+        return client
+    finally:
+        loop.remove_reader(server.fileno())
+        os.unlink(path)
+        server.close()
 
 
 async def main():
