@@ -103,14 +103,13 @@ impl Candidate {
         reader: R,
         delimiter: char,
         field_selector: Option<FieldSelector>,
-        sync: bool,
         callback: F,
     ) where
         R: Read + Send + 'static,
         F: Fn(Vec<Candidate>) + Send + 'static,
     {
         let mut buf_size = 10;
-        let handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let reader = BufReader::new(reader);
             let mut lines = reader.lines();
             let mut buf = Vec::with_capacity(buf_size);
@@ -128,9 +127,6 @@ impl Candidate {
             }
             callback(buf);
         });
-        if sync {
-            handle.join().expect("haystack loader has failed");
-        }
     }
 }
 

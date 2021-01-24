@@ -2,11 +2,14 @@
 #![allow(clippy::reversed_empty_ranges)]
 
 use anyhow::{anyhow, Error};
-use crossbeam_channel::select;
+use crossbeam_channel::{never, select, unbounded};
 use serde_json::{self, Value};
 use std::{
     io::{Read, Write},
-    os::unix::net::UnixListener,
+    os::unix::{
+        io::FromRawFd,
+        net::{UnixListener, UnixStream},
+    },
     str::FromStr,
     sync::Arc,
 };
@@ -21,32 +24,38 @@ const SCORER_NEXT_TAG: &str = "scorer_next";
 fn main() -> Result<(), Error> {
     let mut args = Args::new()?;
 
-    let (input, mut output): (Box<dyn Read + Send + Sync>, Box<dyn Write + Send + Sync>) =
-        match args.io_socket {
-            None => {
-                // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
-                // from asyncio python interface, sweep subprocess is created with
-                // socketpair as its {stdin|stdout}, but `isatty` when used on socket
-                // under MacOS causes "Operation not supported on socket" error.
-                #[cfg(not(target_os = "macos"))]
-                {
-                    use std::os::unix::io::AsRawFd;
-                    if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
-                        return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
-                    }
-                    if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
-                        return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
-                    }
+    let (input, mut output): (Box<dyn Read + Send>, Box<dyn Write + Send>) = match args.io_socket {
+        None => {
+            // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
+            // from asyncio python interface, sweep subprocess is created with
+            // socketpair as its {stdin|stdout}, but `isatty` when used on socket
+            // under MacOS causes "Operation not supported on socket" error.
+            #[cfg(not(target_os = "macos"))]
+            {
+                use std::os::unix::io::AsRawFd;
+                if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
+                    return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
                 }
-                (Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+                if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
+                    return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
+                }
             }
-            Some(address) => {
-                let listener = UnixListener::bind(address)?;
-                let (input, _addr) = listener.accept()?;
-                let output = input.try_clone()?;
-                (Box::new(input), Box::new(output))
-            }
-        };
+            (Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+        }
+        Some(address) => {
+            let input = match address.parse() {
+                Ok(fd) => unsafe { UnixStream::from_raw_fd(fd) },
+                Err(_) => UnixListener::bind(&address).and_then(|listener| {
+                    let client = listener.accept();
+                    let _ = std::fs::remove_file(&address);
+                    let (input, _addr) = client?;
+                    Ok(input)
+                })?,
+            };
+            let output = input.try_clone()?;
+            (Box::new(input), Box::new(output))
+        }
+    };
 
     let sweep: Sweep<Candidate> = Sweep::new(SweepOptions {
         height: args.height,
@@ -61,6 +70,7 @@ fn main() -> Result<(), Error> {
     sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 
     if !args.rpc {
+        let (haystack_send, haystack_recv) = unbounded();
         if args.json {
             let request = serde_json::from_reader(input)?;
             let items = match request {
@@ -77,39 +87,49 @@ fn main() -> Result<(), Error> {
                 .ok_or_else(|| anyhow!("Failed parse item as a candidate: {}", item))?;
                 candidates.push(candidate);
             }
-            sweep.haystack_extend(candidates);
+            haystack_send.send(candidates)?;
         } else {
             Candidate::load_from_reader(
                 input,
                 args.field_delimiter,
                 args.field_selector.clone(),
-                args.reversed,
-                {
-                    let sweep = sweep.clone();
-                    move |haystack| sweep.haystack_extend(haystack)
+                move |haystack| {
+                    let _ = haystack_send.send(haystack);
                 },
             );
         }
-        if args.reversed {
-            sweep.haystack_reverse();
-        }
-        for event in sweep.events().iter() {
-            match event {
-                SweepEvent::Select(result) => {
-                    std::mem::drop(sweep);
-                    if args.json {
-                        serde_json::to_writer(output, &result.to_json())?;
-                    } else {
-                        writeln!(output, "{}", result)?;
+        let events = sweep.events();
+        let mut haystack_recv = Some(&haystack_recv);
+        loop {
+            select! {
+                recv(haystack_recv.unwrap_or(&never())) -> haystack => {
+                    match haystack {
+                        Ok(haystack) => sweep.haystack_extend(haystack),
+                        Err(_) => {
+                            haystack_recv.take();
+                        }
                     }
-                    break;
                 }
-                SweepEvent::Bind(tag) => match tag {
-                    Value::String(tag) if tag == SCORER_NEXT_TAG => {
-                        sweep.scorer_set(args.scorer.toggle());
+                recv(events) -> event => {
+                    match event {
+                        Ok(SweepEvent::Select(result)) => {
+                            std::mem::drop(sweep);
+                            if args.json {
+                                serde_json::to_writer(output, &result.to_json())?;
+                            } else {
+                                writeln!(output, "{}", result)?;
+                            }
+                            break;
+                        }
+                        Ok(SweepEvent::Bind(tag)) => match tag {
+                            Value::String(tag) if tag == SCORER_NEXT_TAG => {
+                                sweep.scorer_set(args.scorer.toggle());
+                            }
+                            _ => {}
+                        },
+                        Err(_) => break,
                     }
-                    _ => {}
-                },
+                }
             }
         }
     } else {
@@ -220,7 +240,6 @@ pub struct Args {
     pub field_selector: Option<FieldSelector>,
     pub field_delimiter: char,
     pub keep_order: bool,
-    pub reversed: bool,
     pub scorer: ScorerSelector,
     pub debug: bool,
     pub rpc: bool,
@@ -272,12 +291,6 @@ impl Args {
                     .help("keep order (don't use ranking score)"),
             )
             .arg(
-                Arg::with_name("reversed")
-                    .short("r")
-                    .long("reversed")
-                    .help("reverse initial order of elements"),
-            )
-            .arg(
                 Arg::with_name("scorer")
                     .long("scorer")
                     .takes_value(true)
@@ -305,7 +318,9 @@ impl Args {
                 Arg::with_name("io-socket")
                     .long("io-socket")
                     .takes_value(true)
-                    .help("use unix socket to communicate instead of stdio/stdin"),
+                    .help(
+                        "path/descriptor of the unix socket used to communicate instead of stdio/stdin",
+                    ),
             )
             .arg(
                 Arg::with_name("tty")
@@ -363,8 +378,6 @@ impl Args {
 
         let keep_order = matches.is_present("keep_order");
 
-        let reversed = matches.is_present("reversed");
-
         let scorer = matches.value_of("scorer").unwrap_or("fuzzy").parse()?;
 
         let debug = matches.is_present("debug");
@@ -394,7 +407,6 @@ impl Args {
             field_delimiter,
             keep_order,
             scorer,
-            reversed,
             debug,
             rpc,
             io_socket,
