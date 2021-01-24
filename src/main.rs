@@ -1,7 +1,7 @@
 #![deny(warnings)]
 #![allow(clippy::reversed_empty_ranges)]
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Context, Error};
 use crossbeam_channel::{never, select, unbounded};
 use serde_json::{self, Value};
 use std::{
@@ -52,7 +52,7 @@ fn main() -> Result<(), Error> {
                     Ok(input)
                 })?,
             };
-            let output = input.try_clone()?;
+            let output = input.try_clone().context("failed to duplicate io-socket")?;
             (Box::new(input), Box::new(output))
         }
     };
@@ -138,7 +138,14 @@ fn main() -> Result<(), Error> {
         loop {
             select! {
                 recv(rpc) -> request => {
-                    let request = match request? {
+                    let request = match request {
+                        Ok(request) => request,
+                        Err(_) => {
+                            // RPC socket was closed
+                            break
+                        }
+                    };
+                    let request = match request {
                         Ok(request) => request,
                         Err(error) => {
                             rpc_encode(&mut output, error.into())?;

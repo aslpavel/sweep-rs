@@ -6,6 +6,7 @@ from typing import Optional, List, Any, NamedTuple, Dict
 import asyncio
 import json
 import os
+import socket
 import sys
 import traceback
 
@@ -41,6 +42,7 @@ class Sweep:
     __slsots__ = [
         "_args",
         "_proc",
+        "_io_sock",
         "_last_id",
         "_read_events",
         "_read_requests",
@@ -84,20 +86,22 @@ class Sweep:
 
         self._args = [*sweep, "--rpc", *args]
         self._proc = None
+        self._io_sock = None
         self._last_id = 0
         self._read_events = Event()
         self._read_requests = {}
         self._write_queue = deque()
         self._write_notify = Event()
 
-    async def _worker_main(self):
+    async def _worker_main(self, sock):
         """Main worker coroutine which reads and write data to/from sweep"""
         if self._proc is None:
             return
         try:
+            reader, writer = await asyncio.open_unix_connection(sock=sock)
             await asyncio.gather(
-                self._worker_writer(self._proc.stdin),
-                self._worker_reader(self._proc.stdout),
+                self._worker_writer(writer),
+                self._worker_reader(reader),
             )
         except asyncio.CancelledError:
             pass
@@ -177,18 +181,27 @@ class Sweep:
         return future
 
     async def __aenter__(self):
+        if self._proc is not None:
+            raise RuntimeError("sweep process is already running")
+        local_io_sock, remote_io_sock = socket.socketpair()
+        self._io_sock = local_io_sock
+        os.set_inheritable(remote_io_sock.fileno(), True)
+        self._args.extend(["--io-socket", str(remote_io_sock.fileno())])
         prog, *args = self._args
         self._proc = await asyncio.create_subprocess_exec(
             prog,
             *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
+            close_fds=False,
         )
-        worker = asyncio.create_task(self._worker_main(), name="sweep_main")
+        remote_io_sock.close()
+        worker = asyncio.create_task(
+            self._worker_main(local_io_sock),
+            name="sweep_main",
+        )
         worker.add_done_callback(lambda _: None)  # worker should not raise
         return self
 
-    async def __aexit__(self, et, ev, tb):
+    async def __aexit__(self, *_):
         await self.terminate()
 
     def __aiter__(self):
@@ -210,13 +223,16 @@ class Sweep:
         def filtered_handler(event):
             if name is not None and event.method != name:
                 return True
-            return handler(value)
+            return handler(event)
 
-        self._read_events.on(handler)
+        self._read_events.on(filtered_handler)
 
     async def terminate(self):
         """Terminate underlying sweep process"""
         proc, self._proc = self._proc, None
+        io_sock, self._io_sock = self._io_sock, None
+        if io_sock:
+            io_sock.shutdown(socket.SHUT_RDWR)
         if proc is None:
             return
 
@@ -225,14 +241,6 @@ class Sweep:
         for request in requests.values():
             request.cancel("sweep process has terminated")
         self._read_events(SweepRequest("quit", None, None))
-
-        # try send terminate request
-        try:
-            fd = proc.stdin.transport.get_extra_info("pipe").fileno()
-            os.set_blocking(fd, True)
-            os.write(fd, SweepRequest("terminate", None, None).encode())
-        except Exception:
-            pass
 
         await proc.wait()
 
