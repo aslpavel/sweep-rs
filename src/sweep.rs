@@ -221,7 +221,7 @@ where
         self.waker.wake().unwrap_or(());
         if let Some(handle) = self.worker.take() {
             if let Err(error) = handle.join() {
-                println!("sweep worker thread fail:\r\n{:?}", error);
+                eprintln!("sweep worker thread fail:\r\n{:?}", error);
             }
         }
     }

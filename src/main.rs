@@ -4,7 +4,12 @@
 use anyhow::{anyhow, Error};
 use crossbeam_channel::select;
 use serde_json::{self, Value};
-use std::{str::FromStr, sync::Arc};
+use std::{
+    io::{Read, Write},
+    os::unix::net::UnixListener,
+    str::FromStr,
+    sync::Arc,
+};
 use surf_n_term::{widgets::Theme, Key};
 use sweep::{
     rpc_call, rpc_decode, rpc_encode, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
@@ -16,20 +21,32 @@ const SCORER_NEXT_TAG: &str = "scorer_next";
 fn main() -> Result<(), Error> {
     let mut args = Args::new()?;
 
-    // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
-    // from asyncio python interface, sweep subprocess is created with
-    // socketpair as its {stdin|stdout}, but `isatty` when used on socket
-    // under MacOS causes "Operation not supported on socket" error.
-    #[cfg(not(target_os = "macos"))]
-    {
-        use std::os::unix::io::AsRawFd;
-        if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
-            return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
-        }
-        if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
-            return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
-        }
-    }
+    let (input, mut output): (Box<dyn Read + Send + Sync>, Box<dyn Write + Send + Sync>) =
+        match args.io_socket {
+            None => {
+                // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
+                // from asyncio python interface, sweep subprocess is created with
+                // socketpair as its {stdin|stdout}, but `isatty` when used on socket
+                // under MacOS causes "Operation not supported on socket" error.
+                #[cfg(not(target_os = "macos"))]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
+                        return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
+                    }
+                    if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
+                        return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
+                    }
+                }
+                (Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+            }
+            Some(address) => {
+                let listener = UnixListener::bind(address)?;
+                let (input, _addr) = listener.accept()?;
+                let output = input.try_clone()?;
+                (Box::new(input), Box::new(output))
+            }
+        };
 
     let sweep: Sweep<Candidate> = Sweep::new(SweepOptions {
         height: args.height,
@@ -45,7 +62,7 @@ fn main() -> Result<(), Error> {
 
     if !args.rpc {
         if args.json {
-            let request = serde_json::from_reader(std::io::stdin())?;
+            let request = serde_json::from_reader(input)?;
             let items = match request {
                 Value::Array(items) => items,
                 _ => return Err(anyhow!("JSON array expected as an input")),
@@ -63,7 +80,7 @@ fn main() -> Result<(), Error> {
             sweep.haystack_extend(candidates);
         } else {
             Candidate::load_from_reader(
-                std::io::stdin(),
+                input,
                 args.field_delimiter,
                 args.field_selector.clone(),
                 args.reversed,
@@ -81,10 +98,9 @@ fn main() -> Result<(), Error> {
                 SweepEvent::Select(result) => {
                     std::mem::drop(sweep);
                     if args.json {
-                        serde_json::to_writer(std::io::stdout(), &result.to_json())?;
-                        println!();
+                        serde_json::to_writer(output, &result.to_json())?;
                     } else {
-                        println!("{}", result);
+                        writeln!(output, "{}", result)?;
                     }
                     break;
                 }
@@ -97,7 +113,7 @@ fn main() -> Result<(), Error> {
             }
         }
     } else {
-        let rpc = rpc_decode(std::io::stdin(), || true);
+        let rpc = rpc_decode(input, || true);
         let events = sweep.events();
         loop {
             select! {
@@ -105,7 +121,7 @@ fn main() -> Result<(), Error> {
                     let request = match request? {
                         Ok(request) => request,
                         Err(error) => {
-                            rpc_encode(std::io::stdout(), error.into())?;
+                            rpc_encode(&mut output, error.into())?;
                             continue
                         }
                     };
@@ -115,20 +131,20 @@ fn main() -> Result<(), Error> {
                         args.field_selector.as_ref()
                     );
                     if let Some(response) = response {
-                        rpc_encode(std::io::stdout(), response)?;
+                        rpc_encode(&mut output, response)?;
                     }
                 }
                 recv(events) -> event => {
                     match event {
                         Ok(SweepEvent::Select(result)) => {
-                            rpc_call(std::io::stdout(), "select", result.to_json())?;
+                            rpc_call(&mut output, "select", result.to_json())?;
                         }
                         Ok(SweepEvent::Bind(tag)) => {
                             match tag {
                                 Value::String(tag) if tag == SCORER_NEXT_TAG => {
                                     sweep.scorer_set(args.scorer.toggle());
                                 }
-                                _ => rpc_call(std::io::stdout(), "bind", tag)?,
+                                _ => rpc_call(&mut output, "bind", tag)?,
                             }
                         }
                         Err(_) => break,
@@ -213,6 +229,7 @@ pub struct Args {
     pub title: String,
     pub altscreen: bool,
     pub json: bool,
+    pub io_socket: Option<String>,
 }
 
 impl Args {
@@ -285,6 +302,12 @@ impl Args {
                     .help("use JSON-RPC protocol to communicate"),
             )
             .arg(
+                Arg::with_name("io-socket")
+                    .long("io-socket")
+                    .takes_value(true)
+                    .help("use unix socket to communicate instead of stdio/stdin"),
+            )
+            .arg(
                 Arg::with_name("tty")
                     .long("tty")
                     .default_value("/dev/tty")
@@ -352,6 +375,7 @@ impl Args {
         };
 
         let rpc = matches.is_present("rpc");
+        let io_socket = matches.value_of("io-socket").map(ToString::to_string);
 
         let tty_path = match matches.value_of("tty") {
             None => "/dev/tty".to_string(),
@@ -373,6 +397,7 @@ impl Args {
             reversed,
             debug,
             rpc,
+            io_socket,
             tty_path,
             no_match_use_input,
             title,

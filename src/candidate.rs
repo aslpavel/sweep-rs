@@ -106,8 +106,8 @@ impl Candidate {
         sync: bool,
         callback: F,
     ) where
-        R: Read + Send + Sync + 'static,
-        F: Fn(Vec<Candidate>) + Send + Sync + 'static,
+        R: Read + Send + 'static,
+        F: Fn(Vec<Candidate>) + Send + 'static,
     {
         let mut buf_size = 10;
         let handle = std::thread::spawn(move || {
