@@ -63,7 +63,8 @@ class Sweep:
         debug: bool = False,
         title: Optional[str] = None,
         keep_order=False,
-        no_match: Optional[str] =None,
+        no_match: Optional[str] = None,
+        altscreen=False,
     ):
         args = []
         args.extend(["--prompt", prompt])
@@ -86,6 +87,8 @@ class Sweep:
             args.append("--keep-order")
         if no_match:
             args.extend(["--no-match", no_match])
+        if altscreen:
+            args.append("--altscreen")
 
         self._args = [*sweep, "--rpc", *args]
         self._proc = None
@@ -349,10 +352,14 @@ async def main():
 
     parser = argparse.ArgumentParser(description="Sweep is a command line fuzzy finder")
     parser.add_argument(
-        "-p", "--prompt", default="INPUT", help="override prompt string"
+        "-p",
+        "--prompt",
+        default="INPUT",
+        help="override prompt string",
     )
     parser.add_argument(
-        "--nth", help="comma-seprated list of fields for limiting search"
+        "--nth",
+        help="comma-seprated list of fields for limiting search",
     )
     parser.add_argument("--delimiter", help="filed delimiter")
     parser.add_argument("--theme", help="theme as a list of comma separated attributes")
@@ -360,13 +367,32 @@ async def main():
     parser.add_argument("--tty", help="tty device path")
     parser.add_argument("--height", type=int, help="height in lines")
     parser.add_argument(
-        "--keep-order", help="keep order of elements (do not use ranking score)"
+        "--json",
+        action="store_true",
+        help="expect candidates in JSON format",
     )
-    args, _unkown = parser.parse_known_args()
+    parser.add_argument(
+        "--altscreen",
+        action="store_true",
+        help="use alterniative screen",
+    )
+    parser.add_argument(
+        "--no-match",
+        choices=["nothing", "input"],
+        help="what is returned if there is no match on enter",
+    )
+    parser.add_argument(
+        "--keep-order",
+        help="keep order of elements (do not use ranking score)",
+    )
+    args = parser.parse_args()
 
-    candidates = []
-    for line in sys.stdin:
-        candidates.append(line.strip())
+    if args.json:
+        candidates = json.load(sys.stdin)
+    else:
+        candidates = []
+        for line in sys.stdin:
+            candidates.append(line.strip())
 
     result = await sweep(
         candidates,
@@ -378,8 +404,14 @@ async def main():
         scorer=args.scorer,
         tty=args.tty,
         keep_order=args.keep_order,
+        no_match=args.no_match,
+        altscreen=args.altscreen,
     )
-    print(result)
+
+    if args.json:
+        json.dump(result, sys.stdout)
+    else:
+        print(result)
 
 
 if __name__ == "__main__":
