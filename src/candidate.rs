@@ -1,11 +1,9 @@
 use crate::Haystack;
-use anyhow::Error;
+use anyhow::{anyhow, Error};
 use serde_json::Value;
 use std::{
     fmt,
-    fs::File,
     io::{BufRead, BufReader, Read},
-    path::Path,
     str::FromStr,
     sync::Arc,
 };
@@ -48,6 +46,10 @@ impl Candidate {
                     .collect()
             }
         };
+        Self::from_fields(fields, json)
+    }
+
+    fn from_fields(fields: Vec<Result<String, String>>, json: Option<Value>) -> Self {
         let chars = fields
             .iter()
             .filter_map(|f| Some(f.as_ref().ok()?.chars().flat_map(char::to_lowercase)))
@@ -73,30 +75,56 @@ impl Candidate {
         json: Value,
         delimiter: char,
         field_selector: Option<&FieldSelector>,
-    ) -> Option<Self> {
-        let string = match &json {
-            Value::String(string) => string.clone(),
-            Value::Object(map) => map.get("string")?.as_str()?.to_string(),
-            _ => return None,
-        };
-        Some(Candidate::new(
-            string,
-            delimiter,
-            field_selector,
-            Some(json),
-        ))
-    }
-
-    #[allow(unused)]
-    pub fn load_file<P: AsRef<Path>>(
-        path: P,
-        delimiter: char,
-        field_selector: Option<&FieldSelector>,
-    ) -> std::io::Result<Vec<Self>> {
-        let file = BufReader::new(File::open(path)?);
-        file.lines()
-            .map(|l| Ok(Candidate::new(l?, delimiter, field_selector, None)))
-            .collect()
+    ) -> Result<Self, Error> {
+        match &json {
+            Value::String(string) => Ok(Self::new(
+                string.clone(),
+                delimiter,
+                field_selector,
+                Some(json),
+            )),
+            Value::Object(map) => {
+                let entry = map
+                    .get("entry")
+                    .ok_or_else(|| anyhow!("entry attribute must be present"))?;
+                match entry {
+                    Value::String(string) => Ok(Self::new(
+                        string.clone(),
+                        delimiter,
+                        field_selector,
+                        Some(json),
+                    )),
+                    Value::Array(entry_fields) => {
+                        let mut fields = Vec::new();
+                        for filed in entry_fields {
+                            match filed {
+                                Value::String(string) => fields.push(Ok(string.clone())),
+                                Value::Array(field) => match field.as_slice() {
+                                    [Value::String(string), Value::Bool(selected)] => {
+                                        if *selected {
+                                            fields.push(Ok(string.clone()));
+                                        } else {
+                                            fields.push(Err(string.clone()));
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(anyhow!("entry field must be a [String, Bool]"))
+                                    }
+                                },
+                                _ => {
+                                    return Err(anyhow!(
+                                        "entry field must be either a strings or a pairs"
+                                    ))
+                                }
+                            }
+                        }
+                        Ok(Self::from_fields(fields, Some(json)))
+                    }
+                    _ => Err(anyhow!("entry attribute must a string or an array")),
+                }
+            }
+            _ => Err(anyhow!("string or object is expected")),
+        }
     }
 
     pub fn load_from_reader<R, F>(

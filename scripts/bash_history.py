@@ -44,14 +44,13 @@ async def main():
     candidates = []
     for date, entry in history(opts.history_file):
         candidates.append({
-            "string": "{} {}".format(date.strftime("[%F %T]"), entry),
-            "entry": entry,
+            "entry": [[date.strftime("[%F %T] "), False], entry],
+            "item": entry,
         })
 
     result = await sweep(
         candidates,
         sweep=[opts.sweep],
-        nth="2..",
         prompt="HISTORY",
         theme=opts.theme,
         title="command history",
@@ -61,7 +60,7 @@ async def main():
     )
 
     if result is not None:
-        print(result["entry"], end="")
+        print(result["item"], end="")
 
 
 if __name__ == "__main__":

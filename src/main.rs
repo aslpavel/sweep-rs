@@ -39,7 +39,7 @@ fn main() -> Result<(), Error> {
             }
             (Box::new(std::io::stdin()), Box::new(std::io::stdout()))
         }
-        Some(address) => {
+        Some(ref address) => {
             let input = match address.parse() {
                 Ok(fd) => unsafe { UnixStream::from_raw_fd(fd) },
                 Err(_) => {
@@ -69,18 +69,15 @@ fn main() -> Result<(), Error> {
             let request = serde_json::from_reader(input).context("failed to parse input JSON")?;
             let items = match request {
                 Value::Array(items) => items,
-                _ => return Err(anyhow!("JSON array expected as an input")),
+                _ => return Err(anyhow!("input must be an array")),
             };
-            let mut candidates = Vec::new();
-            for item in items {
-                let candidate = Candidate::from_json(
-                    item.clone(),
-                    args.field_delimiter,
-                    args.field_selector.as_ref(),
-                )
-                .ok_or_else(|| anyhow!("Failed parse item as a candidate: {}", item))?;
-                candidates.push(candidate);
-            }
+            let candidates = items
+                .into_iter()
+                .map(|item| {
+                    Candidate::from_json(item, args.field_delimiter, args.field_selector.as_ref())
+                        .context("failed to parse input entry")
+                })
+                .collect::<Result<_, _>>()?;
             haystack_send.send(candidates)?;
         } else {
             Candidate::load_from_reader(

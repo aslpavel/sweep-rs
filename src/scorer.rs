@@ -251,7 +251,7 @@ impl<T: PartialEq> KMPPattern<T> {
                 n_index += 1;
             }
             if n_index == self.niddle.len() {
-                return Some(h_index - n_index + 1);
+                return Some(h_index + 1 - n_index);
             }
         }
         None
@@ -470,7 +470,6 @@ mod tests {
     fn test_substr_scorer() {
         let niddle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
-
         let score = scorer
             .score(StringHaystack::new(" one babababcd "))
             .unwrap();
@@ -480,6 +479,14 @@ mod tests {
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>()
+        );
+
+        let niddle: Vec<_> = "o".chars().collect();
+        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
+        let score = scorer.score(StringHaystack::new("one")).unwrap();
+        assert_eq!(
+            score.positions,
+            [0].iter().copied().collect::<BTreeSet<_>>()
         );
     }
 }
