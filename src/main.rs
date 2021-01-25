@@ -66,7 +66,7 @@ fn main() -> Result<(), Error> {
     if !args.rpc {
         let (haystack_send, haystack_recv) = unbounded();
         if args.json {
-            let request = serde_json::from_reader(input)?;
+            let request = serde_json::from_reader(input).context("failed to parse input JSON")?;
             let items = match request {
                 Value::Array(items) => items,
                 _ => return Err(anyhow!("JSON array expected as an input")),
@@ -107,11 +107,16 @@ fn main() -> Result<(), Error> {
                 recv(events) -> event => {
                     match event {
                         Ok(SweepEvent::Select(result)) => {
+                            if result.is_none() && !args.no_match_use_input {
+                                continue
+                            }
+                            let input = sweep.niddle_get()?;
                             std::mem::drop(sweep);
                             if args.json {
-                                serde_json::to_writer(output, &result.to_json())?;
+                                let result = result.map_or_else(|| input.into(), |value| value.to_json());
+                                serde_json::to_writer(output, &result)?;
                             } else {
-                                writeln!(output, "{}", result)?;
+                                writeln!(output, "{}", result.map_or_else(|| input, |value| value.to_string()))?;
                             }
                             break;
                         }
@@ -158,7 +163,16 @@ fn main() -> Result<(), Error> {
                 recv(events) -> event => {
                     match event {
                         Ok(SweepEvent::Select(result)) => {
-                            rpc_call(&mut output, "select", result.to_json())?;
+                            match result {
+                                Some(result) => {
+                                    rpc_call(&mut output, "select", result.to_json())?;
+                                }
+                                None => {
+                                    if args.no_match_use_input {
+                                        rpc_call(&mut output, "select", sweep.niddle_get()?)?;
+                                    }
+                                }
+                            }
                         }
                         Ok(SweepEvent::Bind(tag)) => {
                             match tag {

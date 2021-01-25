@@ -57,7 +57,7 @@ where
     let sweep = Sweep::new(options)?;
     sweep.haystack_extend(haystack);
     for event in sweep.events().iter() {
-        if let SweepEvent::Select(entry) = event {
+        if let SweepEvent::Select(Some(entry)) = event {
             return Ok(Some(entry));
         }
     }
@@ -66,6 +66,7 @@ where
 
 enum SweepCommand {
     NiddleSet(String),
+    NiddleGet,
     PromptSet(String),
     Bind(Vec<Key>, Value),
     Terminate,
@@ -73,13 +74,14 @@ enum SweepCommand {
 }
 #[derive(Clone, Debug)]
 pub enum SweepEvent<H> {
-    Select(H),
+    Select(Option<H>),
     Bind(Value),
 }
 
 #[derive(Clone, Debug)]
 pub enum SweepResponse<H> {
     Current(Option<H>),
+    Niddle(String),
 }
 
 #[derive(Clone)]
@@ -138,6 +140,15 @@ where
         self.send_command(SweepCommand::NiddleSet(niddle.as_ref().to_string()))
     }
 
+    pub fn niddle_get(&self) -> Result<String, Error> {
+        self.send_command(SweepCommand::NiddleGet);
+        loop {
+            if let SweepResponse::Niddle(niddle) = self.response.recv()? {
+                return Ok(niddle);
+            }
+        }
+    }
+
     /// Set scorer used for ranking
     pub fn scorer_set(&self, scorer: ScorerBuilder) {
         self.ranker.scorer_set(scorer)
@@ -149,8 +160,11 @@ where
 
     pub fn current(&self) -> Result<Option<H>, Error> {
         self.send_command(SweepCommand::Current);
-        let SweepResponse::Current(current) = self.response.recv()?;
-        Ok(current)
+        loop {
+            if let SweepResponse::Current(current) = self.response.recv()? {
+                return Ok(current);
+            }
+        }
     }
 
     /// Bind specified chord to the tag
@@ -443,8 +457,11 @@ where
                     if name == KeyName::Char('c') {
                         return Ok(TerminalAction::Quit(()));
                     } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
-                        if let Some(result) = list.current() {
-                            events.send(SweepEvent::Select(result.result.haystack))?
+                        match list.current() {
+                            Some(result) => {
+                                events.send(SweepEvent::Select(Some(result.result.haystack)))?
+                            }
+                            None => events.send(SweepEvent::Select(None))?,
                         }
                     }
                 }
@@ -462,6 +479,9 @@ where
                     for command in commands.try_iter() {
                         match command {
                             SweepCommand::NiddleSet(niddle) => input.set(niddle.as_ref()),
+                            SweepCommand::NiddleGet => {
+                                response.send(SweepResponse::Niddle(input.get().collect()))?;
+                            }
                             SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
                             SweepCommand::Bind(chord, tag) => {
                                 key_map.register(chord.as_ref(), tag);

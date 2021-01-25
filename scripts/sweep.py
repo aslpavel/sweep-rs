@@ -63,6 +63,7 @@ class Sweep:
         debug: bool = False,
         title: Optional[str] = None,
         keep_order=False,
+        no_match: Optional[str] =None,
     ):
         args = []
         args.extend(["--prompt", prompt])
@@ -83,6 +84,8 @@ class Sweep:
             args.extend(["--title", title])
         if keep_order:
             args.append("--keep-order")
+        if no_match:
+            args.extend(["--no-match", no_match])
 
         self._args = [*sweep, "--rpc", *args]
         self._proc = None
