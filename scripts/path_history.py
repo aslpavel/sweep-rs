@@ -214,9 +214,20 @@ async def main():
         path_history.cleanup()
         _, paths = path_history.load()
         items = []
+        count_max = 0
         for path, (count, timestamp) in paths.items():
             items.append([count, timestamp, path])
+            count_max = max(count_max, count)
         items.sort(reverse=True)
+        count_align = len(str(count_max)) + 1
+
+        def make_entry(path, count=None):
+            path = str(path)
+            count = str(count).ljust(count_align) if count else " " * count_align
+            return {
+                "entry": [(count, False), path],
+                "path": path
+            }
 
         result = None
         key_dir_list = "ctrl+i"  # tab
@@ -233,12 +244,12 @@ async def main():
 
             async def history():
                 cwd = str(Path.cwd())
-                candidates = [cwd]
-                for item in items:
-                    path = str(item[2])
+                candidates = [make_entry(cwd)]
+                for count, _timestamp, path in items:
+                    path = str(path)
                     if path == cwd:
                         continue
-                    candidates.append(path)
+                    candidates.append(make_entry(path, count))
 
                 await sweep.prompt_set("PATH HISTORY")
                 await sweep.niddle_set("")
@@ -268,6 +279,8 @@ async def main():
                     tag = event.params
                     if tag == key_dir_list:
                         path = await sweep.current()
+                        if isinstance(path, dict):
+                            path = path["path"]
                         if path is None:
                             continue
                         path = Path(path)
@@ -301,6 +314,8 @@ async def main():
                         break
 
         if result is not None:
+            if isinstance(result, dict):
+                result = result["path"]
             print(result)
 
 

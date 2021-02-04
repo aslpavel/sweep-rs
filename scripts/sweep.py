@@ -349,6 +349,7 @@ async def unix_server_once(path):
 
 async def main():
     import argparse
+    import shlex
 
     parser = argparse.ArgumentParser(description="Sweep is a command line fuzzy finder")
     parser.add_argument(
@@ -366,6 +367,7 @@ async def main():
     parser.add_argument("--scorer", help="default scorer")
     parser.add_argument("--tty", help="tty device path")
     parser.add_argument("--height", type=int, help="height in lines")
+    parser.add_argument("--sweep", default="sweep", help="sweep binary")
     parser.add_argument(
         "--json",
         action="store_true",
@@ -396,6 +398,7 @@ async def main():
 
     result = await sweep(
         candidates,
+        sweep=shlex.split(args.sweep),
         prompt=args.prompt,
         nth=args.nth,
         height=args.height or 11,
