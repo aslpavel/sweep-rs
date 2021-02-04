@@ -353,7 +353,7 @@ impl Sweep<Candidate> {
             }
             "current" => match self.current() {
                 Ok(current) => {
-                    current.map_or_else(|| Value::Null, |current| current.to_string().into())
+                    current.map_or_else(|| Value::Null, |current| current.to_json())
                 }
                 Err(error) => {
                     let error =
