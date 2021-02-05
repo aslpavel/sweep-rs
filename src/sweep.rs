@@ -2,7 +2,7 @@ use crate::{
     Candidate, FieldSelector, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker,
     RankerResult, ScoreResult, ScorerBuilder,
 };
-use anyhow::Error;
+use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde_json::Value;
 use std::{
@@ -196,7 +196,8 @@ impl<H: Haystack> SweepInner<H> {
         let (commands_send, commands_recv) = unbounded();
         let (events_send, events_recv) = unbounded();
         let (response_send, response_recv) = unbounded();
-        let term = SystemTerminal::open(&options.tty_path)?;
+        let term = SystemTerminal::open(&options.tty_path)
+            .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
         let ranker = Ranker::new(options.scorer_builder.clone(), options.keep_order, {
             let waker = waker.clone();
@@ -352,9 +353,7 @@ impl Sweep<Candidate> {
                 }
             }
             "current" => match self.current() {
-                Ok(current) => {
-                    current.map_or_else(|| Value::Null, |current| current.to_json())
-                }
+                Ok(current) => current.map_or_else(|| Value::Null, |current| current.to_json()),
                 Err(error) => {
                     let error =
                         request.response_err(RPCErrorKind::InternalError, Some(error.to_string()));

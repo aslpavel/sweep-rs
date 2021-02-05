@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2018"
 name = "sweep"
-version = "0.1.0"
+version = "0.2.0"
 
 [lib]
 name = "sweep"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.*"
-clap = "2.33"
+argh = "0.1"
 crossbeam-channel = "0.5"
 nix = "0.18"
 rayon = "1.4"
