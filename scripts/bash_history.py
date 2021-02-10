@@ -13,19 +13,27 @@ sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
 from sweep import sweep
 
 BASH_HISTORY_FILE = "~/.bash_history"
-SPLITTER_RE = re.compile("#(?P<date>\\d+)\n(?P<entry>([^#][^\n]+\n)+)")
+DATE_RE = re.compile(r"^#(\d+)$")
 
 
 def history(history_file=None):
     """List all bash history entries"""
     if history_file is None:
         history_file = BASH_HISTORY_FILE
-    text = Path(history_file).expanduser().resolve().read_text()
     entries = {}
-    for entry in SPLITTER_RE.finditer(text):
-        date = datetime.fromtimestamp(int(entry.group("date")))
-        entry = entry.group("entry").strip()
-        entries[entry] = date
+    with Path(history_file).expanduser().resolve().open() as file:
+        date, entry = None, []
+        for line in file:
+            match = DATE_RE.match(line)
+            if match is None:
+                entry.append(line)
+            else:
+                if date is not None:
+                    entries[''.join(entry).strip()] = date
+                date = datetime.fromtimestamp(int(match.group(1)))
+                entry.clear()
+        if date is not None:
+            entries[''.join(entry).strip()] = date
     entries = [(d, e) for e, d in entries.items()]
     entries.sort(key=lambda e: e[0], reverse=True)
     return entries
@@ -51,7 +59,7 @@ async def main():
     result = await sweep(
         candidates,
         sweep=[opts.sweep],
-        prompt="HISTORY",
+        prompt="󰆍  HISTORY",
         theme=opts.theme,
         title="command history",
         keep_order=True,

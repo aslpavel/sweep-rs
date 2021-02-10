@@ -215,7 +215,7 @@ class PathSelector:
             )
 
         # update sweep
-        await self.sweep.prompt_set("PATH HISTORY")
+        await self.sweep.prompt_set("󰪻  PATH HISTORY")
         await self.sweep.niddle_set("")
         await self.sweep.candidates_clear()
         await self.sweep.candidates_extend(candidates)
@@ -223,7 +223,7 @@ class PathSelector:
     async def show_path(self):
         """Show current path"""
         await self.sweep.niddle_set("")
-        await self.sweep.prompt_set(str(collapse_path(self.path)))
+        await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
         candidates = candidates_from_path(self.path)
         if candidates:
             await self.sweep.candidates_clear()
