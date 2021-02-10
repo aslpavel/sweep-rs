@@ -163,8 +163,10 @@ def candidates_from_path(root, soft_limit=4096):
             for item in sorted(path.iterdir(), key=candidates_path_key):
                 if DEFAULT_IGNORE.match(item.name):
                     continue
+                tag = "/" if item.is_dir() else ""
+                path_relative = str(item.relative_to(root))
                 candidates.append(
-                    "{}{}".format(item.relative_to(root), "/" if item.is_dir() else "")
+                    {"entry": f"{path_relative}{tag}", "path": path_relative}
                 )
                 if len(candidates) >= soft_limit:
                     max_depth = depth
@@ -172,6 +174,114 @@ def candidates_from_path(root, soft_limit=4096):
         except PermissionError:
             pass
     return candidates
+
+
+KEY_LIST = "ctrl+i"  # tab
+KEY_PARENT = "backspace"  # only triggered when input is empty
+KEY_HISTORY = "ctrl+h"
+KEY_OPEN = "ctrl+o"
+KEY_ALL = [KEY_LIST, KEY_PARENT, KEY_HISTORY, KEY_OPEN]
+
+
+class PathSelector:
+    def __init__(self, sweep, history):
+        self.sweep = sweep
+        self.history = history
+        # None - history mode
+        # Path - path mode
+        self.path = None
+
+    async def show_history(self):
+        """Show history"""
+        # load history items
+        _, paths = self.history.load()
+        items = []
+        count_max = 0
+        for path, (count, timestamp) in paths.items():
+            items.append([count, timestamp, path])
+            count_max = max(count_max, count)
+        items.sort(reverse=True)
+        count_align = len(str(count_max)) + 1
+
+        # create candidates
+        cwd = str(Path.cwd())
+        candidates = [dict(entry=f"{' ' * count_align}{cwd}", path=cwd)]
+        for count, _timestamp, path in items:
+            path = str(path)
+            if path == cwd:
+                continue
+            candidates.append(
+                {"entry": [(str(count).ljust(count_align), False), path], "path": path}
+            )
+
+        # update sweep
+        await self.sweep.prompt_set("PATH HISTORY")
+        await self.sweep.niddle_set("")
+        await self.sweep.candidates_clear()
+        await self.sweep.candidates_extend(candidates)
+
+    async def show_path(self):
+        """Show current path"""
+        await self.sweep.niddle_set("")
+        await self.sweep.prompt_set(str(collapse_path(self.path)))
+        candidates = candidates_from_path(self.path)
+        if candidates:
+            await self.sweep.candidates_clear()
+            await self.sweep.candidates_extend(candidates)
+
+    async def run(self):
+        for key in KEY_ALL:
+            await self.sweep.key_binding(key, key)
+
+        await self.show_history()
+        async for event in self.sweep:
+            if event.method == SWEEP_SELECTED:
+                path = event.params["path"]
+                if self.path is None:
+                    return path
+                return self.path / path
+
+            elif event.method == SWEEP_KEYBINDING:
+                # list directory under cursor
+                if event.params == KEY_LIST:
+                    entry = await self.sweep.current()
+                    if entry is None:
+                        continue
+
+                    path = Path(entry["path"])
+                    if self.path is None:
+                        self.path = path
+                        await self.show_path()
+                    elif (self.path / path).is_dir():
+                        self.path /= path
+                        await self.show_path()
+
+                # list parent directory
+                elif event.params == KEY_PARENT:
+                    if self.path is None:
+                        continue
+                    self.path = self.path.parent
+                    await self.show_path()
+
+                # switch to history mode
+                elif event.params == KEY_HISTORY:
+                    self.path = None
+                    await self.show_history()
+
+                # return directory associted with current entry
+                elif event.params == KEY_OPEN:
+                    entry = await self.sweep.current()
+                    if entry is None:
+                        continue
+
+                    path = Path(entry["path"])
+                    if self.path is None:
+                        return path
+                    else:
+                        path = self.path / path
+                        if path.is_dir():
+                            return path
+                        return path.parent
 
 
 async def main():
@@ -212,110 +322,14 @@ async def main():
 
     elif opts.command == "select":
         path_history.cleanup()
-        _, paths = path_history.load()
-        items = []
-        count_max = 0
-        for path, (count, timestamp) in paths.items():
-            items.append([count, timestamp, path])
-            count_max = max(count_max, count)
-        items.sort(reverse=True)
-        count_align = len(str(count_max)) + 1
 
-        def make_entry(path, count=None):
-            path = str(path)
-            count = str(count).ljust(count_align) if count else " " * count_align
-            return {
-                "entry": [(count, False), path],
-                "path": path
-            }
-
-        result = None
-        key_dir_list = "ctrl+i"  # tab
-        key_dir_up = "backspace"  # only triggered when input is empty
-        key_dir_hist = "ctrl+h"
-        key_dir_open = "ctrl+o"
         async with Sweep(
             sweep=[opts.sweep], theme=opts.theme, title="path history", tty=opts.tty
         ) as sweep:
-            await sweep.key_binding(key_dir_list, key_dir_list)
-            await sweep.key_binding(key_dir_up, key_dir_up)
-            await sweep.key_binding(key_dir_hist, key_dir_hist)
-            await sweep.key_binding(key_dir_open, key_dir_open)
-
-            async def history():
-                cwd = str(Path.cwd())
-                candidates = [make_entry(cwd)]
-                for count, _timestamp, path in items:
-                    path = str(path)
-                    if path == cwd:
-                        continue
-                    candidates.append(make_entry(path, count))
-
-                await sweep.prompt_set("PATH HISTORY")
-                await sweep.niddle_set("")
-                await sweep.candidates_clear()
-                await sweep.candidates_extend(candidates)
-
-            async def load_path(path):
-                await sweep.niddle_set("")
-                await sweep.prompt_set(str(collapse_path(path)))
-                candidates = candidates_from_path(path)
-                if candidates:
-                    await sweep.candidates_clear()
-                    await sweep.candidates_extend(candidates)
-
-            await history()
-            current_path = None
-            async for event in sweep:
-                if event.method == SWEEP_SELECTED:
-                    value = event.params
-                    if current_path is None:
-                        result = value
-                    else:
-                        result = current_path / value
-                    break
-
-                elif event.method == SWEEP_KEYBINDING:
-                    tag = event.params
-                    if tag == key_dir_list:
-                        path = await sweep.current()
-                        if isinstance(path, dict):
-                            path = path["path"]
-                        if path is None:
-                            continue
-                        path = Path(path)
-                        if current_path is None:
-                            current_path = path
-                        elif (current_path / path).is_dir():
-                            current_path /= path
-                        else:
-                            continue
-                        await load_path(current_path)
-
-                    elif tag == key_dir_up:
-                        if current_path is not None:
-                            current_path = current_path.parent
-                            await load_path(current_path)
-
-                    elif tag == key_dir_hist:
-                        await history()
-                        current_path = None
-
-                    elif tag == key_dir_open:
-                        current = await sweep.current()
-                        if current is None:
-                            result = current_path
-                        else:
-                            if current_path is None:
-                                path = Path(current)
-                            else:
-                                path = current_path / current
-                            result = path if path.is_dir() else path.parent
-                        break
+            selector = PathSelector(sweep, path_history)
+            result = await selector.run()
 
         if result is not None:
-            if isinstance(result, dict):
-                result = result["path"]
             print(result)
 
 
