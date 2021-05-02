@@ -39,14 +39,14 @@ Options:
 ```
 - **Bash history integration**
 Install sweep and put [`bash_history.py`](scripts/bash_history.py) together with [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. Add this to your `~/.bashrc`
-```
+```bash
 bind '"\er": redraw-current-line'
 bind '"\e^": history-expand-line'
 bind '"\C-r": " \C-e\C-u\C-y\ey\C-u`bash_history.py`\e\C-e\er\e^"'
 ```
 - **Bash directory history**
 Same as with bash history [`path_history.py`](scripts/path_history.py) needs to be located in your `$PATH`. And `~/.bashrc` needs to be extended with.
-```
+```bash
 __sweep_platform=$(python3 -c 'import sys; print(sys.platform)')
 
 __sweep_path__() {
