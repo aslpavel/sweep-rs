@@ -83,7 +83,21 @@ bind '"\er": redraw-current-line'
 bind '"\e^": history-expand-line'
 bind '"\C-f": " \C-e\C-u`__sweep_path__`\e\C-e\er\C-m"'
 ```
-- `ctrl+f` will open your path history, `tab` will list selected directory, `enter` will open files/directories, `backspace` will list parent directory
+`ctrl+f` will open your path history, `tab` will list selected directory, `enter` will open files/directories, `backspace` will list parent directory
+
+- **Sway run command integration**
+There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates seprate kitty window. I use to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
+```
+set $run_menu j4-dmenu-desktop --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --no-exec | xargs -r swaymsg -t command exec --
+for_window [app_id="kitty" title="sweep-menu"] {
+    floating enable
+    sticky enable
+    resize set width 700 px height 400 px
+}
+
+$mod+d exec $run_menu
+```
+![sway](resources/sway.png)
 
 ### Installation
   - Clone
