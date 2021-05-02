@@ -57,8 +57,8 @@ impl Candidate {
             .collect();
         Self {
             inner: Arc::new(CandidateInner {
-                chars,
                 fields,
+                chars,
                 json,
             }),
         }
@@ -344,6 +344,7 @@ impl FromStr for FieldSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_select() -> Result<(), Error> {
@@ -380,5 +381,20 @@ mod tests {
     fn test_split_inclusive() {
         let chunks: Vec<_> = split_inclusive(' ', "  one  павел two  ").collect();
         assert_eq!(chunks, vec!["  one", "  павел", " two", "  ",]);
+    }
+
+    #[test]
+    fn test_json_candidate() -> Result<(), Error> {
+        // string is parsed as usual string entry
+        Candidate::from_json(json!("one two"), ' ', None)?;
+        // JSON object must include "entry" field
+        Candidate::from_json(json!({"entry": "one"}), ' ', None)?;
+        // entry fields might be a list [(<string field>, <bool selected>)]
+        Candidate::from_json(
+            json!({"entry": ["two", ["three", false], ["four", true]]}),
+            ' ',
+            None,
+        )?;
+        Ok(())
     }
 }

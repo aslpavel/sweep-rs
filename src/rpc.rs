@@ -153,15 +153,13 @@ pub struct RPCRequest {
 
 impl RPCRequest {
     pub fn response_ok(self, result: impl Into<Value>) -> Option<Value> {
-        if let Some(id) = self.id {
-            Some(json!({
+        self.id.map(|id| {
+            json!({
                 "jsonrpc": "2.0",
                 "result": result.into(),
                 "id": id,
-            }))
-        } else {
-            None
-        }
+            })
+        })
     }
 
     pub fn response_err(self, kind: RPCErrorKind, data: Option<impl Into<Value>>) -> Value {

@@ -411,7 +411,9 @@ async def main():
         altscreen=args.altscreen,
     )
 
-    if args.json:
+    if result is None:
+        pass
+    elif args.json:
         json.dump(result, sys.stdout)
     else:
         print(result)
