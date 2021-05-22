@@ -70,6 +70,7 @@ fn main() -> Result<(), Error> {
         title: args.title.clone(),
         scorer_builder: args.scorer.toggle(),
         altscreen: args.altscreen,
+        debug: args.debug,
     })?;
     sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 

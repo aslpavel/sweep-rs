@@ -28,6 +28,7 @@ pub struct SweepOptions {
     pub title: String,
     pub scorer_builder: ScorerBuilder,
     pub altscreen: bool,
+    pub debug: bool,
 }
 
 impl Default for SweepOptions {
@@ -44,6 +45,7 @@ impl Default for SweepOptions {
                 Arc::new(FuzzyScorer::new(niddle))
             }),
             altscreen: false,
+            debug: false,
         }
     }
 }
@@ -411,6 +413,9 @@ where
             enable: true,
             mode: DecMode::AltScreen,
         })?;
+    }
+    if options.debug {
+        term.duplicate_output("/tmp/sweep.log")?;
     }
 
     // find current row offset
