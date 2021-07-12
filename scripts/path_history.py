@@ -144,7 +144,7 @@ def candidates_path_key(path):
     return (hidden, not_dir, path)
 
 
-def candidates_from_path(root, soft_limit=4096):
+def candidates_from_path(root: Path, soft_limit=4096):
     """Build candidates list from provided root path
 
     Soft limit determines the depth of traversal once soft limit
@@ -256,11 +256,12 @@ class PathSelector:
                         self.path /= path
                         await self.show_path()
 
-                # list parent directory
+                # list parent directory, list current directory in history mode
                 elif event.params == KEY_PARENT:
                     if self.path is None:
-                        continue
-                    self.path = self.path.parent
+                        self.path = Path.cwd()
+                    else:
+                        self.path = self.path.parent
                     await self.show_path()
 
                 # switch to history mode
