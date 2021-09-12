@@ -1,22 +1,41 @@
 #!/usr/bin/env python3
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
-from collections import deque
-from typing import Optional, List, Any, NamedTuple, Dict
 import asyncio
+from asyncio.streams import StreamReader, StreamWriter
+from asyncio.subprocess import Process
 import json
 import os
 import socket
 import sys
 import traceback
+from asyncio.futures import Future
+from collections import deque
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Deque,
+    Dict,
+    Generic,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    TypeVar,
+    Union,
+    cast,
+)
 
 __all__ = ["Sweep", "SweepError", "sweep", "SWEEP_SELECTED", "SWEEP_KEYBINDING"]
 
 SWEEP_SELECTED = "select"
 SWEEP_KEYBINDING = "bind"
 
+Candidate = Union[str, Dict[str, Any]]
 
-async def sweep(chandidates: List[Any], **options: Dict[str, Any]) -> Any:
+
+async def sweep(chandidates: List[Candidate], **options: Any) -> Any:
     """Convinience wrapper around `Sweep`
 
     Useful when you only need to select one candidate from a list of items
@@ -52,8 +71,8 @@ class Sweep:
 
     def __init__(
         self,
-        sweep=["sweep"],
-        prompt="INPUT",
+        sweep: List[str] = ["sweep"],
+        prompt: str = "INPUT",
         nth: Optional[str] = None,
         height: int = 11,
         delimiter: Optional[str] = None,
@@ -62,11 +81,11 @@ class Sweep:
         tty: Optional[str] = None,
         debug: bool = False,
         title: Optional[str] = None,
-        keep_order=False,
+        keep_order: bool = False,
         no_match: Optional[str] = None,
-        altscreen=False,
+        altscreen: bool = False,
     ):
-        args = []
+        args: List[str] = []
         args.extend(["--prompt", prompt])
         args.extend(["--height", str(height)])
         if isinstance(nth, str):
@@ -91,15 +110,15 @@ class Sweep:
             args.append("--altscreen")
 
         self._args = [*sweep, "--rpc", *args]
-        self._proc = None
+        self._proc: Optional[Process] = None
         self._io_sock = None
         self._last_id = 0
-        self._read_events = Event()
-        self._read_requests = {}
-        self._write_queue = deque()
-        self._write_notify = Event()
+        self._read_events: Event[SweepRequest] = Event()
+        self._read_requests: Dict[int, Future[Any]] = {}
+        self._write_queue: Deque[SweepRequest] = deque()
+        self._write_notify: Event[None] = Event()
 
-    async def _worker_main(self, sock):
+    async def _worker_main(self, sock: socket.socket):
         """Main worker coroutine which reads and write data to/from sweep"""
         if self._proc is None:
             return
@@ -117,17 +136,17 @@ class Sweep:
         finally:
             await self.terminate()
 
-    async def _worker_writer(self, writer):
+    async def _worker_writer(self, writer: StreamWriter):
         """Write outging messages"""
         while self._proc is not None:
             if not self._write_queue:
                 await self._write_notify
                 continue
-            writer.write(self._write_queue.popleft())
+            writer.write(self._write_queue.popleft().encode())
             await writer.drain()
         raise asyncio.CancelledError()
 
-    async def _worker_reader(self, reader):
+    async def _worker_reader(self, reader: StreamReader):
         """Read and dispatch incomming messages from the reader"""
         while self._proc is not None:
             size = await reader.readline()
@@ -140,23 +159,27 @@ class Sweep:
             self._read_dispatch(json.loads(data))
         raise asyncio.CancelledError()
 
-    def _read_dispatch(self, msg):
+    def _read_dispatch(self, msg: Any):
         """Handle incomming messages"""
         future = self._read_requests.pop(msg.get("id"), None)
+        if future is None:
+            return
 
         # handle errors
         error = msg.get("error")
         if error is not None:
-            if not isinstance(error, dict):
+            if isinstance(error, dict):
+                error = cast(Dict[str, Any], error)
                 error = SweepError(
-                    -32700, "Parse error", f"Error must be an object: {msg}"
+                    error.get("code", -32603),
+                    error.get("message", ""),
+                    error.get("data", ""),
                 )
             else:
                 error = SweepError(
-                    error.get("code", -32603),
-                    error.get("message"),
-                    error.get("data", ""),
+                    -32700, "Parse error", f"Error must be an object: {msg}"
                 )
+
             if future is None:
                 raise error
             else:
@@ -174,14 +197,13 @@ class Sweep:
         result = msg.get("result")
         future.set_result(result)
 
-    def _call(self, method, params=None):
-        future = asyncio.get_running_loop().create_future()
+    def _call(self, method: str, params: Optional[Any] = None) -> Future[Any]:
+        future: Future[Any] = asyncio.get_running_loop().create_future()
         if self._proc is None:
             future.set_exception(RuntimeError("sweep process is not running"))
         else:
             self._last_id += 1
-            request = SweepRequest(method, params, self._last_id)
-            self._write_queue.append(request.encode())
+            self._write_queue.append(SweepRequest(method, params, self._last_id))
             self._write_notify(None)
             self._read_requests[self._last_id] = future
         return future
@@ -220,14 +242,14 @@ class Sweep:
         event = await self._read_events
         return event
 
-    def on(self, name, handler):
+    def on(self, name: str, handler: Callable[["SweepRequest"], bool]):
         """Regester handler that will be called on event with mathching name
 
         Handler should return `True` value to continue reciving events.
         If `name` arguments is None handler will receive all events.
         """
 
-        def filtered_handler(event):
+        def filtered_handler(event: SweepRequest):
             if name is not None and event.method != name:
                 return True
             return handler(event)
@@ -244,45 +266,46 @@ class Sweep:
             return
 
         # resolve all futures
-        requests, self._read_requests = self._read_requests, {}
+        requests = self._read_requests.copy()
+        self._read_requests.clear()
         for request in requests.values():
             request.cancel("sweep process has terminated")
         self._read_events(SweepRequest("quit", None, None))
 
         await proc.wait()
 
-    def candidates_extend(self, items: List[str]):
+    def candidates_extend(self, items: List[Candidate]) -> Awaitable[None]:
         """Extend candidates set"""
         return self._call("haystack_extend", items)
 
-    def candidates_clear(self):
+    def candidates_clear(self) -> Awaitable[None]:
         """Clear all candidates"""
         return self._call("haystack_clear")
 
-    def niddle_set(self, niddle: str):
+    def niddle_set(self, niddle: str) -> Awaitable[None]:
         """Set new niddle"""
         return self._call("niddle_set", niddle)
 
-    def key_binding(self, key: str, tag: Any):
+    def key_binding(self, key: str, tag: Any) -> Awaitable[None]:
         """Register new hotkey"""
         return self._call("key_binding", {"key": key, "tag": tag})
 
-    def prompt_set(self, prompt: str):
+    def prompt_set(self, prompt: str) -> Awaitable[None]:
         """Set sweep's prompt string"""
         return self._call("prompt_set", prompt)
 
-    def current(self, timeout=None):
+    def current(self) -> Awaitable[Candidate]:
         """Currently selected element"""
         return self._call("current")
 
 
 class SweepError(Exception):
-    def __init__(self, code, message, data):
+    def __init__(self, code: int, message: str, data: str):
         self.code = code
         self.message = message
         self.data = data
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.data
 
 
@@ -292,7 +315,7 @@ class SweepRequest(NamedTuple):
     id: Optional[int]
 
     def encode(self):
-        message = {
+        message: Dict[str, Any] = {
             "jsonrpc": "2.0",
             "method": self.method,
         }
@@ -305,29 +328,37 @@ class SweepRequest(NamedTuple):
         return header + data
 
 
-class Event:
+E = TypeVar("E")
+
+
+class Event(Generic[E]):
     __slots__ = ["_handlers"]
 
     def __init__(self):
-        self._handlers = set()
+        self._handlers: Set[Callable[[E], bool]] = set()
 
-    def __call__(self, event):
-        handlers, self._handlers = self._handlers, set()
+    def __call__(self, event: E):
+        handlers = self._handlers.copy()
+        self._handlers.clear()
         for handler in handlers:
             if handler(event):
                 self._handlers.add(handler)
 
-    def on(self, handler):
+    def on(self, handler: Callable[[E], bool]):
         self._handlers.add(handler)
 
     def __await__(self):
-        future = asyncio.get_running_loop().create_future()
-        self.on(future.set_result)
+        def handler(event: E) -> bool:
+            future.set_result(event)
+            return False
+
+        future: Future[E] = asyncio.get_running_loop().create_future()
+        self.on(handler)
         value = yield from future
         return value
 
 
-async def unix_server_once(path):
+async def unix_server_once(path: str) -> socket.socket:
     """Create unix server socket and accept one connection"""
     loop = asyncio.get_running_loop()
     if os.path.exists(path):
@@ -339,7 +370,7 @@ async def unix_server_once(path):
         accept = loop.create_future()
         loop.add_reader(server.fileno(), lambda: accept.set_result(None))
         await accept
-        (client, _address) = server.accept()
+        client, _ = server.accept()
         return client
     finally:
         loop.remove_reader(server.fileno())
@@ -390,9 +421,9 @@ async def main():
     args = parser.parse_args()
 
     if args.json:
-        candidates = json.load(sys.stdin)
+        candidates = cast(List[Candidate], json.load(sys.stdin))
     else:
-        candidates = []
+        candidates: List[Candidate] = []
         for line in sys.stdin:
             candidates.append(line.strip())
 
