@@ -161,13 +161,23 @@ class Sweep:
 
     def _read_dispatch(self, msg: Any):
         """Handle incomming messages"""
+        # handle events
+        method = msg.get("method")
+        if method:
+            event = SweepRequest(method, msg.get("params"), None)
+            self._read_events(event)
+            return
+
         future = self._read_requests.pop(msg.get("id"), None)
         if future is None:
             return
-
-        # handle errors
         error = msg.get("error")
-        if error is not None:
+        if error is None:
+            # handle results
+            result = msg.get("result")
+            future.set_result(result)
+        else:
+            # handle errors
             if isinstance(error, dict):
                 error = cast(Dict[str, Any], error)
                 error = SweepError(
@@ -179,23 +189,8 @@ class Sweep:
                 error = SweepError(
                     -32700, "Parse error", f"Error must be an object: {msg}"
                 )
-
-            if future is None:
-                raise error
-            else:
-                future.set_exception(error)
+            future.set_exception(error)
             return
-
-        # handle events
-        method = msg.get("method")
-        if method:
-            event = SweepRequest(method, msg.get("params"), None)
-            self._read_events(event)
-            return
-
-        # handle results
-        result = msg.get("result")
-        future.set_result(result)
 
     def _call(self, method: str, params: Optional[Any] = None) -> Future[Any]:
         future: Future[Any] = asyncio.get_running_loop().create_future()
