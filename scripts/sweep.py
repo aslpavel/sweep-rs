@@ -289,7 +289,7 @@ class Sweep:
         """Set sweep's prompt string"""
         return self._call("prompt_set", prompt)
 
-    def current(self) -> Awaitable[Candidate]:
+    def current(self) -> Awaitable[Optional[Candidate]]:
         """Currently selected element"""
         return self._call("current")
 

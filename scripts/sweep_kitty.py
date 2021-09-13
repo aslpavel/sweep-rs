@@ -6,13 +6,16 @@ import argparse
 import asyncio
 import json
 import sys
+from typing import List, cast
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import sweep
+from sweep import sweep, Candidate
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Run sweep inside a newly create kitty window")
+    parser = argparse.ArgumentParser(
+        description="Run sweep inside a newly create kitty window"
+    )
     parser.add_argument(
         "-p",
         "--prompt",
@@ -43,9 +46,9 @@ async def main():
     args = parser.parse_args()
 
     if args.json:
-        candidates = json.load(sys.stdin)
+        candidates = cast(List[Candidate], json.load(sys.stdin))
     else:
-        candidates = []
+        candidates: List[Candidate] = []
         for line in sys.stdin:
             candidates.append(line.strip())
 

@@ -13,9 +13,11 @@ import os
 import re
 import sys
 import time
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, cast
+from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING
+from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING, Candidate
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -36,16 +38,32 @@ DEFAULT_IGNORE = re.compile(
 )
 
 
+@dataclass
+class PathHistoryEntry:
+    path: Path
+    count: int
+    atime: int
+
+
+@dataclass
 class PathHistory:
+    mtime: Optional[int]
+    entries: Dict[Path, PathHistoryEntry]
+
+    def __iter__(self):
+        return iter(self.entries.values())
+
+
+class PathHistoryStore:
     """Access and modify fpath history"""
 
-    def __init__(self, history_path=PATH_HISTORY_FILE):
+    def __init__(self, history_path: str = PATH_HISTORY_FILE):
         self.history_path = Path(history_path).expanduser().resolve()
 
-    def load(self):
+    def load(self) -> PathHistory:
         """Load path history"""
         if not self.history_path.exists():
-            return None, {}
+            return PathHistory(None, {})
         with self.history_path.open("r") as file:
             try:
                 fcntl.lockf(file, fcntl.LOCK_SH)
@@ -54,26 +72,28 @@ class PathHistory:
                 fcntl.lockf(file, fcntl.LOCK_UN)
 
         mtime = int(content.readline().strip() or "0")
-        paths = {}
+        paths: Dict[Path, PathHistoryEntry] = {}
         for line in content:
             count, timestamp, path = line.split("\t")
             count = int(count)
             date = int(timestamp)
-            paths[Path(path.strip("\n"))] = (count, date)
-        return mtime, paths
+            path = Path(path.strip("\n"))
+            paths[path] = PathHistoryEntry(path, count, date)
+        return PathHistory(mtime, paths)
 
-    def update(self, update):
+    def update(self, update: Callable[[int, PathHistory], bool]):
         """AddTo/Update path history"""
         while True:
             now = int(time.time())
-            mtime_last, paths = self.load()
-            if not update(mtime_last, now, paths):
+            history = self.load()
+            mtime_last = history.mtime
+            if not update(now, history):
                 return
 
             content = io.StringIO()
-            content.write("{}\n".format(now))
-            for path, (count, date) in paths.items():
-                content.write("{}\t{}\t{}\n".format(count, date, path))
+            content.write(f"{now}\n")
+            for entry in history:
+                content.write(f"{entry.count}\t{entry.atime}\t{entry.path}\n")
 
             with self.history_path.open("a+") as file:
                 try:
@@ -90,16 +110,15 @@ class PathHistory:
                 finally:
                     fcntl.lockf(file, fcntl.LOCK_UN)
 
-    def add(self, path):
+    def add(self, path: Path):
         """Add/Update path in the history"""
 
-        def update_add(mtime_last, now, paths):
-            count, update_last = paths.get(path) or (0, now)
-            if mtime_last == update_last:
+        def update_add(now: int, history: PathHistory):
+            entry = history.entries.get(path, PathHistoryEntry(path, 0, now))
+            if history.mtime == entry.atime:
                 # last update was for the same path, do not update
                 return False
-            count += 1
-            paths[path] = (count, now)
+            history.entries[path] = PathHistoryEntry(path, entry.count + 1, now)
             return True
 
         path = Path(path).expanduser().resolve()
@@ -110,23 +129,23 @@ class PathHistory:
     def cleanup(self):
         """Remove paths from the history which no longre exist"""
 
-        def update_cleanup(_mtime_last, _now, paths):
+        def update_cleanup(_: int, history: PathHistory):
             updated = False
-            for path in list(paths.keys()):
+            for entry in list(history):
                 exists = False
                 try:
-                    exists = Path(path).exists()
+                    exists = entry.path.exists()
                 except PermissionError:
                     pass
                 if not exists:
-                    del paths[path]
+                    history.entries.pop(entry.path)
                     updated = True
             return updated
 
         self.update(update_cleanup)
 
 
-def collapse_path(path):
+def collapse_path(path: Path) -> Path:
     """Collapse long paths with ellipsis"""
     home = Path.home().parts
     parts = path.parts
@@ -137,22 +156,22 @@ def collapse_path(path):
     return Path().joinpath(*parts)
 
 
-def candidates_path_key(path):
+def candidates_path_key(path: Path):
     """Key used to order path candidates"""
     hidden = 1 if path.name.startswith(".") else 0
     not_dir = 0 if path.is_dir() else 1
     return (hidden, not_dir, path)
 
 
-def candidates_from_path(root: Path, soft_limit=4096):
+def candidates_from_path(root: Path, soft_limit: int = 4096) -> List[Candidate]:
     """Build candidates list from provided root path
 
     Soft limit determines the depth of traversal once soft limit
     is reached none of the elements that are deeper will be returned
     """
-    candidates = []
+    candidates: List[Candidate] = []
     max_depth = None
-    queue = deque([(root, 0)])
+    queue: Deque[Tuple[Path, int]] = deque([(root, 0)])
     while queue:
         path, depth = queue.popleft()
         if max_depth and depth > max_depth:
@@ -184,29 +203,31 @@ KEY_ALL = [KEY_LIST, KEY_PARENT, KEY_HISTORY, KEY_OPEN]
 
 
 class PathSelector:
-    def __init__(self, sweep, history):
+    def __init__(self, sweep: Sweep, history: PathHistoryStore):
         self.sweep = sweep
         self.history = history
         # None - history mode
         # Path - path mode
-        self.path = None
+        self.path: Optional[Path] = None
 
     async def show_history(self):
         """Show history"""
         # load history items
-        _, paths = self.history.load()
-        items = []
+        history = self.history.load()
+        items: List[Tuple[int, int, Path]] = []
         count_max = 0
-        for path, (count, timestamp) in paths.items():
-            items.append([count, timestamp, path])
-            count_max = max(count_max, count)
+        for entry in history:
+            items.append((entry.count, entry.atime, entry.path))
+            count_max = max(count_max, entry.count)
         items.sort(reverse=True)
         count_align = len(str(count_max)) + 1
 
         # create candidates
         cwd = str(Path.cwd())
-        candidates = [dict(entry=f"{' ' * count_align}{cwd}", path=cwd)]
-        for count, _timestamp, path in items:
+        candidates: List[Candidate] = [
+            dict(entry=f"{' ' * count_align}{cwd}", path=cwd)
+        ]
+        for count, _, path in items:
             path = str(path)
             if path == cwd:
                 continue
@@ -222,6 +243,8 @@ class PathSelector:
 
     async def show_path(self):
         """Show current path"""
+        if self.path is None:
+            return
         await self.sweep.niddle_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
         candidates = candidates_from_path(self.path)
@@ -247,6 +270,7 @@ class PathSelector:
                     entry = await self.sweep.current()
                     if entry is None:
                         continue
+                    entry = cast(Dict[str, Any], entry)
 
                     path = Path(entry["path"])
                     if self.path is None:
@@ -274,6 +298,7 @@ class PathSelector:
                     entry = await self.sweep.current()
                     if entry is None:
                         continue
+                    entry = cast(Dict[str, Any], entry)
 
                     path = Path(entry["path"])
                     if self.path is None:
@@ -304,18 +329,17 @@ async def main():
     parser_select.add_argument("--tty", help="path to the tty")
     opts = parser.parse_args()
 
-    path_history = PathHistory()
+    path_history = PathHistoryStore()
 
     if opts.command == "add":
         path = opts.path or os.getcwd()
-        path_history.add(path)
+        path_history.add(Path(path))
 
     elif opts.command == "list":
         path_history.cleanup()
-        _, paths = path_history.load()
-        items = []
-        for path, (count, timestamp) in paths.items():
-            items.append([count, timestamp, path])
+        items: List[Tuple[int, int, Path]] = []
+        for entry in path_history.load():
+            items.append((entry.count, entry.atime, entry.path))
         items.sort(reverse=True)
         for count, timestamp, path in items:
             date = datetime.fromtimestamp(timestamp).strftime("[%F %T]")
