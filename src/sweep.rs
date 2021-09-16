@@ -15,7 +15,7 @@ use std::{
 };
 use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    Blend, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
+    Blend, Color, Cell, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
 };
@@ -380,6 +380,131 @@ enum SweepAction {
     User(Value),
 }
 
+/// Object representing current state of the sweep worker
+struct SweepState<H> {
+    // sweep prompt
+    prompt: String,
+    // current state of the key chrod
+    key_map_state: Vec<Key>,
+    // user action executed on backspace when input is empty
+    key_empty_backspace: Option<Value>,
+    // action key map
+    key_map: KeyMap<SweepAction>,
+    // action name to sweep action
+    key_actions: HashMap<&'static str, SweepAction>,
+    // theme
+    theme: Theme,
+    // face used for label (FIXME: merge into theme?)
+    label_face: Face,
+    // face used for separator
+    separator_face: Face,
+    // face sue for stats
+    stats_face: Face,
+    // input widget
+    input: Input,
+    // list widget
+    list: List<RankerResultThemed<H>>,
+}
+
+impl<H> SweepState<H>
+where
+    H: Haystack,
+{
+    fn new(prompt: String, theme: Theme) -> Self {
+        // faces
+        let stats_face = Face::new(
+            Some(theme.accent.best_contrast(theme.bg, theme.fg)),
+            Some(theme.accent),
+            FaceAttrs::EMPTY,
+        );
+        let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
+        let separator_face = Face::new(Some(theme.accent), theme.input.bg, FaceAttrs::EMPTY);
+
+        // key map
+        let mut key_map = KeyMap::new();
+        let mut key_actions = HashMap::new();
+        for desc in InputAction::description() {
+            let action = SweepAction::Input(desc.action);
+            key_actions.insert(desc.name, action.clone());
+            for chord in desc.chord {
+                key_map.register(chord, action.clone());
+            }
+        }
+        for desc in ListAction::description() {
+            let action = SweepAction::List(desc.action);
+            key_actions.insert(desc.name, action.clone());
+            for chord in desc.chord {
+                key_map.register(chord, action.clone());
+            }
+        }
+
+        // widgets
+        let list = List::new(RankerResultThemed::new(
+            theme.clone(),
+            Arc::new(RankerResult::<H>::default()),
+        ));
+
+        Self {
+            prompt,
+            key_map_state: Vec::new(),
+            key_empty_backspace: None,
+            key_map,
+            key_actions,
+            label_face,
+            separator_face,
+            stats_face,
+            theme,
+            input: Input::new(),
+            list,
+        }
+    }
+
+    fn render(
+        &mut self,
+        mut view: impl SurfaceMut<Item = Cell>,
+        ranker_result: Arc<RankerResult<H>>,
+    ) -> Result<(), Error> {
+        // label
+        let mut label_view = view.view_mut(0, ..);
+        let mut label = label_view.writer().face(self.label_face);
+        write!(&mut label, " {} ", self.prompt)?;
+        let mut label = label.face(self.separator_face);
+        write!(&mut label, " ")?;
+        let input_start = label.position().1 as i32;
+
+        // stats
+        let stats_str = format!(
+            " {}/{} {:.2?} [{}] ",
+            ranker_result.result.len(),
+            ranker_result.haystack_size,
+            ranker_result.duration,
+            ranker_result.scorer.name(),
+        );
+        let input_stop = -(stats_str.chars().count() as i32 + 1);
+        let mut stats_view = view.view_mut(0, input_stop..);
+        let mut stats = stats_view.writer().face(self.separator_face);
+        write!(&mut stats, "")?;
+        let mut stats = stats.face(self.stats_face);
+        stats.write_all(stats_str.as_ref())?;
+
+        // input
+        self.input.render(&self.theme, view.view_mut(0, input_start..input_stop))?;
+
+        // list
+        if self.list.items().generation() != ranker_result.generation {
+            let old_result = self.list.items_set(RankerResultThemed::new(
+                self.theme.clone(),
+                ranker_result,
+            ));
+            // dropping old result might add noticeable delay for large lists
+            rayon::spawn(move || std::mem::drop(old_result));
+        }
+        self.list.render(&self.theme, view.view_mut(1.., ..))?;
+
+        Ok(())
+    }
+}
+
 fn sweep_worker<H>(
     options: SweepOptions,
     mut term: SystemTerminal,
@@ -570,7 +695,7 @@ where
             }
         }
         // restrict view
-        let mut view = view.view_owned((row_offset as i32).., 1..-1);
+        let mut view = view.view_owned((row_offset as i32)..(row_offset + height) as i32, 1..-1);
 
         // update niddle
         ranker.niddle_set(input.get().collect());
@@ -611,7 +736,7 @@ where
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
         }
-        list.render(&options.theme, view.view_mut(1..height as i32, ..))?;
+        list.render(&options.theme, view.view_mut(1.., ..))?;
 
         if false {
             let frame_time = Instant::now() - frame_start;
