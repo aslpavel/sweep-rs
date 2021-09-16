@@ -119,7 +119,7 @@ fn main() -> Result<(), Error> {
                                 continue
                             }
                             let input = sweep.niddle_get()?;
-                            std::mem::drop(sweep);
+                            std::mem::drop(sweep); // cleanup terminal
                             if args.json {
                                 let result = result.map_or_else(|| input.into(), |value| value.to_json());
                                 serde_json::to_writer(output, &result)?;

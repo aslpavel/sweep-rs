@@ -20,7 +20,7 @@ crossbeam-channel = "0.5"
 nix = "0.20"
 rayon = "1.5"
 serde_json = "1.0"
-surf_n_term = "0.1"
+surf_n_term = "^0.1.4"
 # surf_n_term = {path = "../surf-n-term"}
 
 [dev-dependencies]

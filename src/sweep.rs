@@ -6,6 +6,7 @@ use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     io::Write,
     ops::Deref,
     sync::Arc,
@@ -13,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use surf_n_term::{
-    widgets::{Input, List, ListItems, Theme},
+    widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     Blend, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
@@ -372,6 +373,13 @@ impl Sweep<Candidate> {
     }
 }
 
+#[derive(Debug, Clone)]
+enum SweepAction {
+    Input(InputAction),
+    List(ListAction),
+    User(Value),
+}
+
 fn sweep_worker<H>(
     options: SweepOptions,
     mut term: SystemTerminal,
@@ -446,8 +454,24 @@ where
     let mut prompt = options.prompt.clone();
 
     // key bindings
-    let mut key_map = KeyMap::new();
     let mut key_map_state = Vec::new();
+    let mut key_empty_backspace: Option<Value> = None; // action on empty input backspace
+    let mut key_map: KeyMap<SweepAction> = KeyMap::new();
+    let mut key_actions = HashMap::new();
+    for desc in InputAction::description() {
+        let action = SweepAction::Input(desc.action);
+        key_actions.insert(desc.name, action.clone());
+        for chord in desc.chord {
+            key_map.register(chord, action.clone());
+        }
+    }
+    for desc in ListAction::description() {
+        let action = SweepAction::List(desc.action);
+        key_actions.insert(desc.name, action.clone());
+        for chord in desc.chord {
+            key_map.register(chord, action.clone());
+        }
+    }
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
@@ -487,9 +511,22 @@ where
                                 response.send(SweepResponse::Niddle(input.get().collect()))?;
                             }
                             SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
-                            SweepCommand::Bind(chord, tag) => {
-                                key_map.register(chord.as_ref(), tag);
-                            }
+                            SweepCommand::Bind(chord, tag) => match chord.as_slice() {
+                                &[Key {
+                                    name: KeyName::Backspace,
+                                    mode: KeyMod::EMPTY,
+                                }] => {
+                                    key_empty_backspace.replace(tag);
+                                }
+                                _ => {
+                                    let action =
+                                        match tag.as_str().and_then(|name| key_actions.get(name)) {
+                                            Some(action) => action.clone(),
+                                            None => SweepAction::User(tag),
+                                        };
+                                    key_map.register(chord.as_ref(), action);
+                                }
+                            },
                             SweepCommand::PromptSet(new_prompt) => {
                                 prompt = new_prompt;
                             }
@@ -504,20 +541,33 @@ where
                 _ => (),
             }
             if let TerminalEvent::Key(key) = *event {
-                if let Some(tag) = key_map.lookup_state(&mut key_map_state, key) {
-                    // only gnerate event
-                    // - if it is not a Backspace, when input is not empty
-                    // - tag is not Value::Null
-                    if key != Key::new(KeyName::Backspace, KeyMod::EMPTY)
-                        || input.get().count() == 0 && !tag.is_null()
-                    {
-                        events.send(SweepEvent::Bind(tag.clone()))?;
+                if let Some(action) = key_map.lookup_state(&mut key_map_state, key) {
+                    // do not generate  Backspace, when input is not empty
+                    let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
+                    if key == backspace && input.get().count() == 0 {
+                        if let Some(ref tag) = key_empty_backspace {
+                            events.send(SweepEvent::Bind(tag.clone()))?;
+                        }
+                    } else {
+                        match action {
+                            SweepAction::Input(action) => input.apply(*action),
+                            SweepAction::List(action) => list.apply(*action),
+                            SweepAction::User(tag) => {
+                                if !tag.is_null() {
+                                    events.send(SweepEvent::Bind(tag.clone()))?;
+                                }
+                            }
+                        }
                     }
+                } else if let Key {
+                    name: KeyName::Char(c),
+                    mode: KeyMod::EMPTY,
+                } = key
+                {
+                    // send plain chars to the input
+                    input.apply(InputAction::Insert(c));
                 }
             }
-
-            input.handle(event);
-            list.handle(event);
         }
         // restrict view
         let mut view = view.view_owned((row_offset as i32).., 1..-1);
