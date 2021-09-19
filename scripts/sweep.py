@@ -281,7 +281,7 @@ class Sweep:
         """Set new niddle"""
         return self._call("niddle_set", niddle)
 
-    def key_binding(self, key: str, tag: Any) -> Awaitable[None]:
+    def key_binding(self, key: str, tag: str) -> Awaitable[None]:
         """Register new hotkey"""
         return self._call("key_binding", {"key": key, "tag": tag})
 

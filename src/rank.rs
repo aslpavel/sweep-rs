@@ -35,6 +35,7 @@ where
     result
 }
 
+/// Funciton to create scorer with the given niddle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
 
 enum RankerCmd<H> {
@@ -94,105 +95,109 @@ where
         let mut haystack = Vec::new();
         let mut generation = 0usize;
         let (sender, receiver) = unbounded();
-        std::thread::spawn({
-            let result = result.clone();
-            move || {
-                loop {
-                    // block on first event and process all pending requests in one go
-                    let cmd = match receiver.recv() {
-                        Ok(cmd) => cmd,
-                        Err(_) => return,
-                    };
-                    let mut haystack_new = Vec::new();
-                    let mut haystack_reverse = false;
-                    let mut niddle_updated = false; // niddle was updated
-                    let mut niddle_prefix = true; // previous niddle is a prefix of the new one
-                    let mut scorer_updated = false;
-                    let mut scorer = scorer_builder("");
-                    for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
-                        match cmd {
-                            RankerCmd::HaystackAppend(haystack) => {
-                                haystack_new.extend(haystack);
+        std::thread::Builder::new()
+            .name("sweep-ranker".to_string())
+            .spawn({
+                let result = result.clone();
+                move || {
+                    loop {
+                        // block on first event and process all pending requests in one go
+                        let cmd = match receiver.recv() {
+                            Ok(cmd) => cmd,
+                            Err(_) => return,
+                        };
+                        let mut haystack_new = Vec::new();
+                        let mut haystack_reverse = false;
+                        let mut niddle_updated = false; // niddle was updated
+                        let mut niddle_prefix = true; // previous niddle is a prefix of the new one
+                        let mut scorer_updated = false;
+                        let mut scorer = scorer_builder("");
+                        for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
+                            match cmd {
+                                RankerCmd::HaystackAppend(haystack) => {
+                                    haystack_new.extend(haystack);
+                                }
+                                RankerCmd::HaystackClear => {
+                                    haystack.clear();
+                                    haystack_new.clear();
+                                    scorer_updated = true;
+                                }
+                                RankerCmd::Niddle(niddle_new) if niddle_new != niddle => {
+                                    niddle_updated = true;
+                                    niddle_prefix =
+                                        niddle_prefix && niddle_new.starts_with(&niddle);
+                                    niddle = niddle_new;
+                                }
+                                RankerCmd::Scorer(scorer_new) => {
+                                    scorer_builder = scorer_new;
+                                    scorer_updated = true;
+                                }
+                                RankerCmd::HaystackReverse => {
+                                    haystack_reverse = !haystack_reverse;
+                                    scorer_updated = true;
+                                }
+                                _ => continue,
                             }
-                            RankerCmd::HaystackClear => {
-                                haystack.clear();
-                                haystack_new.clear();
-                                scorer_updated = true;
-                            }
-                            RankerCmd::Niddle(niddle_new) if niddle_new != niddle => {
-                                niddle_updated = true;
-                                niddle_prefix = niddle_prefix && niddle_new.starts_with(&niddle);
-                                niddle = niddle_new;
-                            }
-                            RankerCmd::Scorer(scorer_new) => {
-                                scorer_builder = scorer_new;
-                                scorer_updated = true;
-                            }
-                            RankerCmd::HaystackReverse => {
-                                haystack_reverse = !haystack_reverse;
-                                scorer_updated = true;
-                            }
-                            _ => continue,
                         }
-                    }
-                    haystack.extend(haystack_new.iter().cloned());
-                    if haystack_reverse {
-                        haystack.reverse();
-                    }
+                        haystack.extend(haystack_new.iter().cloned());
+                        if haystack_reverse {
+                            haystack.reverse();
+                        }
 
-                    // rank haystack
-                    let start = Instant::now();
-                    let result_new = if scorer_updated {
-                        // re-rank all data
-                        scorer = scorer_builder(niddle.as_ref());
-                        rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
-                    } else if !niddle_updated && haystack_new.is_empty() {
-                        continue;
-                    } else if niddle_updated {
-                        scorer = scorer_builder(niddle.as_ref());
-                        if niddle_prefix && haystack_new.is_empty() {
-                            // incremental ranking
-                            let result_old = result.with(|result| Arc::clone(result));
-                            rank(&scorer, keep_order, result_old.result.as_ref(), |r| {
-                                r.haystack.clone()
-                            })
-                        } else {
+                        // rank haystack
+                        let start = Instant::now();
+                        let result_new = if scorer_updated {
                             // re-rank all data
+                            scorer = scorer_builder(niddle.as_ref());
                             rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
-                        }
-                    } else {
-                        // rank only new data
-                        let result_add =
-                            rank(&scorer, keep_order, haystack_new.as_ref(), Clone::clone);
-                        let result_old = result.with(|result| Arc::clone(result));
-                        let mut result_new =
-                            Vec::with_capacity(result_old.result.len() + result_add.len());
-                        result_new.extend(result_old.result.iter().cloned());
-                        result_new.extend(result_add);
-                        if !keep_order {
-                            result_new.par_sort_by(|a, b| {
-                                a.score.partial_cmp(&b.score).expect("Nan score").reverse()
-                            });
-                        }
-                        result_new
-                    };
-                    let duration = Instant::now() - start;
-                    generation += 1;
-                    let result_new = RankerResult {
-                        scorer: scorer.clone(),
-                        result: result_new,
-                        duration,
-                        haystack_size: haystack.len(),
-                        generation,
-                    };
-                    result.with(|result| std::mem::replace(result, Arc::new(result_new)));
+                        } else if !niddle_updated && haystack_new.is_empty() {
+                            continue;
+                        } else if niddle_updated {
+                            scorer = scorer_builder(niddle.as_ref());
+                            if niddle_prefix && haystack_new.is_empty() {
+                                // incremental ranking
+                                let result_old = result.with(|result| Arc::clone(result));
+                                rank(&scorer, keep_order, result_old.result.as_ref(), |r| {
+                                    r.haystack.clone()
+                                })
+                            } else {
+                                // re-rank all data
+                                rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
+                            }
+                        } else {
+                            // rank only new data
+                            let result_add =
+                                rank(&scorer, keep_order, haystack_new.as_ref(), Clone::clone);
+                            let result_old = result.with(|result| Arc::clone(result));
+                            let mut result_new =
+                                Vec::with_capacity(result_old.result.len() + result_add.len());
+                            result_new.extend(result_old.result.iter().cloned());
+                            result_new.extend(result_add);
+                            if !keep_order {
+                                result_new.par_sort_by(|a, b| {
+                                    a.score.partial_cmp(&b.score).expect("Nan score").reverse()
+                                });
+                            }
+                            result_new
+                        };
+                        let duration = Instant::now() - start;
+                        generation += 1;
+                        let result_new = RankerResult {
+                            scorer: scorer.clone(),
+                            result: result_new,
+                            duration,
+                            haystack_size: haystack.len(),
+                            generation,
+                        };
+                        result.with(|result| std::mem::replace(result, Arc::new(result_new)));
 
-                    if !notify() {
-                        return;
+                        if !notify() {
+                            return;
+                        }
                     }
                 }
-            }
-        });
+            })
+            .expect("failed to start sweep-ranker thread");
         Self {
             sender,
             // worker,

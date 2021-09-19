@@ -153,7 +153,7 @@ $mod+d exec $run_menu
     - result: `Candidate`
   - Set key binding
     - method: `key_binding`
-    - params: `{"key": String, "tag": JSON}` - associate keybind key (i.e `ctrl+o`) with the tag
+    - params: `{"key": String, "tag": String}` - associate keybind key (i.e `ctrl+o`) with the tag, empty tag string means unbind
     - result: `Null`
   - Terminate sweep process
     - method: `terminate`
