@@ -11,11 +11,11 @@ use std::{
     ops::Deref,
     sync::Arc,
     thread::{Builder, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    Blend, Color, Cell, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
+    Blend, Cell, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
 };
@@ -206,7 +206,7 @@ impl<H: Haystack> SweepInner<H> {
             let waker = waker.clone();
             move || waker.wake().is_ok()
         });
-        let worker = Builder::new().name("sweep_worker".to_string()).spawn({
+        let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             let ranker = ranker.clone();
             move || {
                 sweep_worker(
@@ -378,6 +378,8 @@ enum SweepAction {
     Input(InputAction),
     List(ListAction),
     User(Value),
+    Select,
+    Quit,
 }
 
 /// Object representing current state of the sweep worker
@@ -423,6 +425,7 @@ where
         // key map
         let mut key_map = KeyMap::new();
         let mut key_actions = HashMap::new();
+        // input
         for desc in InputAction::description() {
             let action = SweepAction::Input(desc.action);
             key_actions.insert(desc.name, action.clone());
@@ -430,6 +433,7 @@ where
                 key_map.register(chord, action.clone());
             }
         }
+        // list
         for desc in ListAction::description() {
             let action = SweepAction::List(desc.action);
             key_actions.insert(desc.name, action.clone());
@@ -437,8 +441,41 @@ where
                 key_map.register(chord, action.clone());
             }
         }
+        // quit
+        key_actions.insert("sweep.quit", SweepAction::Quit);
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('c'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Quit,
+        );
+        key_map.register(
+            &[Key {
+                name: KeyName::Esc,
+                mode: KeyMod::EMPTY,
+            }],
+            SweepAction::Quit,
+        );
+        // select
+        key_actions.insert("sweep.select", SweepAction::Select);
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('m'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Select,
+        );
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('j'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Select,
+        );
 
         // widgets
+        let input = Input::new();
         let list = List::new(RankerResultThemed::new(
             theme.clone(),
             Arc::new(RankerResult::<H>::default()),
@@ -454,7 +491,7 @@ where
             separator_face,
             stats_face,
             theme,
-            input: Input::new(),
+            input,
             list,
         }
     }
@@ -488,14 +525,14 @@ where
         stats.write_all(stats_str.as_ref())?;
 
         // input
-        self.input.render(&self.theme, view.view_mut(0, input_start..input_stop))?;
+        self.input
+            .render(&self.theme, view.view_mut(0, input_start..input_stop))?;
 
         // list
         if self.list.items().generation() != ranker_result.generation {
-            let old_result = self.list.items_set(RankerResultThemed::new(
-                self.theme.clone(),
-                ranker_result,
-            ));
+            let old_result = self
+                .list
+                .items_set(RankerResultThemed::new(self.theme.clone(), ranker_result));
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
         }
@@ -516,25 +553,6 @@ fn sweep_worker<H>(
 where
     H: Haystack,
 {
-    // colors
-    let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
-    let stats_face = Face::new(
-        Some(
-            options
-                .theme
-                .accent
-                .best_contrast(options.theme.bg, options.theme.fg),
-        ),
-        Some(options.theme.accent),
-        FaceAttrs::EMPTY,
-    );
-    let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
-    let separator_face = Face::new(
-        Some(options.theme.accent),
-        options.theme.input.bg,
-        FaceAttrs::EMPTY,
-    );
-
     // initialize terminal
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
@@ -570,70 +588,24 @@ where
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
-    // initialize widgets
-    let mut input = Input::new();
-    let mut list = List::new(RankerResultThemed::new(
-        options.theme.clone(),
-        Arc::new(RankerResult::<H>::default()),
-    ));
-    let mut prompt = options.prompt.clone();
-
-    // key bindings
-    let mut key_map_state = Vec::new();
-    let mut key_empty_backspace: Option<Value> = None; // action on empty input backspace
-    let mut key_map: KeyMap<SweepAction> = KeyMap::new();
-    let mut key_actions = HashMap::new();
-    for desc in InputAction::description() {
-        let action = SweepAction::Input(desc.action);
-        key_actions.insert(desc.name, action.clone());
-        for chord in desc.chord {
-            key_map.register(chord, action.clone());
-        }
-    }
-    for desc in ListAction::description() {
-        let action = SweepAction::List(desc.action);
-        key_actions.insert(desc.name, action.clone());
-        for chord in desc.chord {
-            key_map.register(chord, action.clone());
-        }
-    }
+    let mut state = SweepState::new(options.prompt.clone(), options.theme.clone());
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
-        let frame_start = Instant::now();
-
         // handle events
-        if let Some(event) = &event {
-            match *event {
-                TerminalEvent::Key(Key { name, mode }) if mode == KeyMod::CTRL => {
-                    if name == KeyName::Char('c') {
-                        return Ok(TerminalAction::Quit(()));
-                    } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
-                        match list.current() {
-                            Some(result) => {
-                                events.send(SweepEvent::Select(Some(result.result.haystack)))?
-                            }
-                            None => events.send(SweepEvent::Select(None))?,
-                        }
-                    }
-                }
-                TerminalEvent::Key(Key {
-                    name: KeyName::Esc,
-                    mode: KeyMod::EMPTY,
-                }) => {
-                    return Ok(TerminalAction::Quit(()));
-                }
-                TerminalEvent::Resize(_term_size) => {
+            match event {
+                Some(TerminalEvent::Resize(_term_size)) => {
                     term.execute(TerminalCommand::Scroll(row_offset as i32))?;
                     row_offset = 0;
                 }
-                TerminalEvent::Wake => {
+                Some(TerminalEvent::Wake) => {
                     for command in commands.try_iter() {
                         match command {
-                            SweepCommand::NiddleSet(niddle) => input.set(niddle.as_ref()),
+                            SweepCommand::NiddleSet(niddle) => state.input.set(niddle.as_ref()),
                             SweepCommand::NiddleGet => {
-                                response.send(SweepResponse::Niddle(input.get().collect()))?;
+                                response
+                                    .send(SweepResponse::Niddle(state.input.get().collect()))?;
                             }
                             SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
                             SweepCommand::Bind(chord, tag) => match chord.as_slice() {
@@ -641,104 +613,86 @@ where
                                     name: KeyName::Backspace,
                                     mode: KeyMod::EMPTY,
                                 }] => {
-                                    key_empty_backspace.replace(tag);
+                                    state.key_empty_backspace.replace(tag);
                                 }
                                 _ => {
-                                    let action =
-                                        match tag.as_str().and_then(|name| key_actions.get(name)) {
-                                            Some(action) => action.clone(),
-                                            None => SweepAction::User(tag),
-                                        };
-                                    key_map.register(chord.as_ref(), action);
+                                    let action = match tag
+                                        .as_str()
+                                        .and_then(|name| state.key_actions.get(name))
+                                    {
+                                        Some(action) => action.clone(),
+                                        None => SweepAction::User(tag),
+                                    };
+                                    state.key_map.register(chord.as_ref(), action);
                                 }
                             },
                             SweepCommand::PromptSet(new_prompt) => {
-                                prompt = new_prompt;
+                                state.prompt = new_prompt;
                             }
                             SweepCommand::Current => {
-                                let current =
-                                    list.current().map(|candidate| candidate.result.haystack);
+                                let current = state
+                                    .list
+                                    .current()
+                                    .map(|candidate| candidate.result.haystack);
                                 response.send(SweepResponse::Current(current))?;
                             }
                         }
                     }
                 }
-                _ => (),
-            }
-            if let TerminalEvent::Key(key) = *event {
-                if let Some(action) = key_map.lookup_state(&mut key_map_state, key) {
-                    // do not generate  Backspace, when input is not empty
-                    let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
-                    if key == backspace && input.get().count() == 0 {
-                        if let Some(ref tag) = key_empty_backspace {
-                            events.send(SweepEvent::Bind(tag.clone()))?;
-                        }
-                    } else {
-                        match action {
-                            SweepAction::Input(action) => input.apply(*action),
-                            SweepAction::List(action) => list.apply(*action),
-                            SweepAction::User(tag) => {
-                                if !tag.is_null() {
-                                    events.send(SweepEvent::Bind(tag.clone()))?;
+                Some(TerminalEvent::Key(key)) => {
+                    if let Some(action) = state.key_map.lookup_state(&mut state.key_map_state, key)
+                    {
+                        // do not generate Backspace, when input is not empty
+                        let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
+                        if key == backspace && state.input.get().count() == 0 {
+                            if let Some(ref tag) = state.key_empty_backspace {
+                                events.send(SweepEvent::Bind(tag.clone()))?;
+                            }
+                        } else {
+                            match action {
+                                SweepAction::Input(action) => state.input.apply(*action),
+                                SweepAction::List(action) => state.list.apply(*action),
+                                SweepAction::User(tag) => {
+                                    if !tag.is_null() {
+                                        events.send(SweepEvent::Bind(tag.clone()))?;
+                                    }
                                 }
+                                SweepAction::Quit => {
+                                    return Ok(TerminalAction::Quit(()));
+                                }
+                                SweepAction::Select => match state.list.current() {
+                                    Some(result) => events
+                                        .send(SweepEvent::Select(Some(result.result.haystack)))?,
+                                    None => events.send(SweepEvent::Select(None))?,
+                                },
                             }
                         }
+                    } else if let Key {
+                        name: KeyName::Char(c),
+                        mode: KeyMod::EMPTY,
+                    } = key
+                    {
+                        // send plain chars to the input
+                        state.input.apply(InputAction::Insert(c));
                     }
-                } else if let Key {
-                    name: KeyName::Char(c),
-                    mode: KeyMod::EMPTY,
-                } = key
-                {
-                    // send plain chars to the input
-                    input.apply(InputAction::Insert(c));
                 }
-            }
+                _ => (),
         }
-        // restrict view
-        let mut view = view.view_owned((row_offset as i32)..(row_offset + height) as i32, 1..-1);
 
         // update niddle
-        ranker.niddle_set(input.get().collect());
+        ranker.niddle_set(state.input.get().collect());
         let ranker_result = ranker.result();
 
-        // label
-        let mut label_view = view.view_mut(0, ..);
-        let mut label = label_view.writer().face(label_face);
-        write!(&mut label, " {} ", prompt)?;
-        let mut label = label.face(separator_face);
-        write!(&mut label, " ")?;
-        let input_start = label.position().1 as i32;
+        // restrict view size
+        let view = view.view_owned((row_offset as i32)..(row_offset + height) as i32, 1..-1);
+        state.render(view, ranker_result)?;
 
-        // stats
-        let stats_str = format!(
-            " {}/{} {:.2?} [{}] ",
-            ranker_result.result.len(),
-            ranker_result.haystack_size,
-            ranker_result.duration,
-            ranker_result.scorer.name(),
-        );
-        let input_stop = -(stats_str.chars().count() as i32 + 1);
-        let mut stats_view = view.view_mut(0, input_stop..);
-        let mut stats = stats_view.writer().face(separator_face);
-        write!(&mut stats, "")?;
-        let mut stats = stats.face(stats_face);
-        stats.write_all(stats_str.as_ref())?;
-
-        // input
-        input.render(&options.theme, view.view_mut(0, input_start..input_stop))?;
-
-        // list
-        if list.items().generation() != ranker_result.generation {
-            let old_result = list.items_set(RankerResultThemed::new(
-                options.theme.clone(),
-                ranker_result,
-            ));
-            // dropping old result might add noticeable delay for large lists
-            rayon::spawn(move || std::mem::drop(old_result));
-        }
-        list.render(&options.theme, view.view_mut(1.., ..))?;
-
+        /*
         if false {
+            // insert at the begingging of the render loop
+            // let frame_start = Instant::now();
+
+            let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
             let frame_time = Instant::now() - frame_start;
             let debug_height = (height as i32 + 1)..(height as i32 + 7);
             let mut debug = view.view_mut(debug_height, ..);
@@ -751,9 +705,10 @@ where
             writeln!(
                 &mut debug_writer,
                 "current: {:?}",
-                list.current().map(|r| r.result)
+                state.list.current().map(|r| r.result)
             )?;
         }
+        */
 
         Ok(TerminalAction::Wait)
     });
