@@ -195,12 +195,16 @@ def candidates_from_path(root: Path, soft_limit: int = 4096) -> List[Candidate]:
     return candidates
 
 
-KEY_LIST = "ctrl+i"  # tab
-KEY_PARENT = "backspace"  # only triggered when input is empty
-KEY_HISTORY = "ctrl+h"
-KEY_OPEN = "ctrl+o"
-KEY_ALL = [KEY_LIST, KEY_PARENT, KEY_HISTORY, KEY_OPEN]
-
+KEY_LIST = "path.search_in_directory"
+KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
+KEY_HISTORY = "path.history"
+KEY_OPEN = "path.current_direcotry"
+KEY_ALL = {
+    KEY_LIST: "ctrl+i",
+    KEY_PARENT: "backspace",
+    KEY_HISTORY: "alt+.",
+    KEY_OPEN: "ctrl+o",
+}
 
 class PathSelector:
     def __init__(self, sweep: Sweep, history: PathHistoryStore):
@@ -253,8 +257,8 @@ class PathSelector:
             await self.sweep.candidates_extend(candidates)
 
     async def run(self):
-        for key in KEY_ALL:
-            await self.sweep.key_binding(key, key)
+        for name, key in KEY_ALL.items():
+            await self.sweep.key_binding(key, name)
 
         await self.show_history()
         async for event in self.sweep:
