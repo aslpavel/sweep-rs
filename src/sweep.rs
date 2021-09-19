@@ -594,89 +594,87 @@ where
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
         // handle events
-            match event {
-                Some(TerminalEvent::Resize(_term_size)) => {
-                    term.execute(TerminalCommand::Scroll(row_offset as i32))?;
-                    row_offset = 0;
-                }
-                Some(TerminalEvent::Wake) => {
-                    for command in commands.try_iter() {
-                        match command {
-                            SweepCommand::NiddleSet(niddle) => state.input.set(niddle.as_ref()),
-                            SweepCommand::NiddleGet => {
-                                response
-                                    .send(SweepResponse::Niddle(state.input.get().collect()))?;
+        match event {
+            Some(TerminalEvent::Resize(_term_size)) => {
+                term.execute(TerminalCommand::Scroll(row_offset as i32))?;
+                row_offset = 0;
+            }
+            Some(TerminalEvent::Wake) => {
+                for command in commands.try_iter() {
+                    match command {
+                        SweepCommand::NiddleSet(niddle) => state.input.set(niddle.as_ref()),
+                        SweepCommand::NiddleGet => {
+                            response.send(SweepResponse::Niddle(state.input.get().collect()))?;
+                        }
+                        SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
+                        SweepCommand::Bind(chord, tag) => match *chord.as_slice() {
+                            [Key {
+                                name: KeyName::Backspace,
+                                mode: KeyMod::EMPTY,
+                            }] => {
+                                state.key_empty_backspace.replace(tag);
                             }
-                            SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
-                            SweepCommand::Bind(chord, tag) => match chord.as_slice() {
-                                &[Key {
-                                    name: KeyName::Backspace,
-                                    mode: KeyMod::EMPTY,
-                                }] => {
-                                    state.key_empty_backspace.replace(tag);
-                                }
-                                _ => {
-                                    let action = match tag
-                                        .as_str()
-                                        .and_then(|name| state.key_actions.get(name))
+                            _ => {
+                                let action =
+                                    match tag.as_str().and_then(|name| state.key_actions.get(name))
                                     {
                                         Some(action) => action.clone(),
                                         None => SweepAction::User(tag),
                                     };
-                                    state.key_map.register(chord.as_ref(), action);
+                                state.key_map.register(chord.as_ref(), action);
+                            }
+                        },
+                        SweepCommand::PromptSet(new_prompt) => {
+                            state.prompt = new_prompt;
+                        }
+                        SweepCommand::Current => {
+                            let current = state
+                                .list
+                                .current()
+                                .map(|candidate| candidate.result.haystack);
+                            response.send(SweepResponse::Current(current))?;
+                        }
+                    }
+                }
+            }
+            Some(TerminalEvent::Key(key)) => {
+                if let Some(action) = state.key_map.lookup_state(&mut state.key_map_state, key) {
+                    // do not generate Backspace, when input is not empty
+                    let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
+                    if key == backspace && state.input.get().count() == 0 {
+                        if let Some(ref tag) = state.key_empty_backspace {
+                            events.send(SweepEvent::Bind(tag.clone()))?;
+                        }
+                    } else {
+                        match action {
+                            SweepAction::Input(action) => state.input.apply(*action),
+                            SweepAction::List(action) => state.list.apply(*action),
+                            SweepAction::User(tag) => {
+                                if !tag.is_null() {
+                                    events.send(SweepEvent::Bind(tag.clone()))?;
                                 }
+                            }
+                            SweepAction::Quit => {
+                                return Ok(TerminalAction::Quit(()));
+                            }
+                            SweepAction::Select => match state.list.current() {
+                                Some(result) => {
+                                    events.send(SweepEvent::Select(Some(result.result.haystack)))?
+                                }
+                                None => events.send(SweepEvent::Select(None))?,
                             },
-                            SweepCommand::PromptSet(new_prompt) => {
-                                state.prompt = new_prompt;
-                            }
-                            SweepCommand::Current => {
-                                let current = state
-                                    .list
-                                    .current()
-                                    .map(|candidate| candidate.result.haystack);
-                                response.send(SweepResponse::Current(current))?;
-                            }
                         }
                     }
+                } else if let Key {
+                    name: KeyName::Char(c),
+                    mode: KeyMod::EMPTY,
+                } = key
+                {
+                    // send plain chars to the input
+                    state.input.apply(InputAction::Insert(c));
                 }
-                Some(TerminalEvent::Key(key)) => {
-                    if let Some(action) = state.key_map.lookup_state(&mut state.key_map_state, key)
-                    {
-                        // do not generate Backspace, when input is not empty
-                        let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
-                        if key == backspace && state.input.get().count() == 0 {
-                            if let Some(ref tag) = state.key_empty_backspace {
-                                events.send(SweepEvent::Bind(tag.clone()))?;
-                            }
-                        } else {
-                            match action {
-                                SweepAction::Input(action) => state.input.apply(*action),
-                                SweepAction::List(action) => state.list.apply(*action),
-                                SweepAction::User(tag) => {
-                                    if !tag.is_null() {
-                                        events.send(SweepEvent::Bind(tag.clone()))?;
-                                    }
-                                }
-                                SweepAction::Quit => {
-                                    return Ok(TerminalAction::Quit(()));
-                                }
-                                SweepAction::Select => match state.list.current() {
-                                    Some(result) => events
-                                        .send(SweepEvent::Select(Some(result.result.haystack)))?,
-                                    None => events.send(SweepEvent::Select(None))?,
-                                },
-                            }
-                        }
-                    } else if let Key {
-                        name: KeyName::Char(c),
-                        mode: KeyMod::EMPTY,
-                    } = key
-                    {
-                        // send plain chars to the input
-                        state.input.apply(InputAction::Insert(c));
-                    }
-                }
-                _ => (),
+            }
+            _ => (),
         }
 
         // update niddle
