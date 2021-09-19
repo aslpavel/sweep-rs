@@ -86,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.7.0"
+version = "3.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c59e7af012c713f529e7a3ee57ce9b31ddd858d4b512923602f74608b009631"
+checksum = "d9df67f7bf9ef8498769f994239c45613ef0c5899415fb58e9add412d2c1a538"
 
 [[package]]
 name = "byteorder"
@@ -643,9 +643,9 @@ dependencies = [
 
 [[package]]
 name = "surf_n_term"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a514dbd42c90897a33cd67436a9ead3c712524581a4e305657982997d93d3e"
+checksum = "dc33dc7e51a658851ac83f29d86dcb5d0ddf670567df5824cc301e2bfa426cf2"
 dependencies = [
  "flate2",
  "fnv",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "argh",
@@ -710,9 +710,9 @@ checksum = "8895849a949e7845e06bd6dc1aa51731a103c42707010a5b591c0038fb73385b"
 
 [[package]]
 name = "unicode-width"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9337591893a19b88d8d87f2cec1e73fad5cdfd10e5a6f349f498ad6ea2ffb1e3"
+checksum = "3ed742d4ea2bd1176e236172c8429aaf54486e7ac098db29ffe6529e0ce50973"
 
 [[package]]
 name = "unicode-xid"

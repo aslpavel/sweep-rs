@@ -6,19 +6,22 @@ use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    fmt::Write as _,
     io::Write,
     ops::Deref,
     sync::Arc,
     thread::{Builder, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    Blend, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
+    Blend, Cell, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
 };
+
+pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 pub struct SweepOptions {
     pub height: usize,
@@ -71,14 +74,14 @@ enum SweepCommand {
     NiddleSet(String),
     NiddleGet,
     PromptSet(String),
-    Bind(Vec<Key>, Value),
+    Bind(Vec<Key>, String),
     Terminate,
     Current,
 }
 #[derive(Clone, Debug)]
 pub enum SweepEvent<H> {
     Select(Option<H>),
-    Bind(Value),
+    Bind(String),
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +137,7 @@ where
         self.ranker.haystack_clear()
     }
 
+    /// Reverse haystack
     pub fn haystack_reverse(&self) {
         self.ranker.haystack_reverse()
     }
@@ -143,6 +147,7 @@ where
         self.send_command(SweepCommand::NiddleSet(niddle.as_ref().to_string()))
     }
 
+    /// Get current niddle value
     pub fn niddle_get(&self) -> Result<String, Error> {
         self.send_command(SweepCommand::NiddleGet);
         loop {
@@ -157,10 +162,12 @@ where
         self.ranker.scorer_set(scorer)
     }
 
+    /// Set prompt
     pub fn prompt_set(&self, prompt: String) {
         self.send_command(SweepCommand::PromptSet(prompt))
     }
 
+    /// Get currently selected candidates
     pub fn current(&self) -> Result<Option<H>, Error> {
         self.send_command(SweepCommand::Current);
         loop {
@@ -173,9 +180,10 @@ where
     /// Bind specified chord to the tag
     ///
     /// Whenever sequence of keys specified by chord is pressed, `SweepEvent::Bind(tag)`
-    /// will be generated, not if tag is `Value::Null` the binding will be removed
-    /// and not event will be generated.
-    pub fn bind(&self, chord: Vec<Key>, tag: Value) {
+    /// will be generated, note if tag is empty string the binding will be removed
+    /// and no event will be generated. Tag can also be one of the standard actions
+    /// list of which is available with `ctrl+h`
+    pub fn bind(&self, chord: Vec<Key>, tag: String) {
         self.send_command(SweepCommand::Bind(chord, tag))
     }
 
@@ -206,7 +214,7 @@ impl<H: Haystack> SweepInner<H> {
             let waker = waker.clone();
             move || waker.wake().is_ok()
         });
-        let worker = Builder::new().name("sweep_worker".to_string()).spawn({
+        let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             let ranker = ranker.clone();
             move || {
                 sweep_worker(
@@ -331,14 +339,15 @@ impl Sweep<Candidate> {
                     );
                     return Some(error);
                 };
-                let tag = if let Some(tag) = obj.get_mut("tag") {
-                    tag.take()
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[key_binding] \"tag\" attribute must be present"),
-                    );
-                    return Some(error);
+                let tag = match obj.get_mut("tag").and_then(|v| v.as_str()) {
+                    Some(tag) => tag.to_owned(),
+                    None => {
+                        let error = request.response_err(
+                            RPCErrorKind::InvalidParams,
+                            Some("[key_binding] \"tag\" attribute must be present"),
+                        );
+                        return Some(error);
+                    }
                 };
                 self.bind(key, tag);
                 Value::Null
@@ -373,11 +382,311 @@ impl Sweep<Candidate> {
     }
 }
 
-#[derive(Debug, Clone)]
+/// User bindable actions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SweepAction {
+    User(String),
+    Select,
+    Quit,
+    Help,
     Input(InputAction),
     List(ListAction),
-    User(Value),
+}
+
+/// Object representing current state of the sweep worker
+struct SweepState<H> {
+    // sweep prompt
+    prompt: String,
+    // current state of the key chrod
+    key_map_state: Vec<Key>,
+    // user action executed on backspace when input is empty
+    key_empty_backspace: Option<String>,
+    // action key map
+    key_map: KeyMap<SweepAction>,
+    // action name to sweep action
+    key_actions: HashMap<&'static str, SweepAction>,
+    // theme
+    theme: Theme,
+    // face used for label (FIXME: merge into theme?)
+    label_face: Face,
+    // face used for separator
+    separator_face: Face,
+    // face sue for stats
+    stats_face: Face,
+    // input widget
+    input: Input,
+    // list widget
+    list: List<RankerResultThemed<H>>,
+    // ranker
+    ranker: Ranker<H>,
+}
+
+/// Event generated by key handling
+enum SweepKeyEvent<H> {
+    Event(SweepEvent<H>),
+    Help,
+    Quit,
+    Nothing,
+}
+
+impl<H> SweepState<H>
+where
+    H: Haystack,
+{
+    fn new(prompt: String, ranker: Ranker<H>, theme: Theme) -> Self {
+        // faces
+        let stats_face = Face::new(
+            Some(theme.accent.best_contrast(theme.bg, theme.fg)),
+            Some(theme.accent),
+            FaceAttrs::EMPTY,
+        );
+        let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
+        let separator_face = Face::new(Some(theme.accent), theme.input.bg, FaceAttrs::EMPTY);
+
+        // key map
+        let mut key_map = KeyMap::new();
+        let mut key_actions = HashMap::new();
+        // input
+        for desc in InputAction::description() {
+            let action = SweepAction::Input(desc.action);
+            key_actions.insert(desc.name, action.clone());
+            for chord in desc.chord {
+                key_map.register(chord, action.clone());
+            }
+        }
+        // list
+        for desc in ListAction::description() {
+            let action = SweepAction::List(desc.action);
+            key_actions.insert(desc.name, action.clone());
+            for chord in desc.chord {
+                key_map.register(chord, action.clone());
+            }
+        }
+        // help
+        key_actions.insert("sweep.help", SweepAction::Help);
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('h'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Help,
+        );
+        // next scorer
+        let scorer_next = SweepAction::User(SCORER_NEXT_TAG.to_owned());
+        key_actions.insert(SCORER_NEXT_TAG, scorer_next.clone());
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('s'),
+                mode: KeyMod::CTRL,
+            }],
+            scorer_next,
+        );
+        // quit
+        key_actions.insert("sweep.quit", SweepAction::Quit);
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('c'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Quit,
+        );
+        key_map.register(
+            &[Key {
+                name: KeyName::Esc,
+                mode: KeyMod::EMPTY,
+            }],
+            SweepAction::Quit,
+        );
+        // select
+        key_actions.insert("sweep.select", SweepAction::Select);
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('m'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Select,
+        );
+        key_map.register(
+            &[Key {
+                name: KeyName::Char('j'),
+                mode: KeyMod::CTRL,
+            }],
+            SweepAction::Select,
+        );
+
+        // widgets
+        let input = Input::new();
+        let list = List::new(RankerResultThemed::new(
+            theme.clone(),
+            Arc::new(RankerResult::<H>::default()),
+        ));
+
+        Self {
+            prompt,
+            key_map_state: Vec::new(),
+            key_empty_backspace: None,
+            key_map,
+            key_actions,
+            label_face,
+            separator_face,
+            stats_face,
+            theme,
+            input,
+            list,
+            ranker,
+        }
+    }
+
+    fn render(&mut self, mut view: impl SurfaceMut<Item = Cell>) -> Result<(), Error> {
+        self.ranker.niddle_set(self.input.get().collect());
+        let ranker_result = self.ranker.result();
+
+        // label
+        let mut label_view = view.view_mut(0, ..);
+        let mut label = label_view.writer().face(self.label_face);
+        write!(&mut label, " {} ", self.prompt)?;
+        let mut label = label.face(self.separator_face);
+        write!(&mut label, " ")?;
+        let input_start = label.position().1 as i32;
+
+        // stats
+        let stats_str = format!(
+            " {}/{} {:.2?} [{}] ",
+            ranker_result.result.len(),
+            ranker_result.haystack_size,
+            ranker_result.duration,
+            ranker_result.scorer.name(),
+        );
+        let input_stop = -(stats_str.chars().count() as i32 + 1);
+        let mut stats_view = view.view_mut(0, input_stop..);
+        let mut stats = stats_view.writer().face(self.separator_face);
+        write!(&mut stats, "")?;
+        let mut stats = stats.face(self.stats_face);
+        stats.write_all(stats_str.as_ref())?;
+
+        // input
+        self.input
+            .render(&self.theme, view.view_mut(0, input_start..input_stop))?;
+
+        // list
+        if self.list.items().generation() != ranker_result.generation {
+            let old_result = self
+                .list
+                .items_set(RankerResultThemed::new(self.theme.clone(), ranker_result));
+            // dropping old result might add noticeable delay for large lists
+            rayon::spawn(move || std::mem::drop(old_result));
+        }
+        self.list.render(&self.theme, view.view_mut(1.., ..))?;
+
+        Ok(())
+    }
+
+    fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
+        use SweepKeyEvent::*;
+        match action {
+            SweepAction::Input(action) => self.input.apply(action),
+            SweepAction::List(action) => self.list.apply(action),
+            SweepAction::User(tag) => {
+                if !tag.is_empty() {
+                    return Event(SweepEvent::Bind(tag.clone()));
+                }
+            }
+            SweepAction::Quit => {
+                return SweepKeyEvent::Quit;
+            }
+            SweepAction::Select => match self.list.current() {
+                Some(result) => {
+                    return Event(SweepEvent::Select(Some(result.result.haystack)));
+                }
+                None => {
+                    return Event(SweepEvent::Select(None));
+                }
+            },
+            SweepAction::Help => return Help,
+        }
+        Nothing
+    }
+
+    fn handle_key(&mut self, key: Key) -> SweepKeyEvent<H> {
+        use SweepKeyEvent::*;
+        if let Some(action) = self
+            .key_map
+            .lookup_state(&mut self.key_map_state, key)
+            .cloned()
+        {
+            // do not generate Backspace, when input is not empty
+            let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
+            if key == backspace && self.input.get().count() == 0 {
+                if let Some(ref tag) = self.key_empty_backspace {
+                    return Event(SweepEvent::Bind(tag.clone()));
+                }
+            } else {
+                return self.apply(action);
+            }
+        } else if let Key {
+            name: KeyName::Char(c),
+            mode: KeyMod::EMPTY,
+        } = key
+        {
+            // send plain chars to the input
+            self.input.apply(InputAction::Insert(c));
+        }
+        Nothing
+    }
+
+    fn help_state(&self, term_waker: TerminalWaker) -> SweepState<Candidate> {
+        let mut bindings = BTreeMap::new();
+        for (name, action) in self.key_actions.iter() {
+            bindings.insert(action.clone(), (name.to_string(), String::new()));
+        }
+        self.key_map.for_each(|chord, action| {
+            let (_, keys) = bindings.entry(action.clone()).or_insert_with(|| {
+                let name = match action {
+                    SweepAction::User(tag) if !tag.is_empty() => tag.clone(),
+                    _ => String::new(),
+                };
+                (name, String::new())
+            });
+            let fail = "in memory write failed";
+            write!(keys, "\"").expect(fail);
+            for (index, key) in chord.iter().enumerate() {
+                if index != 0 {
+                    write!(keys, " ").expect(fail);
+                }
+                write!(keys, "{}", key).expect(fail);
+            }
+            write!(keys, "\" ").expect(fail);
+        });
+        let name_len = bindings
+            .values()
+            .map(|(name, _)| name.len())
+            .max()
+            .unwrap_or(0);
+        let candidates = bindings
+            .into_iter()
+            .map(|(_action, (name, chrod))| {
+                Candidate::from_fields(
+                    vec![
+                        Ok(format!("{0:<1$}", name, name_len)),
+                        Err(" │ ".to_owned()),
+                        Ok(chrod),
+                    ],
+                    Some(Value::String(name)),
+                )
+            })
+            .collect();
+        let ranker = Ranker::new(
+            Arc::new(|niddle: &str| {
+                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
+                Arc::new(FuzzyScorer::new(niddle))
+            }),
+            false,
+            move || term_waker.wake().is_ok(),
+        );
+        ranker.haystack_extend(candidates);
+        let state = SweepState::new("BINDINGS".to_owned(), ranker, self.theme.clone());
+        state
+    }
 }
 
 fn sweep_worker<H>(
@@ -391,25 +700,6 @@ fn sweep_worker<H>(
 where
     H: Haystack,
 {
-    // colors
-    let debug_face: Face = "bg=#cc241d,fg=#ebdbb2".parse()?;
-    let stats_face = Face::new(
-        Some(
-            options
-                .theme
-                .accent
-                .best_contrast(options.theme.bg, options.theme.fg),
-        ),
-        Some(options.theme.accent),
-        FaceAttrs::EMPTY,
-    );
-    let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
-    let separator_face = Face::new(
-        Some(options.theme.accent),
-        options.theme.input.bg,
-        FaceAttrs::EMPTY,
-    );
-
     // initialize terminal
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
@@ -445,189 +735,101 @@ where
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
-    // initialize widgets
-    let mut input = Input::new();
-    let mut list = List::new(RankerResultThemed::new(
+    let mut state = SweepState::new(
+        options.prompt.clone(),
+        ranker.clone(),
         options.theme.clone(),
-        Arc::new(RankerResult::<H>::default()),
-    ));
-    let mut prompt = options.prompt.clone();
-
-    // key bindings
-    let mut key_map_state = Vec::new();
-    let mut key_empty_backspace: Option<Value> = None; // action on empty input backspace
-    let mut key_map: KeyMap<SweepAction> = KeyMap::new();
-    let mut key_actions = HashMap::new();
-    for desc in InputAction::description() {
-        let action = SweepAction::Input(desc.action);
-        key_actions.insert(desc.name, action.clone());
-        for chord in desc.chord {
-            key_map.register(chord, action.clone());
-        }
-    }
-    for desc in ListAction::description() {
-        let action = SweepAction::List(desc.action);
-        key_actions.insert(desc.name, action.clone());
-        for chord in desc.chord {
-            key_map.register(chord, action.clone());
-        }
-    }
+    );
+    let mut state_help: Option<SweepState<Candidate>> = None;
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
-        let frame_start = Instant::now();
-
         // handle events
-        if let Some(event) = &event {
-            match *event {
-                TerminalEvent::Key(Key { name, mode }) if mode == KeyMod::CTRL => {
-                    if name == KeyName::Char('c') {
-                        return Ok(TerminalAction::Quit(()));
-                    } else if name == KeyName::Char('m') || name == KeyName::Char('j') {
-                        match list.current() {
-                            Some(result) => {
-                                events.send(SweepEvent::Select(Some(result.result.haystack)))?
-                            }
-                            None => events.send(SweepEvent::Select(None))?,
-                        }
-                    }
-                }
-                TerminalEvent::Key(Key {
-                    name: KeyName::Esc,
-                    mode: KeyMod::EMPTY,
-                }) => {
-                    return Ok(TerminalAction::Quit(()));
-                }
-                TerminalEvent::Resize(_term_size) => {
-                    term.execute(TerminalCommand::Scroll(row_offset as i32))?;
-                    row_offset = 0;
-                }
-                TerminalEvent::Wake => {
-                    for command in commands.try_iter() {
-                        match command {
-                            SweepCommand::NiddleSet(niddle) => input.set(niddle.as_ref()),
-                            SweepCommand::NiddleGet => {
-                                response.send(SweepResponse::Niddle(input.get().collect()))?;
-                            }
-                            SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
-                            SweepCommand::Bind(chord, tag) => match chord.as_slice() {
-                                &[Key {
-                                    name: KeyName::Backspace,
-                                    mode: KeyMod::EMPTY,
-                                }] => {
-                                    key_empty_backspace.replace(tag);
-                                }
-                                _ => {
-                                    let action =
-                                        match tag.as_str().and_then(|name| key_actions.get(name)) {
-                                            Some(action) => action.clone(),
-                                            None => SweepAction::User(tag),
-                                        };
-                                    key_map.register(chord.as_ref(), action);
-                                }
-                            },
-                            SweepCommand::PromptSet(new_prompt) => {
-                                prompt = new_prompt;
-                            }
-                            SweepCommand::Current => {
-                                let current =
-                                    list.current().map(|candidate| candidate.result.haystack);
-                                response.send(SweepResponse::Current(current))?;
-                            }
-                        }
-                    }
-                }
-                _ => (),
+        match event {
+            Some(TerminalEvent::Resize(_term_size)) => {
+                term.execute(TerminalCommand::Scroll(row_offset as i32))?;
+                row_offset = 0;
             }
-            if let TerminalEvent::Key(key) = *event {
-                if let Some(action) = key_map.lookup_state(&mut key_map_state, key) {
-                    // do not generate  Backspace, when input is not empty
-                    let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
-                    if key == backspace && input.get().count() == 0 {
-                        if let Some(ref tag) = key_empty_backspace {
-                            events.send(SweepEvent::Bind(tag.clone()))?;
+            Some(TerminalEvent::Wake) => {
+                for command in commands.try_iter() {
+                    match command {
+                        SweepCommand::NiddleSet(niddle) => state.input.set(niddle.as_ref()),
+                        SweepCommand::NiddleGet => {
+                            response.send(SweepResponse::Niddle(state.input.get().collect()))?;
                         }
-                    } else {
-                        match action {
-                            SweepAction::Input(action) => input.apply(*action),
-                            SweepAction::List(action) => list.apply(*action),
-                            SweepAction::User(tag) => {
-                                if !tag.is_null() {
-                                    events.send(SweepEvent::Bind(tag.clone()))?;
-                                }
+                        SweepCommand::Terminate => return Ok(TerminalAction::Quit(())),
+                        SweepCommand::Bind(chord, tag) => match *chord.as_slice() {
+                            [Key {
+                                name: KeyName::Backspace,
+                                mode: KeyMod::EMPTY,
+                            }] => {
+                                state.key_empty_backspace.replace(tag);
                             }
+                            _ => {
+                                let action = match state.key_actions.get(tag.as_str()) {
+                                    Some(action) => action.clone(),
+                                    None => SweepAction::User(tag),
+                                };
+                                state.key_map.register(chord.as_ref(), action);
+                            }
+                        },
+                        SweepCommand::PromptSet(new_prompt) => {
+                            state.prompt = new_prompt;
+                        }
+                        SweepCommand::Current => {
+                            let current = state
+                                .list
+                                .current()
+                                .map(|candidate| candidate.result.haystack);
+                            response.send(SweepResponse::Current(current))?;
                         }
                     }
-                } else if let Key {
-                    name: KeyName::Char(c),
-                    mode: KeyMod::EMPTY,
-                } = key
-                {
-                    // send plain chars to the input
-                    input.apply(InputAction::Insert(c));
                 }
             }
+            Some(TerminalEvent::Key(key)) => {
+                let action = match state_help.as_mut() {
+                    None => state.handle_key(key),
+                    Some(help) => match help.handle_key(key) {
+                        SweepKeyEvent::Quit => {
+                            state_help.take();
+                            SweepKeyEvent::Nothing
+                        }
+                        SweepKeyEvent::Event(SweepEvent::Select(Some(bind))) => {
+                            let name = bind
+                                .to_json()
+                                .as_str()
+                                .map_or_else(String::new, ToOwned::to_owned);
+                            let action = state
+                                .key_actions
+                                .get(name.as_str())
+                                .cloned()
+                                .unwrap_or_else(|| SweepAction::User(name));
+                            state_help.take();
+                            state.apply(action)
+                        }
+                        _ => SweepKeyEvent::Nothing,
+                    },
+                };
+                match action {
+                    SweepKeyEvent::Event(event) => events.send(event)?,
+                    SweepKeyEvent::Quit => return Ok(TerminalAction::Quit(())),
+                    SweepKeyEvent::Nothing => {}
+                    SweepKeyEvent::Help => {
+                        if state_help.is_none() {
+                            state_help.replace(state.help_state(term.waker()));
+                        }
+                    }
+                }
+            }
+            _ => (),
         }
-        // restrict view
-        let mut view = view.view_owned((row_offset as i32).., 1..-1);
 
-        // update niddle
-        ranker.niddle_set(input.get().collect());
-        let ranker_result = ranker.result();
-
-        // label
-        let mut label_view = view.view_mut(0, ..);
-        let mut label = label_view.writer().face(label_face);
-        write!(&mut label, " {} ", prompt)?;
-        let mut label = label.face(separator_face);
-        write!(&mut label, " ")?;
-        let input_start = label.position().1 as i32;
-
-        // stats
-        let stats_str = format!(
-            " {}/{} {:.2?} [{}] ",
-            ranker_result.result.len(),
-            ranker_result.haystack_size,
-            ranker_result.duration,
-            ranker_result.scorer.name(),
-        );
-        let input_stop = -(stats_str.chars().count() as i32 + 1);
-        let mut stats_view = view.view_mut(0, input_stop..);
-        let mut stats = stats_view.writer().face(separator_face);
-        write!(&mut stats, "")?;
-        let mut stats = stats.face(stats_face);
-        stats.write_all(stats_str.as_ref())?;
-
-        // input
-        input.render(&options.theme, view.view_mut(0, input_start..input_stop))?;
-
-        // list
-        if list.items().generation() != ranker_result.generation {
-            let old_result = list.items_set(RankerResultThemed::new(
-                options.theme.clone(),
-                ranker_result,
-            ));
-            // dropping old result might add noticeable delay for large lists
-            rayon::spawn(move || std::mem::drop(old_result));
-        }
-        list.render(&options.theme, view.view_mut(1..height as i32, ..))?;
-
-        if false {
-            let frame_time = Instant::now() - frame_start;
-            let debug_height = (height as i32 + 1)..(height as i32 + 7);
-            let mut debug = view.view_mut(debug_height, ..);
-            debug.erase(debug_face.bg);
-            let mut debug_writer = debug.writer().face(debug_face);
-            writeln!(&mut debug_writer, "row: {}", row_offset)?;
-            writeln!(&mut debug_writer, "frame_time: {:?}", frame_time)?;
-            writeln!(&mut debug_writer, "event: {:?}", event)?;
-            writeln!(&mut debug_writer, "term: {:?}", term.stats())?;
-            writeln!(
-                &mut debug_writer,
-                "current: {:?}",
-                list.current().map(|r| r.result)
-            )?;
+        // render
+        let view = view.view_owned((row_offset as i32)..(row_offset + height) as i32, 1..-1);
+        match state_help.as_mut() {
+            Some(state) => state.render(view)?,
+            None => state.render(view)?,
         }
 
         Ok(TerminalAction::Wait)

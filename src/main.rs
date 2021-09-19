@@ -11,13 +11,11 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use surf_n_term::{widgets::Theme, Key};
+use surf_n_term::widgets::Theme;
 use sweep::{
     rpc_call, rpc_decode, rpc_encode, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
-    SubstrScorer, Sweep, SweepEvent, SweepOptions,
+    SubstrScorer, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG,
 };
-
-const SCORER_NEXT_TAG: &str = "scorer_next";
 
 fn main() -> Result<(), Error> {
     let mut args: Args = argh::from_env();
@@ -72,7 +70,6 @@ fn main() -> Result<(), Error> {
         altscreen: args.altscreen,
         debug: args.debug,
     })?;
-    sweep.bind(Key::chord("ctrl+s")?, SCORER_NEXT_TAG.into());
 
     if !args.rpc {
         let (haystack_send, haystack_recv) = unbounded();
@@ -128,11 +125,8 @@ fn main() -> Result<(), Error> {
                             }
                             break;
                         }
-                        Ok(SweepEvent::Bind(tag)) => match tag {
-                            Value::String(tag) if tag == SCORER_NEXT_TAG => {
-                                sweep.scorer_set(args.scorer.toggle());
-                            }
-                            _ => {}
+                        Ok(SweepEvent::Bind(tag)) => if tag == SCORER_NEXT_TAG {
+                            sweep.scorer_set(args.scorer.toggle());
                         },
                         Err(_) => break,
                     }
@@ -183,11 +177,10 @@ fn main() -> Result<(), Error> {
                             }
                         }
                         Ok(SweepEvent::Bind(tag)) => {
-                            match tag {
-                                Value::String(tag) if tag == SCORER_NEXT_TAG => {
-                                    sweep.scorer_set(args.scorer.toggle());
-                                }
-                                _ => rpc_call(&mut output, "bind", tag)?,
+                            if tag == SCORER_NEXT_TAG {
+                                sweep.scorer_set(args.scorer.toggle());
+                            } else {
+                                rpc_call(&mut output, "bind", tag)?;
                             }
                         }
                         Err(_) => break,

@@ -49,7 +49,7 @@ impl Candidate {
         Self::from_fields(fields, json)
     }
 
-    fn from_fields(fields: Vec<Result<String, String>>, json: Option<Value>) -> Self {
+    pub fn from_fields(fields: Vec<Result<String, String>>, json: Option<Value>) -> Self {
         let chars = fields
             .iter()
             .filter_map(|f| Some(f.as_ref().ok()?.chars().flat_map(char::to_lowercase)))

@@ -168,7 +168,7 @@ impl SubstrScorer {
 
 impl Scorer for SubstrScorer {
     fn name(&self) -> &str {
-        &"substr"
+        "substr"
     }
 
     fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
@@ -367,7 +367,7 @@ impl FuzzyScorer {
         let mut positions = BTreeSet::new();
         let mut h_iter = (0..h_len).rev();
         for i in (0..n_len).rev() {
-            while let Some(j) = h_iter.next() {
+            for j in &mut h_iter {
                 if (match_required || (d.get(i, j) - m.get(i, j)).abs() < Score::EPSILON)
                     && d.get(i, j) != SCORE_MIN
                 {
@@ -387,7 +387,7 @@ impl FuzzyScorer {
 
 impl Scorer for FuzzyScorer {
     fn name(&self) -> &str {
-        &"fuzzy"
+        "fuzzy"
     }
 
     fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
