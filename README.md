@@ -8,6 +8,7 @@ Sweep is a tool used to interactively search through a list of entries. It is in
   - Easily custmizable color palette by specifiying only three main colors from which all other colors are drived.
   - JSON-RPC proctol can be used to communicate with sweep process.
   - Includes asyncio [pyton bingins](scripts/sweep.py)
+  - Configurable key bindings
 
 ### Usage
 - **Basic usage**
@@ -37,6 +38,29 @@ Options:
   --version         show sweep version and quit
   --help            display usage information
 ```
+- **Key bindings**
+Current key bindings can be viewed by pressing `ctrc+h` and by default looks like this:
+
+| Name                 | Key Bindings      |
+|----------------------|-------------------|
+|sweep.scorer.next     | "ctrl+s"          |
+|sweep.select          | "ctrl+j" "ctrl+m" |
+|sweep.quit            | "ctrl+c" "esc"    |
+|sweep.help            | "ctrl+h"          |
+|input.move.forward    | "right"           |
+|input.move.backward   | "left"            |
+|input.move.end        | "ctrl+e"          |
+|input.move.start      | "ctrl+a"          |
+|input.move.next_word  | "alt+f"           |
+|input.move.prev_word  | "alt+b"           |
+|input.delete.backward | "backspace"       |
+|input.delete.forward  | "delete"          |
+|input.delete.end      | "ctrl+k"          |
+|list.item.next        | "ctrl+n" "down"   |
+|list.item.prev        | "ctrl+p" "up"     |
+|input.page.next       | "pagedown"        |
+|input.page.prev       | "pageup"          |
+
 - **Bash history integration**
 Install sweep and put [`bash_history.py`](scripts/bash_history.py) together with [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. Add this to your `~/.bashrc`
 ```bash

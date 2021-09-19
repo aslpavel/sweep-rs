@@ -5,7 +5,15 @@ use crate::{
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde_json::Value;
-use std::{collections::{BTreeMap, HashMap}, fmt::Write as _, io::Write, ops::Deref, sync::Arc, thread::{Builder, JoinHandle}, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Write as _,
+    io::Write,
+    ops::Deref,
+    sync::Arc,
+    thread::{Builder, JoinHandle},
+    time::Duration,
+};
 use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     Blend, Cell, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
@@ -173,7 +181,8 @@ where
     ///
     /// Whenever sequence of keys specified by chord is pressed, `SweepEvent::Bind(tag)`
     /// will be generated, note if tag is empty string the binding will be removed
-    /// and no event will be generated.
+    /// and no event will be generated. Tag can also be one of the standard actions
+    /// list of which is available with `ctrl+h`
     pub fn bind(&self, chord: Vec<Key>, tag: String) {
         self.send_command(SweepCommand::Bind(chord, tag))
     }
@@ -572,9 +581,39 @@ where
         Ok(())
     }
 
+    fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
+        use SweepKeyEvent::*;
+        match action {
+            SweepAction::Input(action) => self.input.apply(action),
+            SweepAction::List(action) => self.list.apply(action),
+            SweepAction::User(tag) => {
+                if !tag.is_empty() {
+                    return Event(SweepEvent::Bind(tag.clone()));
+                }
+            }
+            SweepAction::Quit => {
+                return SweepKeyEvent::Quit;
+            }
+            SweepAction::Select => match self.list.current() {
+                Some(result) => {
+                    return Event(SweepEvent::Select(Some(result.result.haystack)));
+                }
+                None => {
+                    return Event(SweepEvent::Select(None));
+                }
+            },
+            SweepAction::Help => return Help,
+        }
+        Nothing
+    }
+
     fn handle_key(&mut self, key: Key) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
-        if let Some(action) = self.key_map.lookup_state(&mut self.key_map_state, key) {
+        if let Some(action) = self
+            .key_map
+            .lookup_state(&mut self.key_map_state, key)
+            .cloned()
+        {
             // do not generate Backspace, when input is not empty
             let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
             if key == backspace && self.input.get().count() == 0 {
@@ -582,27 +621,7 @@ where
                     return Event(SweepEvent::Bind(tag.clone()));
                 }
             } else {
-                match action {
-                    SweepAction::Input(action) => self.input.apply(*action),
-                    SweepAction::List(action) => self.list.apply(*action),
-                    SweepAction::User(tag) => {
-                        if !tag.is_empty() {
-                            return Event(SweepEvent::Bind(tag.clone()));
-                        }
-                    }
-                    SweepAction::Quit => {
-                        return SweepKeyEvent::Quit;
-                    }
-                    SweepAction::Select => match self.list.current() {
-                        Some(result) => {
-                            return Event(SweepEvent::Select(Some(result.result.haystack)));
-                        }
-                        None => {
-                            return Event(SweepEvent::Select(None));
-                        }
-                    },
-                    SweepAction::Help => return Help,
-                }
+                return self.apply(action);
             }
         } else if let Key {
             name: KeyName::Char(c),
@@ -652,7 +671,7 @@ where
                         Err(" │ ".to_owned()),
                         Ok(chrod),
                     ],
-                    None,
+                    Some(Value::String(name)),
                 )
             })
             .collect();
@@ -768,8 +787,31 @@ where
                     }
                 }
             }
-            Some(TerminalEvent::Key(key)) => match state_help.as_mut() {
-                None => match state.handle_key(key) {
+            Some(TerminalEvent::Key(key)) => {
+                let action = match state_help.as_mut() {
+                    None => state.handle_key(key),
+                    Some(help) => match help.handle_key(key) {
+                        SweepKeyEvent::Quit => {
+                            state_help.take();
+                            SweepKeyEvent::Nothing
+                        }
+                        SweepKeyEvent::Event(SweepEvent::Select(Some(bind))) => {
+                            let name = bind
+                                .to_json()
+                                .as_str()
+                                .map_or_else(String::new, ToOwned::to_owned);
+                            let action = state
+                                .key_actions
+                                .get(name.as_str())
+                                .cloned()
+                                .unwrap_or_else(|| SweepAction::User(name));
+                            state_help.take();
+                            state.apply(action)
+                        }
+                        _ => SweepKeyEvent::Nothing,
+                    },
+                };
+                match action {
                     SweepKeyEvent::Event(event) => events.send(event)?,
                     SweepKeyEvent::Quit => return Ok(TerminalAction::Quit(())),
                     SweepKeyEvent::Nothing => {}
@@ -778,13 +820,8 @@ where
                             state_help.replace(state.help_state(term.waker()));
                         }
                     }
-                },
-                Some(state) => {
-                    if let SweepKeyEvent::Quit = state.handle_key(key) {
-                        state_help.take();
-                    }
                 }
-            },
+            }
             _ => (),
         }
 
