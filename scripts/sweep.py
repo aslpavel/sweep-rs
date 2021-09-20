@@ -2,15 +2,16 @@
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
 import asyncio
-from asyncio.streams import StreamReader, StreamWriter
-from asyncio.subprocess import Process
 import json
 import os
 import socket
 import sys
+import tempfile
 import time
 import traceback
 from asyncio.futures import Future
+from asyncio.streams import StreamReader, StreamWriter
+from asyncio.subprocess import Process
 from collections import deque
 from typing import (
     Any,
@@ -209,7 +210,12 @@ class Sweep:
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
 
-        io_sock_path = "/tmp/sweep-io-{}.socket".format(os.getpid())
+        io_sock_path = os.path.join(
+            tempfile.gettempdir(),
+            f"sweep-io-{os.getpid()}.socket",
+        )
+        if os.path.exists(io_sock_path):
+            os.unlink(io_sock_path)
         io_sock_accept = unix_server_once(io_sock_path)
 
         prog, *args = self._args
@@ -388,6 +394,7 @@ def unix_server_once(path: str) -> Future[socket.socket]:
             loop.remove_reader(server.fileno())
             os.unlink(path)
             server.close()
+
     return asyncio.create_task(accept())
 
 
