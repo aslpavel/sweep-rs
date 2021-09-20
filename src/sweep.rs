@@ -684,8 +684,7 @@ where
             move || term_waker.wake().is_ok(),
         );
         ranker.haystack_extend(candidates);
-        let state = SweepState::new("BINDINGS".to_owned(), ranker, self.theme.clone());
-        state
+        SweepState::new("BINDINGS".to_owned(), ranker, self.theme.clone())
     }
 }
 

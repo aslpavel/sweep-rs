@@ -35,7 +35,9 @@ def history(history_file: Optional[str] = None) -> Iterable[Tuple[datetime, str]
                 entry.clear()
         if date is not None:
             entries["".join(entry).strip()] = date
-    return sorted(((d, e) for e, d in entries.items()), key=lambda e: e[0], reverse=True)
+    return sorted(
+        ((d, e) for e, d in entries.items()), key=lambda e: e[0], reverse=True
+    )
 
 
 async def main():
