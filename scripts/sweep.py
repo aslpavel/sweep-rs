@@ -210,7 +210,7 @@ class Sweep:
             raise RuntimeError("sweep process is already running")
 
         io_sock_path = "/tmp/sweep-io-{}.socket".format(os.getpid())
-        io_sock_future = asyncio.create_task(unix_server_once(io_sock_path))
+        io_sock_accept = unix_server_once(io_sock_path)
 
         prog, *args = self._args
         self._proc = await asyncio.create_subprocess_exec(
@@ -218,7 +218,7 @@ class Sweep:
             *[*args, "--io-socket", io_sock_path],
         )
 
-        self._io_sock = await asyncio.wait_for(io_sock_future, 1.0)
+        self._io_sock = await io_sock_accept
         worker = asyncio.create_task(
             self._worker_main(self._io_sock),
             name="sweep_main",
@@ -275,7 +275,7 @@ class Sweep:
         """Extend candidates set"""
         time_start = time.monotonic()
         time_limit = 0.05
-        batch = []
+        batch: List[Candidate] = []
         for item in items:
             batch.append(item)
 
@@ -368,7 +368,7 @@ class Event(Generic[E]):
         return value
 
 
-async def unix_server_once(path: str) -> socket.socket:
+def unix_server_once(path: str) -> Future[socket.socket]:
     """Create unix server socket and accept one connection"""
     loop = asyncio.get_running_loop()
     if os.path.exists(path):
@@ -376,16 +376,19 @@ async def unix_server_once(path: str) -> socket.socket:
     server = socket.socket(socket.AF_UNIX)
     server.bind(path)
     server.listen()
-    try:
-        accept = loop.create_future()
-        loop.add_reader(server.fileno(), lambda: accept.set_result(None))
-        await accept
-        client, _ = server.accept()
-        return client
-    finally:
-        loop.remove_reader(server.fileno())
-        os.unlink(path)
-        server.close()
+
+    async def accept():
+        try:
+            accept = loop.create_future()
+            loop.add_reader(server.fileno(), lambda: accept.set_result(None))
+            await accept
+            client, _ = server.accept()
+            return client
+        finally:
+            loop.remove_reader(server.fileno())
+            os.unlink(path)
+            server.close()
+    return asyncio.create_task(accept())
 
 
 async def main():
@@ -428,13 +431,19 @@ async def main():
         "--keep-order",
         help="keep order of elements (do not use ranking score)",
     )
+    parser.add_argument(
+        "--input",
+        type=argparse.FileType("r"),
+        default=sys.stdin,
+        help="file from which input is read",
+    )
     args = parser.parse_args()
 
     if args.json:
-        candidates = cast(List[Candidate], json.load(sys.stdin))
+        candidates = cast(List[Candidate], json.load(args.input))
     else:
         candidates: List[Candidate] = []
-        for line in sys.stdin:
+        for line in args.input:
             candidates.append(line.strip())
 
     result = await sweep(
