@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Deque, Dict, Iterator, List, Optional, Tuple, cast
 from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
@@ -21,6 +21,7 @@ from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING, Candidate
 
 
 PATH_HISTORY_FILE = "~/.path_history"
+DEAFULT_SOFT_LIMIT = 16384
 DEFAULT_IGNORE = re.compile(
     "|".join(
         [
@@ -163,14 +164,23 @@ def candidates_path_key(path: Path):
     return (hidden, not_dir, path)
 
 
-def candidates_from_path(root: Path, soft_limit: int = 4096) -> List[Candidate]:
+def candidates_from_path(
+    root: Path,
+    soft_limit: Optional[int] = None,
+    batch_time_limit: float = 0.1,
+) -> Iterator[List[Candidate]]:
     """Build candidates list from provided root path
 
-    Soft limit determines the depth of traversal once soft limit
+    `soft_limit` - determines the depth of traversal once soft limit
     is reached none of the elements that are deeper will be returned
+    `batch_time_limit` - maximum time between batches
     """
+    soft_limit = DEAFULT_SOFT_LIMIT if soft_limit is None else soft_limit
     candidates: List[Candidate] = []
+    candidates_total = 0
+    time_start = time.monotonic()
     max_depth = None
+
     queue: Deque[Tuple[Path, int]] = deque([(root, 0)])
     while queue:
         path, depth = queue.popleft()
@@ -184,15 +194,24 @@ def candidates_from_path(root: Path, soft_limit: int = 4096) -> List[Candidate]:
                     continue
                 tag = "/" if item.is_dir() else ""
                 path_relative = str(item.relative_to(root))
+                queue.append((item, depth + 1))
+
+                candidates_total += 1
                 candidates.append(
                     {"entry": f"{path_relative}{tag}", "path": path_relative}
                 )
-                if len(candidates) >= soft_limit:
+
+                if candidates_total >= soft_limit:
                     max_depth = depth
-                queue.append((item, depth + 1))
+                time_now = time.monotonic()
+                if candidates and time_now - time_start >= batch_time_limit:
+                    time_start = time.monotonic()
+                    yield candidates
+                    candidates.clear()
         except PermissionError:
             pass
-    return candidates
+    if candidates:
+        yield candidates
 
 
 KEY_LIST = "path.search_in_directory"
@@ -205,6 +224,7 @@ KEY_ALL = {
     KEY_HISTORY: "alt+.",
     KEY_OPEN: "ctrl+o",
 }
+
 
 class PathSelector:
     def __init__(self, sweep: Sweep, history: PathHistoryStore):
@@ -251,9 +271,8 @@ class PathSelector:
             return
         await self.sweep.niddle_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
-        candidates = candidates_from_path(self.path)
-        if candidates:
-            await self.sweep.candidates_clear()
+        await self.sweep.candidates_clear()
+        for candidates in candidates_from_path(self.path):
             await self.sweep.candidates_extend(candidates)
 
     async def run(self):
