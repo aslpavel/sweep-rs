@@ -21,7 +21,7 @@ from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING, Candidate
 
 
 PATH_HISTORY_FILE = "~/.path_history"
-DEAFULT_SOFT_LIMIT = 16384
+DEAFULT_SOFT_LIMIT = 65536
 DEFAULT_IGNORE = re.compile(
     "|".join(
         [
@@ -30,6 +30,8 @@ DEFAULT_IGNORE = re.compile(
             "__pycache__",
             "\\.DS_Store",
             "\\.mypy_cache",
+            "\\.pytest_cache",
+            "\\.hypothesis",
             "target",
             ".*\\.elc",
             ".*\\.pyo",
@@ -166,19 +168,18 @@ def candidates_path_key(path: Path):
 
 def candidates_from_path(
     root: Path,
-    soft_limit: Optional[int] = None,
-    batch_time_limit: float = 0.1,
+    file_limit: Optional[int] = None,
 ) -> Iterator[List[Candidate]]:
     """Build candidates list from provided root path
 
-    `soft_limit` - determines the depth of traversal once soft limit
+    `file_limit` - determines the depth of traversal once soft limit
     is reached none of the elements that are deeper will be returned
-    `batch_time_limit` - maximum time between batches
     """
-    soft_limit = DEAFULT_SOFT_LIMIT if soft_limit is None else soft_limit
+    file_limit = DEAFULT_SOFT_LIMIT if file_limit is None else file_limit
     candidates: List[Candidate] = []
     candidates_total = 0
     time_start = time.monotonic()
+    time_limit = 0.05
     max_depth = None
 
     queue: Deque[Tuple[Path, int]] = deque([(root, 0)])
@@ -201,13 +202,14 @@ def candidates_from_path(
                     {"entry": f"{path_relative}{tag}", "path": path_relative}
                 )
 
-                if candidates_total >= soft_limit:
-                    max_depth = depth
-                time_now = time.monotonic()
-                if candidates and time_now - time_start >= batch_time_limit:
-                    time_start = time.monotonic()
-                    yield candidates
-                    candidates.clear()
+            if candidates_total >= file_limit:
+                max_depth = depth
+            time_now = time.monotonic()
+            if candidates and time_now - time_start >= time_limit:
+                time_start = time.monotonic()
+                time_limit *= 1.25
+                yield candidates
+                candidates.clear()
         except PermissionError:
             pass
     if candidates:
