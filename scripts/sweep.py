@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import sys
+import time
 import traceback
 from asyncio.futures import Future
 from collections import deque
@@ -18,6 +19,7 @@ from typing import (
     Deque,
     Dict,
     Generic,
+    Iterable,
     List,
     NamedTuple,
     Optional,
@@ -269,9 +271,22 @@ class Sweep:
 
         await proc.wait()
 
-    def candidates_extend(self, items: List[Candidate]) -> Awaitable[None]:
+    async def candidates_extend(self, items: Iterable[Candidate]) -> None:
         """Extend candidates set"""
-        return self._call("haystack_extend", items)
+        time_start = time.monotonic()
+        time_limit = 0.05
+        batch = []
+        for item in items:
+            batch.append(item)
+
+            time_now = time.monotonic()
+            if time_now - time_start >= time_limit:
+                time_start = time_now
+                time_limit *= 1.25
+                await self._call("haystack_extend", batch)
+                batch.clear()
+        if batch:
+            await self._call("haystack_extend", batch)
 
     def candidates_clear(self) -> Awaitable[None]:
         """Clear all candidates"""
