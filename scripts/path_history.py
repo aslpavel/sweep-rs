@@ -13,7 +13,18 @@ import os
 import re
 import sys
 import time
-from typing import Any, Callable, Deque, Dict, Iterator, List, Optional, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    Deque,
+    Dict,
+    Iterator,
+    List,
+    NamedTuple,
+    Optional,
+    Tuple,
+    cast,
+)
 from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
@@ -148,6 +159,19 @@ class PathHistoryStore:
         self.update(update_cleanup)
 
 
+# class FileNode(NamedTuple):
+#     name: str
+#     is_dir: bool
+#     children: Optional[
+
+# class FileExplorer:
+#     def __init__(self):
+#         pass
+
+#     def walk(self, path: Path):
+#         pass
+
+
 def collapse_path(path: Path) -> Path:
     """Collapse long paths with ellipsis"""
     home = Path.home().parts
@@ -169,17 +193,14 @@ def candidates_path_key(path: Path):
 def candidates_from_path(
     root: Path,
     file_limit: Optional[int] = None,
-) -> Iterator[List[Candidate]]:
+) -> Iterator[Candidate]:
     """Build candidates list from provided root path
 
     `file_limit` - determines the depth of traversal once soft limit
     is reached none of the elements that are deeper will be returned
     """
     file_limit = DEAFULT_SOFT_LIMIT if file_limit is None else file_limit
-    candidates: List[Candidate] = []
     candidates_total = 0
-    time_start = time.monotonic()
-    time_limit = 0.05
     max_depth = None
 
     queue: Deque[Tuple[Path, int]] = deque([(root, 0)])
@@ -198,22 +219,12 @@ def candidates_from_path(
                 queue.append((item, depth + 1))
 
                 candidates_total += 1
-                candidates.append(
-                    {"entry": f"{path_relative}{tag}", "path": path_relative}
-                )
+                yield {"entry": f"{path_relative}{tag}", "path": path_relative}
 
             if candidates_total >= file_limit:
                 max_depth = depth
-            time_now = time.monotonic()
-            if candidates and time_now - time_start >= time_limit:
-                time_start = time.monotonic()
-                time_limit *= 1.25
-                yield candidates
-                candidates.clear()
         except PermissionError:
             pass
-    if candidates:
-        yield candidates
 
 
 KEY_LIST = "path.search_in_directory"
@@ -274,8 +285,7 @@ class PathSelector:
         await self.sweep.niddle_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
         await self.sweep.candidates_clear()
-        for candidates in candidates_from_path(self.path):
-            await self.sweep.candidates_extend(candidates)
+        await self.sweep.candidates_extend(candidates_from_path(self.path))
 
     async def run(self):
         for name, key in KEY_ALL.items():
