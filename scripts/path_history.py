@@ -20,7 +20,6 @@ from typing import (
     Dict,
     Iterator,
     List,
-    NamedTuple,
     Optional,
     Tuple,
     cast,
@@ -32,7 +31,7 @@ from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING, Candidate
 
 
 PATH_HISTORY_FILE = "~/.path_history"
-DEAFULT_SOFT_LIMIT = 65536
+DEFAULT_SOFT_LIMIT = 65536
 DEFAULT_IGNORE = re.compile(
     "|".join(
         [
@@ -159,17 +158,75 @@ class PathHistoryStore:
         self.update(update_cleanup)
 
 
-# class FileNode(NamedTuple):
-#     name: str
-#     is_dir: bool
-#     children: Optional[
+class FileNode:
+    __slots__ = ["path", "is_dir", "_children"]
 
-# class FileExplorer:
-#     def __init__(self):
-#         pass
+    path: Path
+    is_dir: bool
+    _children: Optional[Dict[str, "FileNode"]]
 
-#     def walk(self, path: Path):
-#         pass
+    def __init__(self, path: Path):
+        self.path = path
+        self.is_dir = self.path.is_dir()
+        self._children = None if self.is_dir else {}
+
+    @property
+    def children(self) -> Dict[str, "FileNode"]:
+        if self._children is not None:
+            return self._children
+        self._children = {}
+        try:
+            for path in self.path.iterdir():
+                if DEFAULT_IGNORE.match(path.name):
+                    continue
+                self._children[path.name] = FileNode(path)
+        except PermissionError:
+            pass
+        return self._children
+
+    def get(self, name: str) -> Optional["FileNode"]:
+        return self.children.get(name)
+
+    def find(self, path: Path) -> Optional["FileNode"]:
+        node = self
+        for name in path.parts:
+            node = node.get(name)
+            if node is None:
+                return None
+        return node
+
+    def candidates(self, limit: Optional[int] = None) -> Iterator[Candidate]:
+        limit = DEFAULT_SOFT_LIMIT if limit is None else limit
+        parts_len = len(self.path.parts)
+        max_depth = None
+        count = 0
+
+        queue: Deque[Tuple[FileNode, int]] = deque([(self, 0)])
+        while queue:
+            node, depth = queue.popleft()
+            if max_depth and depth > max_depth:
+                break
+            for item in sorted(node.children.values(), key=FileNode._sort_key):
+                tag = "/" if item.is_dir else ""
+                path_relative = "/".join(item.path.parts[parts_len:])
+                queue.append((item, depth + 1))
+
+                count += 1
+                yield {"entry": f"{path_relative}{tag}", "path": path_relative}
+
+            if count >= limit:
+                max_depth = depth
+
+    def _sort_key(self):
+        hidden = 1 if self.path.name.startswith(".") else 0
+        not_dir = 0 if self.is_dir else 1
+        return (hidden, not_dir, self.path)
+
+    def __str__(self):
+        return str(self.path)
+
+    def __repr__(self):
+        return 'FileNode("{}")'.format(self.path)
 
 
 def collapse_path(path: Path) -> Path:
@@ -181,50 +238,6 @@ def collapse_path(path: Path) -> Path:
     if len(parts) > 5:
         parts = (parts[0], "\u2026") + parts[-4:]
     return Path().joinpath(*parts)
-
-
-def candidates_path_key(path: Path):
-    """Key used to order path candidates"""
-    hidden = 1 if path.name.startswith(".") else 0
-    not_dir = 0 if path.is_dir() else 1
-    return (hidden, not_dir, path)
-
-
-def candidates_from_path(
-    root: Path,
-    file_limit: Optional[int] = None,
-) -> Iterator[Candidate]:
-    """Build candidates list from provided root path
-
-    `file_limit` - determines the depth of traversal once soft limit
-    is reached none of the elements that are deeper will be returned
-    """
-    file_limit = DEAFULT_SOFT_LIMIT if file_limit is None else file_limit
-    candidates_total = 0
-    max_depth = None
-
-    queue: Deque[Tuple[Path, int]] = deque([(root, 0)])
-    while queue:
-        path, depth = queue.popleft()
-        if max_depth and depth > max_depth:
-            break
-        if not path.is_dir():
-            continue
-        try:
-            for item in sorted(path.iterdir(), key=candidates_path_key):
-                if DEFAULT_IGNORE.match(item.name):
-                    continue
-                tag = "/" if item.is_dir() else ""
-                path_relative = str(item.relative_to(root))
-                queue.append((item, depth + 1))
-
-                candidates_total += 1
-                yield {"entry": f"{path_relative}{tag}", "path": path_relative}
-
-            if candidates_total >= file_limit:
-                max_depth = depth
-        except PermissionError:
-            pass
 
 
 KEY_LIST = "path.search_in_directory"
@@ -246,6 +259,7 @@ class PathSelector:
         # None - history mode
         # Path - path mode
         self.path: Optional[Path] = None
+        self.path_cache = FileNode(Path("/"))
 
     async def show_history(self):
         """Show history"""
@@ -284,8 +298,10 @@ class PathSelector:
             return
         await self.sweep.niddle_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
-        await self.sweep.candidates_clear()
-        await self.sweep.candidates_extend(candidates_from_path(self.path))
+        node = self.path_cache.find(self.path.relative_to("/"))
+        if node is not None:
+            await self.sweep.candidates_clear()
+            await self.sweep.candidates_extend(node.candidates())
 
     async def run(self):
         for name, key in KEY_ALL.items():
