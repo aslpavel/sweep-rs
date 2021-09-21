@@ -261,7 +261,7 @@ class PathSelector:
         self.path: Optional[Path] = None
         self.path_cache = FileNode(Path("/"))
 
-    async def show_history(self):
+    async def show_history(self, reset_niddle: bool = True):
         """Show history"""
         # load history items
         history = self.history.load()
@@ -288,15 +288,17 @@ class PathSelector:
 
         # update sweep
         await self.sweep.prompt_set("󰪻  PATH HISTORY")
-        await self.sweep.niddle_set("")
+        if reset_niddle:
+            await self.sweep.niddle_set("")
         await self.sweep.candidates_clear()
         await self.sweep.candidates_extend(candidates)
 
-    async def show_path(self):
+    async def show_path(self, reset_niddle: bool = True):
         """Show current path"""
         if self.path is None:
             return
-        await self.sweep.niddle_set("")
+        if reset_niddle:
+            await self.sweep.niddle_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
         node = self.path_cache.find(self.path.relative_to("/"))
         if node is not None:
@@ -307,7 +309,7 @@ class PathSelector:
         for name, key in KEY_ALL.items():
             await self.sweep.key_binding(key, name)
 
-        await self.show_history()
+        await self.show_history(reset_niddle=False)
         async for event in self.sweep:
             if event.method == SWEEP_SELECTED:
                 path = event.params["path"]
@@ -377,6 +379,7 @@ async def main():
     parser_select.add_argument(
         "--sweep", default="sweep", help="path to the sweep command"
     )
+    parser_select.add_argument("--query", help="initial query")
     parser_select.add_argument("--tty", help="path to the tty")
     opts = parser.parse_args()
 
@@ -400,7 +403,11 @@ async def main():
         path_history.cleanup()
 
         async with Sweep(
-            sweep=[opts.sweep], theme=opts.theme, title="path history", tty=opts.tty
+            sweep=[opts.sweep],
+            theme=opts.theme,
+            title="path history",
+            tty=opts.tty,
+            query=opts.query,
         ) as sweep:
             selector = PathSelector(sweep, path_history)
             result = await selector.run()

@@ -76,6 +76,7 @@ class Sweep:
         self,
         sweep: List[str] = ["sweep"],
         prompt: str = "INPUT",
+        query: Optional[str] = None,
         nth: Optional[str] = None,
         height: int = 11,
         delimiter: Optional[str] = None,
@@ -91,6 +92,8 @@ class Sweep:
         args: List[str] = []
         args.extend(["--prompt", prompt])
         args.extend(["--height", str(height)])
+        if query is not None:
+            args.extend(["--query", query])
         if isinstance(nth, str):
             args.extend(["--nth", nth])
         if delimiter is not None:
@@ -410,6 +413,10 @@ async def main():
         help="override prompt string",
     )
     parser.add_argument(
+        "--query",
+        help="start sweep with the given query",
+    )
+    parser.add_argument(
         "--nth",
         help="comma-seprated list of fields for limiting search",
     )
@@ -436,6 +443,7 @@ async def main():
     )
     parser.add_argument(
         "--keep-order",
+        action="store_true",
         help="keep order of elements (do not use ranking score)",
     )
     parser.add_argument(
@@ -457,6 +465,7 @@ async def main():
         candidates,
         sweep=shlex.split(args.sweep),
         prompt=args.prompt,
+        query=args.query,
         nth=args.nth,
         height=args.height or 11,
         delimiter=args.delimiter,

@@ -70,6 +70,7 @@ fn main() -> Result<(), Error> {
         altscreen: args.altscreen,
         debug: args.debug,
     })?;
+    sweep.niddle_set(args.query.clone());
 
     if !args.rpc {
         let (haystack_send, haystack_recv) = unbounded();
@@ -259,6 +260,10 @@ pub struct Args {
     /// prompt string
     #[argh(option, short = 'p', default = "\"INPUT\".to_string()")]
     pub prompt: String,
+
+    /// start sweep with the given query
+    #[argh(option, default = "String::new()")]
+    pub query: String,
 
     /// theme as a list of comma-separated attributes
     #[argh(option, default = "Theme::light()")]

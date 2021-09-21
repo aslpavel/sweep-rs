@@ -48,6 +48,7 @@ async def main():
     )
     parser.add_argument("--sweep", default="sweep", help="path to the sweep command")
     parser.add_argument("--tty", help="path to the tty")
+    parser.add_argument("--query", help="initial query")
     opts = parser.parse_args()
 
     candidates: List[Candidate] = []
@@ -63,6 +64,7 @@ async def main():
         candidates,
         sweep=[opts.sweep],
         prompt="󰆍  HISTORY",
+        query=opts.query,
         theme=opts.theme,
         title="command history",
         keep_order=True,
