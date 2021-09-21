@@ -588,7 +588,7 @@ where
             SweepAction::List(action) => self.list.apply(action),
             SweepAction::User(tag) => {
                 if !tag.is_empty() {
-                    return Event(SweepEvent::Bind(tag.clone()));
+                    return Event(SweepEvent::Bind(tag));
                 }
             }
             SweepAction::Quit => {
@@ -734,11 +734,7 @@ where
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
-    let mut state = SweepState::new(
-        options.prompt.clone(),
-        ranker.clone(),
-        options.theme.clone(),
-    );
+    let mut state = SweepState::new(options.prompt.clone(), ranker, options.theme.clone());
     let mut state_help: Option<SweepState<Candidate>> = None;
 
     // render loop
@@ -803,7 +799,7 @@ where
                                 .key_actions
                                 .get(name.as_str())
                                 .cloned()
-                                .unwrap_or_else(|| SweepAction::User(name));
+                                .unwrap_or(SweepAction::User(name));
                             state_help.take();
                             state.apply(action)
                         }
