@@ -100,6 +100,7 @@ where
             .spawn({
                 let result = result.clone();
                 move || {
+                    let mut scorer = scorer_builder("");
                     loop {
                         // block on first event and process all pending requests in one go
                         let cmd = match receiver.recv() {
@@ -111,7 +112,6 @@ where
                         let mut niddle_updated = false; // niddle was updated
                         let mut niddle_prefix = true; // previous niddle is a prefix of the new one
                         let mut scorer_updated = false;
-                        let mut scorer = scorer_builder("");
                         for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                             match cmd {
                                 RankerCmd::HaystackAppend(haystack) => {
