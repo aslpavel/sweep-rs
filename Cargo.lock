@@ -74,9 +74,9 @@ checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
 name = "bstr"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90682c8d613ad3373e66de8c6411e0ae2ab2571e879d2efbf73558cc66f21279"
+checksum = "ba3569f383e8f1598449f1a423e72e99569137b47740b1da11ef19af3d5c3223"
 dependencies = [
  "lazy_static",
  "memchr",
@@ -643,9 +643,9 @@ dependencies = [
 
 [[package]]
 name = "surf_n_term"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc33dc7e51a658851ac83f29d86dcb5d0ddf670567df5824cc301e2bfa426cf2"
+checksum = "c9bb5c8597fa61d0798ce64dbae05ff12231655d64fa07899152cc454c3f2fc9"
 dependencies = [
  "flate2",
  "fnv",
