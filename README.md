@@ -73,41 +73,55 @@ Same as with bash history [`path_history.py`](scripts/path_history.py) needs to 
 ```bash
 __sweep_platform=$(python3 -c 'import sys; print(sys.platform)')
 
-__sweep_path__() {
-    path=$(path_history.py select)
+# bash history lookup
+__sweep_history__() {
+    READLINE_LINE=$(bash_history.py --history-file=$HISTFILE --query "$READLINE_LINE")
+    READLINE_MARK=0
+    READLINE_POINT=${#READLINE_LINE}
+}
+bind -x '"\C-r": __sweep_history__'
+
+# complete path
+__sweep_path_complete__() {
+    eval $(path_history.py select --readline)
+}
+bind -x '"\C-t": __sweep_path_complete__'
+
+# open
+__sweep_open__() {
+    path=$(path_history.py select --query "$READLINE_LINE")
     if [ -d "$path" ];  then
-        printf 'cd %q' "$path"
+        READLINE_LINE="cd $path"
     elif [ -f "$path" ]; then
-        printf 'cd %q' "$(dirname $path)"
-        if (echo "$path" | grep -qE '.*\.(py|rs|h|c|cpp|sh|el|json|js|toml|md|hs|scm|jl|yaml|yml|conf|nix|ini|css|txt|log|diff|patch)$'); then
-            $EDITOR "$path"
-        elif [[ $(file --mime-type "$path" | awk '{ print $2 }') == text/* ]]; then
-            $EDITOR "$path"
+        if [[ $(file --mime-type "$path" | awk '{ print $2 }') == text/* ]]; then
+            READLINE_LINE="${EDITOR:-emacs} $path"
         else
             if [ $__sweep_platform = "linux" ]; then
-                xdg-open "$path"
+                READLINE_LINE="xdg-open $path"
             elif [ $__sweep_platform = "darwin" ]; then
-                open "$path"
+                READLINE_LINE="open $path"
             fi
         fi
     fi
+    READLINE_MARK=0
+    READLINE_POINT=${#READLINE_LINE}
 }
+bind -x '"\C-f": __sweep_open__'
 
 __sweep_path_add__() {
     if [ ! "$__sweep_path_prev__" = "$(pwd)" ]; then
         __sweep_path_prev__="$(pwd)"
-        path_history.py add
+        path_history add
     fi
 }
 __sweep_path_prev__="$(pwd)"
 
 PROMPT_COMMAND="__sweep_path_add__; $PROMPT_COMMAND"
-
-bind '"\er": redraw-current-line'
-bind '"\e^": history-expand-line'
-bind '"\C-f": " \C-e\C-u`__sweep_path__`\e\C-e\er\C-m"'
 ```
-`ctrl+f` will open your path history, `tab` will list selected directory, `enter` will open files/directories, `backspace` will list parent directory
+- `ctrl+r` history lookup
+- `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
+- `ctrl+o` open path (inspect key bindings with `ctrl+h`)
+
 
 - **Sway run command integration**
 There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates seprate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.

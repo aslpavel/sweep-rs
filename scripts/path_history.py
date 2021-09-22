@@ -407,14 +407,17 @@ class ReadLine:
 
     def format(self, path: Optional[Path]) -> str:
         if path is not None:
+            path_str = str(path)
             readline = f"{self.prefix} " if self.prefix else ""
-            readline += str(path)
+            readline += path_str
             readline += f" {self.suffix}" if self.suffix else ""
             point = len(self.prefix)
+            mark = point + len(path_str)
         else:
             readline = self.readline
             point = self.readpoint
-        return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\n'
+            mark = self.readpoint
+        return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\nREADLINE_MARK={mark}\n'
 
 
 async def main():
