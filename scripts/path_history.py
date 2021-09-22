@@ -305,14 +305,23 @@ class PathSelector:
             await self.sweep.candidates_clear()
             await self.sweep.candidates_extend(node.candidates())
 
-    async def run(self):
+    async def run(self, path: Optional[Path] = None) -> Optional[Path]:
+        """Run path selelector
+
+        If path is provided it will start in path mode otherwise in history mode
+        """
         for name, key in KEY_ALL.items():
             await self.sweep.key_binding(key, name)
 
-        await self.show_history(reset_niddle=False)
+        if path and path.is_dir():
+            self.path = path
+            await self.show_path(reset_niddle=False)
+        else:
+            await self.show_history(reset_niddle=False)
+
         async for event in self.sweep:
             if event.method == SWEEP_SELECTED:
-                path = event.params["path"]
+                path = Path(event.params["path"])
                 if self.path is None:
                     return path
                 return self.path / path
@@ -363,6 +372,49 @@ class PathSelector:
                         return path.parent
 
 
+class ReadLine:
+    """Extract reqdline info from bash READLINE_{LINE|POINT}"""
+
+    readline: str
+    readpoint: int
+    prefix: str
+    suffix: str
+    query: Optional[str]
+    path: Optional[Path]
+
+    def __init__(self, readline: str, point: int):
+        self.readline = readline
+        self.readpoint = point
+
+        line_left, line_right = self.readline[:point], self.readline[point:]
+        chunks_left = line_left.rsplit(maxsplit=1)
+        self.prefix, path_left = (
+            chunks_left if len(chunks_left) == 2 else (line_left, "")
+        )
+        chunks_right = line_right.split(maxsplit=1)
+        path_right, self.suffix = (
+            chunks_right if len(chunks_right) == 2 else ("", line_right)
+        )
+
+        path = Path(path_left + path_right)
+        parent = path.parent.expanduser()
+        if parent.is_dir():
+            self.query = path.name
+            self.path = parent.resolve()
+        else:
+            self.query = str(path)
+            self.path = Path.cwd().resolve()
+
+    def format(self, path: Optional[Path]) -> str:
+        if path is not None:
+            readline = f"{self.prefix} {path} {self.suffix}"
+            point = len(self.prefix) + 1
+        else:
+            readline = self.readline
+            point = self.readpoint
+        return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\n'
+
+
 async def main():
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=inspect.getdoc(main))
@@ -381,6 +433,11 @@ async def main():
     )
     parser_select.add_argument("--query", help="initial query")
     parser_select.add_argument("--tty", help="path to the tty")
+    parser_select.add_argument(
+        "--readline",
+        action="store_true",
+        help="complete based on readline variable",
+    )
     opts = parser.parse_args()
 
     path_history = PathHistoryStore()
@@ -402,17 +459,31 @@ async def main():
     elif opts.command == "select":
         path_history.cleanup()
 
+        if opts.readline:
+            readline = ReadLine(
+                os.environ.get("READLINE_LINE", ""),
+                int(os.environ.get("READLINE_POINT", "0")),
+            )
+            query = readline.query
+            path = readline.path
+        else:
+            readline = None
+            query = opts.query
+            path = None
+
         async with Sweep(
             sweep=[opts.sweep],
             theme=opts.theme,
             title="path history",
             tty=opts.tty,
-            query=opts.query,
+            query=query,
         ) as sweep:
             selector = PathSelector(sweep, path_history)
-            result = await selector.run()
+            result = await selector.run(path)
 
-        if result is not None:
+        if readline is not None:
+            print(readline.format(result))
+        elif result is not None:
             print(result)
 
 
