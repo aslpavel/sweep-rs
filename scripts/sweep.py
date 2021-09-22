@@ -305,6 +305,9 @@ class Sweep:
         """Set new niddle"""
         return self._call("niddle_set", niddle)
 
+    def niddle_get(self) -> Awaitable[str]:
+        return self._call("niddle_get")
+
     def key_binding(self, key: str, tag: str) -> Awaitable[None]:
         """Register new hotkey"""
         return self._call("key_binding", {"key": key, "tag": tag})
@@ -377,7 +380,7 @@ class Event(Generic[E]):
         return value
 
 
-def unix_server_once(path: str) -> Future[socket.socket]:
+def unix_server_once(path: str) -> Awaitable[socket.socket]:
     """Create unix server socket and accept one connection"""
     loop = asyncio.get_running_loop()
     if os.path.exists(path):
