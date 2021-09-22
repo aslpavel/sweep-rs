@@ -2,6 +2,7 @@
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
 import asyncio
+from asyncio.exceptions import CancelledError
 import json
 import os
 import socket
@@ -134,7 +135,7 @@ class Sweep:
                 self._worker_writer(writer),
                 self._worker_reader(reader),
             )
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ConnectionResetError):
             pass
         except Exception:
             sys.stderr.write("sweep worker failed with error:\n")
@@ -155,10 +156,10 @@ class Sweep:
     async def _worker_reader(self, reader: StreamReader):
         """Read and dispatch incomming messages from the reader"""
         while self._proc is not None:
-            size = await reader.readline()
-            if not size:
+            data_size = await reader.readline()
+            if not data_size:
                 break
-            size = int(size.strip())
+            size = int(data_size.strip())
             data = await reader.read(size)
             if not data:
                 break
@@ -236,8 +237,11 @@ class Sweep:
 
         return self
 
-    async def __aexit__(self, *_):
+    async def __aexit__(self, _et: Any, ev: Any, _tb: Any):
+        if isinstance(ev, CancelledError):
+            return True
         await self.terminate()
+        return False
 
     def __aiter__(self):
         return self
@@ -304,6 +308,9 @@ class Sweep:
     def niddle_set(self, niddle: str) -> Awaitable[None]:
         """Set new niddle"""
         return self._call("niddle_set", niddle)
+
+    def niddle_get(self) -> Awaitable[str]:
+        return self._call("niddle_get")
 
     def key_binding(self, key: str, tag: str) -> Awaitable[None]:
         """Register new hotkey"""
@@ -377,7 +384,7 @@ class Event(Generic[E]):
         return value
 
 
-def unix_server_once(path: str) -> Future[socket.socket]:
+def unix_server_once(path: str) -> Awaitable[socket.socket]:
     """Create unix server socket and accept one connection"""
     loop = asyncio.get_running_loop()
     if os.path.exists(path):

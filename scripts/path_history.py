@@ -305,14 +305,23 @@ class PathSelector:
             await self.sweep.candidates_clear()
             await self.sweep.candidates_extend(node.candidates())
 
-    async def run(self):
+    async def run(self, path: Optional[Path] = None) -> Optional[Path]:
+        """Run path selelector
+
+        If path is provided it will start in path mode otherwise in history mode
+        """
         for name, key in KEY_ALL.items():
             await self.sweep.key_binding(key, name)
 
-        await self.show_history(reset_niddle=False)
+        if path and path.is_dir():
+            self.path = path
+            await self.show_path(reset_niddle=False)
+        else:
+            await self.show_history(reset_niddle=False)
+
         async for event in self.sweep:
             if event.method == SWEEP_SELECTED:
-                path = event.params["path"]
+                path = Path(event.params["path"])
                 if self.path is None:
                     return path
                 return self.path / path
@@ -363,6 +372,51 @@ class PathSelector:
                         return path.parent
 
 
+class ReadLine:
+    """Extract reqdline info from bash READLINE_{LINE|POINT}"""
+
+    readline: str
+    readpoint: int
+    prefix: str
+    suffix: str
+    query: Optional[str]
+    path: Optional[Path]
+
+    def __init__(self, readline: str, point: int):
+        self.readline = readline
+        self.readpoint = point
+
+        start = readline.rfind(" ", 0, point) + 1
+        end = readline.find(" ", point)
+        end = end if end > 0 else len(readline)
+
+        self.prefix = readline[:start]
+        self.suffix = readline[end:]
+        parts = list(Path(readline[start:end]).parts)
+
+        # path is a longest leading directory
+        query: List[str] = []
+        path = Path()
+        while parts:
+            path = Path(*parts).expanduser()
+            if path.is_dir():
+                break
+            query.append(parts.pop())
+        self.path = path.resolve()
+        self.query = str(os.path.sep.join(reversed(query)))
+
+    def format(self, path: Optional[Path]) -> str:
+        if path is not None:
+            readline = f"{self.prefix} " if self.prefix else ""
+            readline += str(path)
+            readline += f" {self.suffix}" if self.suffix else ""
+            point = len(self.prefix)
+        else:
+            readline = self.readline
+            point = self.readpoint
+        return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\n'
+
+
 async def main():
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=inspect.getdoc(main))
@@ -381,6 +435,11 @@ async def main():
     )
     parser_select.add_argument("--query", help="initial query")
     parser_select.add_argument("--tty", help="path to the tty")
+    parser_select.add_argument(
+        "--readline",
+        action="store_true",
+        help="complete based on readline variable",
+    )
     opts = parser.parse_args()
 
     path_history = PathHistoryStore()
@@ -402,17 +461,32 @@ async def main():
     elif opts.command == "select":
         path_history.cleanup()
 
+        if opts.readline:
+            readline = ReadLine(
+                os.environ.get("READLINE_LINE", ""),
+                int(os.environ.get("READLINE_POINT", "0")),
+            )
+            query = readline.query
+            path = readline.path
+        else:
+            readline = None
+            query = opts.query
+            path = None
+
+        result = None
         async with Sweep(
             sweep=[opts.sweep],
             theme=opts.theme,
             title="path history",
             tty=opts.tty,
-            query=opts.query,
+            query=query,
         ) as sweep:
             selector = PathSelector(sweep, path_history)
-            result = await selector.run()
+            result = await selector.run(path)
 
-        if result is not None:
+        if readline is not None:
+            print(readline.format(result))
+        elif result is not None:
             print(result)
 
 
