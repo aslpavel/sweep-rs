@@ -304,6 +304,14 @@ impl Sweep<Candidate> {
                     return Some(error);
                 }
             }
+            "niddle_get" => match self.niddle_get() {
+                Ok(niddle) => niddle.into(),
+                Err(error) => {
+                    let error =
+                        request.response_err(RPCErrorKind::InternalError, Some(error.to_string()));
+                    return Some(error);
+                }
+            },
             "terminate" => {
                 self.send_command(SweepCommand::Terminate);
                 Value::Null
