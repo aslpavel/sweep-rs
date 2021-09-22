@@ -11,7 +11,7 @@ Sweep is a tool used to interactively search through a list of entries. It is in
   - Configurable key bindings
 
 ### Usage
-- **Basic usage**
+#### Basic usage
 ```
 $ sweep --help
 Usage: sweep [--height <height>] [-p <prompt>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--debug] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--version]
@@ -38,8 +38,8 @@ Options:
   --version         show sweep version and quit
   --help            display usage information
 ```
-- **Key bindings**
-Current key bindings can be viewed by pressing `ctrc+h` and by default looks like this:
+#### Key bindings
+Current key bindings can be viewed by pressing `ctrc+h` and by default look like this:
 
 | Name                 | Key Bindings      |
 |----------------------|-------------------|
@@ -61,15 +61,8 @@ Current key bindings can be viewed by pressing `ctrc+h` and by default looks lik
 |input.page.next       | "pagedown"        |
 |input.page.prev       | "pageup"          |
 
-- **Bash history integration**
-Install sweep and put [`bash_history.py`](scripts/bash_history.py) together with [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. Add this to your `~/.bashrc`
-```bash
-bind '"\er": redraw-current-line'
-bind '"\e^": history-expand-line'
-bind '"\C-r": " \C-e\C-u\C-y\ey\C-u`bash_history.py`\e\C-e\er\e^"'
-```
-- **Bash directory history**
-Same as with bash history [`path_history.py`](scripts/path_history.py) needs to be located in your `$PATH`. And `~/.bashrc` needs to be extended with.
+#### Bash history integration
+Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. Add this to your `~/.bashrc`
 ```bash
 __sweep_platform=$(python3 -c 'import sys; print(sys.platform)')
 
@@ -118,23 +111,24 @@ __sweep_path_prev__="$(pwd)"
 
 PROMPT_COMMAND="__sweep_path_add__; $PROMPT_COMMAND"
 ```
-- `ctrl+r` history lookup
-- `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
-- `ctrl+o` open path (inspect key bindings with `ctrl+h`)
+This result in the following key binding in your bash session
+* `ctrl+r` history lookup
+* `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
+* `ctrl+o` open path (inspect key bindings with `ctrl+h`)
 
 
-- **Sway run command integration**
+#### Sway run command integration
 There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates seprate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
 ```
-set $run_menu j4-dmenu-desktop --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --no-exec | xargs -r swaymsg -t command exec --
+set $run_menu j4-dmenu-desktop --display-binary --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --wrapper "swaymsg -t command exec --"
 for_window [app_id="kitty" title="sweep-menu"] {
     floating enable
     sticky enable
     resize set width 700 px height 400 px
 }
-
 $mod+d exec $run_menu
 ```
+And here is how it looks
 ![sway](resources/sway.png)
 
 ### Installation
@@ -159,12 +153,12 @@ $mod+d exec $run_menu
 ![demo](resources/demo.gif)
 
 ### JSON-RPC
-- **Wire protocol**
+#### Wire protocol
 ```
 <decimal string representing size of JSON object in bytes>\n
 <JSON object>
 ```
-- **JSON-RPC [protocol](https://www.jsonrpc.org/specification)**
+#### JSON-RPC [protocol](https://www.jsonrpc.org/specification)
 - **Candidate** - can either be
   - `String` - parsed the same way as lines passed to stdin of the sweep
   - `{"entry": [String|(String, Bool)]}` - JSON object with mandatory `entry` field which is a list of fields, indiviadual fields can either be a tuple with first element being a field value and second indicating whether this field is searchable, or a plain string which is the same as `(<field>, true)`
@@ -181,6 +175,10 @@ $mod+d exec $run_menu
     - method: `niddle_set`
     - params: `String`
     - result: `Null`
+  - Get query string used to filter items
+    - method: `niddle_get`
+    - params: ignored
+    - result: `String`
   - Set prompt string (lable string before search input)
     - method: `prompt_set`
     - params: `String`
