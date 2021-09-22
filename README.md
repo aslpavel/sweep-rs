@@ -13,14 +13,14 @@ Sweep is a tool used to interactively search through a list of entries. It is in
 ### Usage
 #### Basic usage
 ```
-$ sweep --help
-Usage: sweep [--height <height>] [-p <prompt>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--debug] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--version]
+Usage: sweep [--height <height>] [-p <prompt>] [--query <query>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--debug] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--version]
 
 Sweep is a command line fuzzy finder
 
 Options:
   --height          number of lines occupied by sweep
   -p, --prompt      prompt string
+  --query           start sweep with the given query
   --theme           theme as a list of comma-separated attributes
   --nth             comma-separated list of fields for limiting search scope
   -d, --delimiter   filed delimiter
