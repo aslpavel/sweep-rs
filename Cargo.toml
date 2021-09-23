@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2018"
 name = "sweep"
-version = "0.3.0"
+version = "0.4.0"
 
 [lib]
 name = "sweep"
@@ -20,6 +20,9 @@ crossbeam-channel = "0.5"
 nix = "0.20"
 rayon = "1.5"
 serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
 surf_n_term = "^0.1.6"
 # surf_n_term = {path = "../surf-n-term"}
 

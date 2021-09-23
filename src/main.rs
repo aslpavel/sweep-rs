@@ -17,7 +17,8 @@ use sweep::{
     SubstrScorer, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG,
 };
 
-fn main() -> Result<(), Error> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     let mut args: Args = argh::from_env();
 
     if args.version {
@@ -116,7 +117,7 @@ fn main() -> Result<(), Error> {
                             if result.is_none() && !args.no_match_use_input {
                                 continue
                             }
-                            let input = sweep.niddle_get()?;
+                            let input = sweep.niddle_get().await?;
                             std::mem::drop(sweep); // cleanup terminal
                             if args.json {
                                 let result = result.map_or_else(|| input.into(), |value| value.to_json());
@@ -158,7 +159,7 @@ fn main() -> Result<(), Error> {
                         request,
                         args.field_delimiter,
                         args.field_selector.as_ref()
-                    );
+                    ).await;
                     if let Some(response) = response {
                         rpc_encode(&mut output, response)?;
                     }
@@ -172,7 +173,7 @@ fn main() -> Result<(), Error> {
                                 }
                                 None => {
                                     if args.no_match_use_input {
-                                        rpc_call(&mut output, "select", sweep.niddle_get()?)?;
+                                        rpc_call(&mut output, "select", sweep.niddle_get().await?)?;
                                     }
                                 }
                             }
