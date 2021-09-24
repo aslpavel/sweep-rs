@@ -180,7 +180,7 @@ class FileNode:
                 if DEFAULT_IGNORE.match(path.name):
                     continue
                 self._children[path.name] = FileNode(path)
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             pass
         return self._children
 
@@ -245,7 +245,7 @@ KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
 KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
 KEY_ALL = {
-    KEY_LIST: "ctrl+i",
+    KEY_LIST: "ctrl+i", # Tab
     KEY_PARENT: "backspace",
     KEY_HISTORY: "alt+.",
     KEY_OPEN: "ctrl+o",
@@ -329,18 +329,21 @@ class PathSelector:
             elif event.method == SWEEP_KEYBINDING:
                 # list directory under cursor
                 if event.params == KEY_LIST:
+                    niddle = (await self.sweep.niddle_get()).strip()
                     entry = await self.sweep.current()
-                    if entry is None:
-                        continue
-                    entry = cast(Dict[str, Any], entry)
-
-                    path = Path(entry["path"])
-                    if self.path is None:
-                        self.path = path
-                        await self.show_path()
-                    elif (self.path / path).is_dir():
-                        self.path /= path
-                        await self.show_path()
+                    if niddle.startswith("/") or niddle.startswith("~") or entry is None:
+                        self.path, niddle = get_path_and_query(niddle)
+                        await self.sweep.niddle_set(niddle)
+                        await self.show_path(reset_niddle=False)
+                    else:
+                        entry = cast(Dict[str, Any], entry)
+                        path = Path(entry["path"])
+                        if self.path is None:
+                            self.path = path
+                            await self.show_path()
+                        elif (self.path / path).is_dir():
+                            self.path /= path
+                            await self.show_path()
 
                 # list parent directory, list current directory in history mode
                 elif event.params == KEY_PARENT:
@@ -372,6 +375,20 @@ class PathSelector:
                         return path.parent
 
 
+def get_path_and_query(input: str) -> Tuple[Path, str]:
+    """Find longest existing prefix path and remaining query
+    """
+    parts = list(Path(input).parts)
+    query: List[str] = []
+    path = Path()
+    while parts:
+        path = Path(*parts).expanduser()
+        if path.is_dir():
+            break
+        query.append(parts.pop())
+    return path.resolve(), str(os.path.sep.join(reversed(query)))
+
+
 class ReadLine:
     """Extract reqdline info from bash READLINE_{LINE|POINT}"""
 
@@ -392,18 +409,7 @@ class ReadLine:
 
         self.prefix = readline[:start]
         self.suffix = readline[end:]
-        parts = list(Path(readline[start:end]).parts)
-
-        # path is a longest leading directory
-        query: List[str] = []
-        path = Path()
-        while parts:
-            path = Path(*parts).expanduser()
-            if path.is_dir():
-                break
-            query.append(parts.pop())
-        self.path = path.resolve()
-        self.query = str(os.path.sep.join(reversed(query)))
+        self.path, self.query = get_path_and_query(readline[start:end])
 
     def format(self, path: Optional[Path]) -> str:
         if path is not None:
