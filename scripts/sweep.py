@@ -2,7 +2,6 @@
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
 import asyncio
-from asyncio.exceptions import CancelledError
 import json
 import os
 import socket
@@ -10,8 +9,7 @@ import sys
 import tempfile
 import time
 import traceback
-from asyncio.futures import Future
-from asyncio.streams import StreamReader, StreamWriter
+from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections import deque
 from typing import (
