@@ -1,4 +1,4 @@
-use crate::{FuzzyScorer, Haystack, ScoreResult, Scorer};
+use crate::{FuzzyScorer, Haystack, ScoreResult, Scorer, LockExt};
 use crossbeam_channel::{unbounded, Sender};
 use rayon::prelude::*;
 use std::{
@@ -243,25 +243,5 @@ where
     /// Get last result
     pub fn result(&self) -> Arc<RankerResult<H>> {
         self.result.with(|result| result.clone())
-    }
-}
-
-pub trait LockExt {
-    type Value;
-
-    fn with<Scope, Out>(&self, scope: Scope) -> Out
-    where
-        Scope: FnOnce(&mut Self::Value) -> Out;
-}
-
-impl<V> LockExt for Mutex<V> {
-    type Value = V;
-
-    fn with<Scope, Out>(&self, scope: Scope) -> Out
-    where
-        Scope: FnOnce(&mut Self::Value) -> Out,
-    {
-        let mut value = self.lock().expect("lock poisoned");
-        scope(&mut *value)
     }
 }

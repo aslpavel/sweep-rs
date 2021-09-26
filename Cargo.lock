@@ -894,6 +894,7 @@ dependencies = [
  "futures",
  "nix 0.20.1",
  "rayon",
+ "serde",
  "serde_json",
  "surf_n_term",
  "tokio",
