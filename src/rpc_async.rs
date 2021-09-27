@@ -679,13 +679,13 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("key".to_owned(), "value".into());
         request.params = RpcParams::Map(params);
-        let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}}";
-        assert_eq!(expected, serde_json::to_string(&request)?);
+        let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}} ";
+        assert_eq!(expected[..expected.len() - 1], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         request.params = RpcParams::Null;
-        let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\"}";
-        assert_eq!(expected, serde_json::to_string(&request)?);
+        let expected = " {\"jsonrpc\":\"2.0\",\"method\":\"func\"}";
+        assert_eq!(expected[1..], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         Ok(())
