@@ -58,18 +58,25 @@ pub enum RpcParams {
 }
 
 impl RpcParams {
-    pub fn take_by_name<V: From<Value>>(&mut self, name: impl AsRef<str>) -> Result<V, RpcError> {
+    pub fn take_by_name<V: FromRpcParam>(&mut self, name: impl AsRef<str>) -> Result<V, RpcError> {
+        let name = name.as_ref();
         self.as_map()
-            .and_then(|kwargs| kwargs.remove(name.as_ref()))
-            .map_or_else(
-                || {
-                    Err(RpcError {
-                        kind: RpcErrorKind::InvalidParams,
-                        data: format!("Missing required argument: {}", name.as_ref()),
-                    })
-                },
-                |arg| Ok(arg.into()),
-            )
+            .and_then(|kwargs| kwargs.remove(name))
+            .ok_or_else(|| RpcError {
+                kind: RpcErrorKind::InvalidParams,
+                data: format!("Missing required argument: {}", name),
+            })
+            .and_then(|param| V::from_param(param))
+    }
+
+    pub fn take_by_index<V: FromRpcParam>(&mut self, index: usize) -> Result<V, RpcError> {
+        match self {
+            RpcParams::List(args) if index < args.len() => V::from_param(args[index].take()),
+            _ => Err(RpcError {
+                kind: RpcErrorKind::InvalidParams,
+                data: format!("Missing required argument: {}", index),
+            }),
+        }
     }
 
     pub fn as_map(&mut self) -> Option<&mut HashMap<String, Value>> {
@@ -113,6 +120,37 @@ impl From<RpcErrorKind> for RpcError {
             kind,
             data: String::new(),
         }
+    }
+}
+
+pub trait FromRpcParam: Sized {
+    fn from_param(value: Value) -> Result<Self, RpcError>;
+}
+
+impl FromRpcParam for Value {
+    fn from_param(value: Value) -> Result<Self, RpcError> {
+        Ok(value)
+    }
+}
+
+impl FromRpcParam for String {
+    fn from_param(value: Value) -> Result<Self, RpcError> {
+        match value {
+            Value::String(string) => Ok(string),
+            _ => Err(RpcError {
+                kind: RpcErrorKind::InvalidParams,
+                data: "string argument expected".to_owned(),
+            }),
+        }
+    }
+}
+
+impl FromRpcParam for bool {
+    fn from_param(value: Value) -> Result<Self, RpcError> {
+        value.as_bool().ok_or_else(|| RpcError {
+            kind: RpcErrorKind::InvalidParams,
+            data: "bool argument expected".to_owned(),
+        })
     }
 }
 
