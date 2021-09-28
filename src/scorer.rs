@@ -1,3 +1,4 @@
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
     collections::BTreeSet,
@@ -6,10 +7,74 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Field<'a> {
     pub text: Cow<'a, str>,
     pub active: bool,
+}
+
+impl<'de> Deserialize<'de> for Field<'static> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FieldVisitor;
+
+        impl<'de> de::Visitor<'de> for FieldVisitor {
+            type Value = Field<'static>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("string, list of {string | (string, bool) | Field}")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Field {
+                    text: v.to_owned().into(),
+                    active: true,
+                })
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                Ok(Field {
+                    text: seq
+                        .next_element()?
+                        .ok_or_else(|| de::Error::missing_field("text"))?,
+                    active: seq.next_element()?.unwrap_or(true),
+                })
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut text = None;
+                let mut active = true;
+                while let Some(name) = map.next_key()? {
+                    match name {
+                        "text" => {
+                            text.replace(map.next_value()?);
+                        }
+                        "active" => {
+                            active = map.next_value()?;
+                        }
+                        _ => {
+                            map.next_value::<de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                let text = text.ok_or_else(|| de::Error::missing_field("active"))?;
+                Ok(Field { text, active })
+            }
+        }
+
+        deserializer.deserialize_any(FieldVisitor)
+    }
 }
 
 /// Heystack
@@ -431,6 +496,7 @@ impl<'a> ScoreMatrix<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Error;
 
     #[test]
     fn test_knuth_morris_pratt() {
@@ -497,5 +563,28 @@ mod tests {
             score.positions,
             [0].iter().copied().collect::<BTreeSet<_>>()
         );
+    }
+
+    #[test]
+    fn test_serde_field() -> Result<(), Error> {
+        let mut field = Field {
+            text: "field text".into(),
+            active: true,
+        };
+
+        let expected = "{\"text\":\"field text\",\"active\":true}";
+        assert_eq!(expected, serde_json::to_string(&field)?);
+        assert_eq!(field, serde_json::from_str(expected)?);
+        assert_eq!(field, serde_json::from_str("\"field text\"")?);
+        assert_eq!(field, serde_json::from_str("[\"field text\"]")?);
+        assert_eq!(field, serde_json::from_str("[\"field text\", true]")?);
+
+        field.active = false;
+        let expected = "{\"text\":\"field text\",\"active\":false}";
+        assert_eq!(expected, serde_json::to_string(&field)?);
+        assert_eq!(field, serde_json::from_str(expected)?);
+        assert_eq!(field, serde_json::from_str("[\"field text\", false]")?);
+
+        Ok(())
     }
 }
