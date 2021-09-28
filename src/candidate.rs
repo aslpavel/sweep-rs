@@ -1,7 +1,8 @@
-use crate::Haystack;
+use crate::{Field, Haystack};
 use anyhow::{anyhow, Error};
 use serde_json::Value;
 use std::{
+    borrow::Cow,
     fmt,
     io::{BufRead, BufReader, Read},
     str::FromStr,
@@ -10,7 +11,7 @@ use std::{
 
 #[derive(Debug)]
 struct CandidateInner {
-    fields: Vec<Result<String, String>>,
+    fields: Vec<Field<'static>>,
     chars: Vec<char>,
     // base JSON object that was used to constract the candidate, this
     // can be useful when candidate some additional data assocaited with it
@@ -30,17 +31,23 @@ impl Candidate {
         json: Option<Value>,
     ) -> Self {
         let fields = match field_selector {
-            None => vec![Ok(string)],
+            None => vec![Field {
+                text: string.into(),
+                active: true,
+            }],
             Some(field_selector) => {
                 let fields_count = split_inclusive(delimiter, string.as_ref()).count();
                 split_inclusive(delimiter, string.as_ref())
                     .enumerate()
                     .map(|(index, field)| {
-                        let field = field.to_owned();
+                        let text = Cow::Owned(field.to_owned());
                         if field_selector.matches(index, fields_count) {
-                            Ok(field)
+                            Field { text, active: true }
                         } else {
-                            Err(field)
+                            Field {
+                                text,
+                                active: false,
+                            }
                         }
                     })
                     .collect()
@@ -49,10 +56,13 @@ impl Candidate {
         Self::from_fields(fields, json)
     }
 
-    pub fn from_fields(fields: Vec<Result<String, String>>, json: Option<Value>) -> Self {
+    pub fn from_fields(fields: Vec<Field<'static>>, json: Option<Value>) -> Self {
         let chars = fields
             .iter()
-            .filter_map(|f| Some(f.as_ref().ok()?.chars().flat_map(char::to_lowercase)))
+            .filter_map(|f| {
+                f.active
+                    .then(|| f.text.chars().flat_map(char::to_lowercase))
+            })
             .flatten()
             .collect();
         Self {
@@ -98,14 +108,16 @@ impl Candidate {
                         let mut fields = Vec::new();
                         for filed in entry_fields {
                             match filed {
-                                Value::String(string) => fields.push(Ok(string.clone())),
+                                Value::String(string) => fields.push(Field {
+                                    text: string.clone().into(),
+                                    active: true,
+                                }),
                                 Value::Array(field) => match field.as_slice() {
                                     [Value::String(string), Value::Bool(selected)] => {
-                                        if *selected {
-                                            fields.push(Ok(string.clone()));
-                                        } else {
-                                            fields.push(Err(string.clone()));
-                                        }
+                                        fields.push(Field {
+                                            text: string.clone().into(),
+                                            active: *selected,
+                                        });
                                     }
                                     _ => {
                                         return Err(anyhow!("entry field must be a [String, Bool]"))
@@ -164,10 +176,7 @@ impl fmt::Display for Candidate {
             if index != 0 {
                 f.write_str(" ")?;
             }
-            match field {
-                Ok(field) => f.write_str(field.as_ref())?,
-                Err(field) => f.write_str(field.as_ref())?,
-            }
+            f.write_str(field.text.as_ref())?;
         }
         Ok(())
     }
@@ -229,12 +238,8 @@ impl Haystack for Candidate {
         &self.inner.chars
     }
 
-    fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
-        let iter = self.inner.fields.iter().map(|field| match field {
-            Ok(field) => Ok(field.as_ref()),
-            Err(field) => Err(field.as_ref()),
-        });
-        Box::new(iter)
+    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_> {
+        Box::new(self.inner.fields.iter().map(Clone::clone))
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    Candidate, FieldSelector, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker,
+    Candidate, Field, FieldSelector, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker,
     RankerResult, ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
@@ -655,9 +655,18 @@ where
             .map(|(_action, (name, chrod))| {
                 Candidate::from_fields(
                     vec![
-                        Ok(format!("{0:<1$}", name, name_len)),
-                        Err(" │ ".to_owned()),
-                        Ok(chrod),
+                        Field {
+                            text: format!("{0:<1$}", name, name_len).into(),
+                            active: true,
+                        },
+                        Field {
+                            text: " │ ".to_owned().into(),
+                            active: false,
+                        },
+                        Field {
+                            text: chrod.into(),
+                            active: true,
+                        },
                     ],
                     Some(Value::String(name)),
                 )
@@ -849,21 +858,18 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
     fn fmt(&self, writer: &mut TerminalWriter<'_>) -> std::io::Result<()> {
         let mut index = 0;
         for field in self.result.haystack.fields() {
-            match field {
-                Err(field) => {
-                    writer.face_set(self.face_inactive);
-                    writer.write_all(field.as_ref())?;
-                    writer.face_set(self.face_default);
-                }
-                Ok(field) => {
-                    for c in field.chars() {
-                        if self.result.positions.contains(&index) {
-                            writer.put_char(c, self.face_highlight);
-                        } else {
-                            writer.put_char(c, self.face_default);
-                        }
-                        index += 1;
+            if !field.active {
+                writer.face_set(self.face_inactive);
+                writer.write_all(field.text.as_bytes())?;
+                writer.face_set(self.face_default);
+            } else {
+                for c in field.text.chars() {
+                    if self.result.positions.contains(&index) {
+                        writer.put_char(c, self.face_highlight);
+                    } else {
+                        writer.put_char(c, self.face_default);
                     }
+                    index += 1;
                 }
             }
         }
@@ -873,11 +879,7 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
     fn height_hint(&self, width: usize) -> Option<usize> {
         let mut length = 0;
         for field in self.result.haystack.fields() {
-            let field = match field {
-                Ok(field) => field,
-                Err(field) => field,
-            };
-            for c in field.chars() {
+            for c in field.text.chars() {
                 length += match c {
                     '\n' => width - length % width,
                     _ => 1,
