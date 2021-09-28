@@ -9,10 +9,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, collections::HashMap, sync::{Arc, Mutex}};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader as AsyncBufReader},
     sync::{mpsc, oneshot},
@@ -302,8 +299,8 @@ impl<'de> Deserialize<'de> for RpcError {
                 let mut code = None;
                 let mut message = None;
                 let mut data = String::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
+                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                    match key.as_ref() {
                         "code" => {
                             code.replace(map.next_value()?);
                         }
@@ -439,8 +436,8 @@ impl<'de> Deserialize<'de> for RpcMessage {
                 // common
                 let mut id = RpcId::Null;
 
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
+                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                    match key.as_ref() {
                         "jsonrpc" => {
                             let version: String = map.next_value()?;
                             if version != "2.0" {

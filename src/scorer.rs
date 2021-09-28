@@ -1,11 +1,5 @@
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::{
-    borrow::Cow,
-    collections::BTreeSet,
-    fmt::{self, Debug},
-    ops::Deref,
-    sync::Arc,
-};
+use std::{borrow::Cow, collections::BTreeSet, fmt::{self, Debug}, ops::Deref, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Field<'a> {
@@ -13,15 +7,35 @@ pub struct Field<'a> {
     pub active: bool,
 }
 
-impl<'de> Deserialize<'de> for Field<'static> {
+impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
+    fn from(text: &'b str) -> Self {
+        Self { text: text.into(), active: true }
+    }
+}
+
+impl From<String> for Field<'static> {
+    fn from(text: String) -> Self {
+        Self { text: text.into(), active: true }
+    }
+}
+
+impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
+    fn from(text: Cow<'b, str>) -> Self {
+        Self { text, active: true }
+    }
+}
+
+impl<'de, 'a> Deserialize<'de> for Field<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct FieldVisitor;
+        struct FieldVisitor<'a> {
+            _phantom: &'a (),
+        }
 
-        impl<'de> de::Visitor<'de> for FieldVisitor {
-            type Value = Field<'static>;
+        impl<'de, 'a> de::Visitor<'de> for FieldVisitor<'a> {
+            type Value = Field<'a>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("string, list of {string | (string, bool) | Field}")
@@ -65,8 +79,8 @@ impl<'de> Deserialize<'de> for Field<'static> {
             {
                 let mut text = None;
                 let mut active = true;
-                while let Some(name) = map.next_key::<String>()? {
-                    match name.as_str() {
+                while let Some(name) = map.next_key::<Cow<'de, str>>()? {
+                    match name.as_ref() {
                         "text" => {
                             text.replace(map.next_value()?);
                         }
@@ -83,7 +97,7 @@ impl<'de> Deserialize<'de> for Field<'static> {
             }
         }
 
-        deserializer.deserialize_any(FieldVisitor)
+        deserializer.deserialize_any(FieldVisitor::<'a> { _phantom: &() })
     }
 }
 
