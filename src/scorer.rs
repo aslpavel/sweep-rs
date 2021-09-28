@@ -1,9 +1,16 @@
 use std::{
+    borrow::Cow,
     collections::BTreeSet,
     fmt::{self, Debug},
     ops::Deref,
     sync::Arc,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Field<'a> {
+    pub text: Cow<'a, str>,
+    pub active: bool,
+}
 
 /// Heystack
 ///
@@ -17,7 +24,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     ///
     /// Iterator over fields, only Ok items should be scored, and Err items
     /// should be ignored during scoring.
-    fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_>;
+    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_>;
 }
 
 #[derive(Clone)]
@@ -59,8 +66,11 @@ impl Haystack for StringHaystack {
         self.chars.as_slice()
     }
 
-    fn fields(&self) -> Box<dyn Iterator<Item = Result<&str, &str>> + '_> {
-        Box::new(std::iter::once(self.string.as_ref()).map(Ok))
+    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_> {
+        Box::new(std::iter::once(Field {
+            text: self.string.as_str().into(),
+            active: true,
+        }))
     }
 }
 

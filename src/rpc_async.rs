@@ -4,7 +4,7 @@ use crate::LockExt;
 use anyhow::Error;
 use futures::{Future, Stream};
 use serde::{
-    de::{self, IgnoredAny, Visitor},
+    de::{self, DeserializeOwned, IgnoredAny, Visitor},
     ser::SerializeMap,
     Deserialize, Serialize,
 };
@@ -58,7 +58,10 @@ pub enum RpcParams {
 }
 
 impl RpcParams {
-    pub fn take_by_name<V: FromRpcParam>(&mut self, name: impl AsRef<str>) -> Result<V, RpcError> {
+    pub fn take_by_name<V: DeserializeOwned>(
+        &mut self,
+        name: impl AsRef<str>,
+    ) -> Result<V, RpcError> {
         let name = name.as_ref();
         self.as_map()
             .and_then(|kwargs| kwargs.remove(name))
@@ -66,12 +69,22 @@ impl RpcParams {
                 kind: RpcErrorKind::InvalidParams,
                 data: format!("Missing required argument: {}", name),
             })
-            .and_then(|param| V::from_param(param))
+            .and_then(|param| {
+                serde_json::from_value(param).map_err(|err| RpcError {
+                    kind: RpcErrorKind::InvalidParams,
+                    data: err.to_string(),
+                })
+            })
     }
 
-    pub fn take_by_index<V: FromRpcParam>(&mut self, index: usize) -> Result<V, RpcError> {
+    pub fn take_by_index<V: DeserializeOwned>(&mut self, index: usize) -> Result<V, RpcError> {
         match self {
-            RpcParams::List(args) if index < args.len() => V::from_param(args[index].take()),
+            RpcParams::List(args) if index < args.len() => {
+                serde_json::from_value(args[index].take()).map_err(|err| RpcError {
+                    kind: RpcErrorKind::InvalidParams,
+                    data: err.to_string(),
+                })
+            }
             _ => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
                 data: format!("Missing required argument: {}", index),
@@ -120,37 +133,6 @@ impl From<RpcErrorKind> for RpcError {
             kind,
             data: String::new(),
         }
-    }
-}
-
-pub trait FromRpcParam: Sized {
-    fn from_param(value: Value) -> Result<Self, RpcError>;
-}
-
-impl FromRpcParam for Value {
-    fn from_param(value: Value) -> Result<Self, RpcError> {
-        Ok(value)
-    }
-}
-
-impl FromRpcParam for String {
-    fn from_param(value: Value) -> Result<Self, RpcError> {
-        match value {
-            Value::String(string) => Ok(string),
-            _ => Err(RpcError {
-                kind: RpcErrorKind::InvalidParams,
-                data: "string argument expected".to_owned(),
-            }),
-        }
-    }
-}
-
-impl FromRpcParam for bool {
-    fn from_param(value: Value) -> Result<Self, RpcError> {
-        value.as_bool().ok_or_else(|| RpcError {
-            kind: RpcErrorKind::InvalidParams,
-            data: "bool argument expected".to_owned(),
-        })
     }
 }
 
