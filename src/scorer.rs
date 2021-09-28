@@ -37,6 +37,16 @@ impl<'de> Deserialize<'de> for Field<'static> {
                 })
             }
 
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Field {
+                    text: v.into(),
+                    active: true,
+                })
+            }
+
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
             where
                 A: de::SeqAccess<'de>,
@@ -55,8 +65,8 @@ impl<'de> Deserialize<'de> for Field<'static> {
             {
                 let mut text = None;
                 let mut active = true;
-                while let Some(name) = map.next_key()? {
-                    match name {
+                while let Some(name) = map.next_key::<String>()? {
+                    match name.as_str() {
                         "text" => {
                             text.replace(map.next_value()?);
                         }
@@ -568,22 +578,26 @@ mod tests {
     #[test]
     fn test_serde_field() -> Result<(), Error> {
         let mut field = Field {
-            text: "field text".into(),
+            text: "field text π".into(),
             active: true,
         };
 
-        let expected = "{\"text\":\"field text\",\"active\":true}";
+        let expected = "{\"text\":\"field text π\",\"active\":true}";
+        let value: serde_json::Value = serde_json::from_str(expected)?;
+        assert_eq!(field, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&field)?);
         assert_eq!(field, serde_json::from_str(expected)?);
-        assert_eq!(field, serde_json::from_str("\"field text\"")?);
-        assert_eq!(field, serde_json::from_str("[\"field text\"]")?);
-        assert_eq!(field, serde_json::from_str("[\"field text\", true]")?);
+        assert_eq!(field, serde_json::from_str("\"field text π\"")?);
+        assert_eq!(field, serde_json::from_str("[\"field text π\"]")?);
+        assert_eq!(field, serde_json::from_str("[\"field text π\", true]")?);
 
         field.active = false;
-        let expected = "{\"text\":\"field text\",\"active\":false}";
+        let expected = "{\"text\":\"field text π\",\"active\":false}";
+        let value: serde_json::Value = serde_json::from_str(expected)?;
+        assert_eq!(field, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&field)?);
         assert_eq!(field, serde_json::from_str(expected)?);
-        assert_eq!(field, serde_json::from_str("[\"field text\", false]")?);
+        assert_eq!(field, serde_json::from_str("[\"field text π\", false]")?);
 
         Ok(())
     }

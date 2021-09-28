@@ -105,31 +105,10 @@ impl Candidate {
                         Some(json),
                     )),
                     Value::Array(entry_fields) => {
-                        let mut fields = Vec::new();
-                        for filed in entry_fields {
-                            match filed {
-                                Value::String(string) => fields.push(Field {
-                                    text: string.clone().into(),
-                                    active: true,
-                                }),
-                                Value::Array(field) => match field.as_slice() {
-                                    [Value::String(string), Value::Bool(selected)] => {
-                                        fields.push(Field {
-                                            text: string.clone().into(),
-                                            active: *selected,
-                                        });
-                                    }
-                                    _ => {
-                                        return Err(anyhow!("entry field must be a [String, Bool]"))
-                                    }
-                                },
-                                _ => {
-                                    return Err(anyhow!(
-                                        "entry field must be either a strings or a pairs"
-                                    ))
-                                }
-                            }
-                        }
+                        let fields = entry_fields
+                            .iter()
+                            .map(|field| serde_json::from_value(field.clone()))
+                            .collect::<Result<_, _>>()?;
                         Ok(Self::from_fields(fields, Some(json)))
                     }
                     _ => Err(anyhow!("entry attribute must a string or an array")),

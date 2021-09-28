@@ -302,8 +302,8 @@ impl<'de> Deserialize<'de> for RpcError {
                 let mut code = None;
                 let mut message = None;
                 let mut data = String::new();
-                while let Some(key) = map.next_key()? {
-                    match key {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
                         "code" => {
                             code.replace(map.next_value()?);
                         }
@@ -439,8 +439,8 @@ impl<'de> Deserialize<'de> for RpcMessage {
                 // common
                 let mut id = RpcId::Null;
 
-                while let Some(key) = map.next_key()? {
-                    match key {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
                         "jsonrpc" => {
                             let version: String = map.next_value()?;
                             if version != "2.0" {
@@ -624,6 +624,8 @@ mod tests {
         };
 
         let expected = "{\"jsonrpc\":\"2.0\",\"result\":\"value\",\"id\":3}";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(response, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&response)?);
         assert_eq!(response, serde_json::from_str::<RpcResponse>(expected)?);
 
@@ -635,6 +637,8 @@ mod tests {
         response.result = Err(RpcErrorKind::InvalidRequest.into());
         let expected =
             "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid request\"}}";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(response, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&response)?);
         assert_eq!(response, serde_json::from_str::<RpcResponse>(expected)?);
 
@@ -644,6 +648,8 @@ mod tests {
             data: "no method bla".to_owned(),
         });
         let expected = "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"Method not found\",\"data\":\"no method bla\"},\"id\":\"string_id\"}";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(response, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&response)?);
         assert_eq!(response, serde_json::from_str::<RpcResponse>(expected)?);
 
@@ -654,6 +660,8 @@ mod tests {
             id: RpcId::Int(1),
         };
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":[3.141,127],\"id\":1}";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
@@ -662,11 +670,15 @@ mod tests {
         params.insert("key".to_owned(), "value".into());
         request.params = RpcParams::Map(params);
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}} ";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected[..expected.len() - 1], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         request.params = RpcParams::Null;
         let expected = " {\"jsonrpc\":\"2.0\",\"method\":\"func\"}";
+        let value: Value = serde_json::from_str(expected)?;
+        assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected[1..], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
