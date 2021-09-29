@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use crate::LockExt;
-use anyhow::Error;
 use futures::{Future, Stream};
 use serde::{
     de::{self, DeserializeOwned, IgnoredAny, Visitor},
@@ -9,7 +8,12 @@ use serde::{
     Deserialize, Serialize,
 };
 use serde_json::{Map, Value};
-use std::{borrow::Cow, collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    fmt,
+    sync::{Arc, Mutex},
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader as AsyncBufReader},
     sync::{mpsc, oneshot},
@@ -32,6 +36,18 @@ pub struct RpcResponse {
 pub enum RpcMessage {
     Request(RpcRequest),
     Response(RpcResponse),
+}
+
+impl From<RpcRequest> for RpcMessage {
+    fn from(request: RpcRequest) -> Self {
+        RpcMessage::Request(request)
+    }
+}
+
+impl From<RpcResponse> for RpcMessage {
+    fn from(response: RpcResponse) -> Self {
+        RpcMessage::Response(response)
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -123,13 +139,72 @@ pub enum RpcErrorKind {
     MethodNotFound,
     InvalidParams,
     InternalError,
+    PeerDisconnected,
     Other { code: i32, message: String },
+}
+
+impl RpcErrorKind {
+    fn new(code: i32, message: String) -> Self {
+        use RpcErrorKind::*;
+        match code {
+            -32700 => ParseError,
+            -32600 => InvalidRequest,
+            -32601 => MethodNotFound,
+            -32602 => InvalidParams,
+            -32603 => InternalError,
+            1000 => PeerDisconnected,
+            _ => Other { code, message },
+        }
+    }
+
+    fn code(&self) -> i32 {
+        use RpcErrorKind::*;
+        match self {
+            ParseError => -32700,
+            InvalidRequest => -32600,
+            MethodNotFound => -32601,
+            InvalidParams => -32602,
+            InternalError => -32603,
+            PeerDisconnected => 1000,
+            Other { code, .. } => *code,
+        }
+    }
+
+    fn message(&self) -> &str {
+        use RpcErrorKind::*;
+        match self {
+            ParseError => "Parse error",
+            InvalidRequest => "Invalid request",
+            MethodNotFound => "Method not found",
+            InvalidParams => "Invalid params",
+            InternalError => "Internal error",
+            PeerDisconnected => "Peer disconnected",
+            Other { message, .. } => message.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RpcError {
     kind: RpcErrorKind,
     data: String,
+}
+
+impl RpcError {
+    fn new(code: i32, message: String, data: String) -> Self {
+        Self {
+            kind: RpcErrorKind::new(code, message),
+            data,
+        }
+    }
+
+    fn kind(&self) -> &RpcErrorKind {
+        &self.kind
+    }
+
+    fn data(&self) -> &str {
+        self.data.as_str()
+    }
 }
 
 impl From<RpcErrorKind> for RpcError {
@@ -140,6 +215,18 @@ impl From<RpcErrorKind> for RpcError {
         }
     }
 }
+
+impl fmt::Display for RpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.data.is_empty() {
+            write!(f, "{}", self.kind().message())
+        } else {
+            write!(f, "{}: {}", self.kind().message(), self.data())
+        }
+    }
+}
+
+impl std::error::Error for RpcError {}
 
 impl Serialize for RpcId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -267,18 +354,9 @@ impl Serialize for RpcError {
     where
         S: serde::Serializer,
     {
-        use RpcErrorKind::*;
-        let (code, message) = match &self.kind {
-            ParseError => (-32700, "Parse error"),
-            InvalidRequest => (-32600, "Invalid request"),
-            MethodNotFound => (-32601, "Method not found"),
-            InvalidParams => (-32602, "Invalid params"),
-            InternalError => (-32603, "Internal error"),
-            Other { code, message } => (*code, message.as_ref()),
-        };
         let mut attrs = serializer.serialize_map(Some(3))?;
-        attrs.serialize_entry("code", &code)?;
-        attrs.serialize_entry("message", message)?;
+        attrs.serialize_entry("code", &self.kind().code())?;
+        attrs.serialize_entry("message", self.kind().message())?;
         if !self.data.is_empty() {
             attrs.serialize_entry("data", &self.data)?;
         }
@@ -325,17 +403,7 @@ impl<'de> Deserialize<'de> for RpcError {
                 }
                 let code = code.ok_or_else(|| de::Error::missing_field("code"))?;
                 let message = message.ok_or_else(|| de::Error::missing_field("message"))?;
-                use RpcErrorKind::*;
-                let kind = match code {
-                    -32700 => ParseError,
-                    -32600 => InvalidRequest,
-                    -32601 => MethodNotFound,
-                    -32602 => InvalidParams,
-                    -32603 => InternalError,
-                    _ => Other { code, message },
-                };
-
-                Ok(RpcError { kind, data })
+                Ok(RpcError::new(code, message, data))
             }
         }
 
@@ -494,134 +562,137 @@ impl<'de> Deserialize<'de> for RpcMessage {
     }
 }
 
-pub fn rpc_decoder_async<I>(reader: I) -> impl Stream<Item = Result<Value, Error>>
+pub fn rpc_decoder<I>(reader: I) -> impl Stream<Item = Result<RpcMessage, RpcError>>
 where
     I: AsyncRead + Unpin,
 {
     struct State<I> {
         reader: AsyncBufReader<I>,
         size_buf: String,
-        json_buf: Vec<u8>,
+        message_buf: Vec<u8>,
     }
     let init = State {
         reader: AsyncBufReader::new(reader),
         size_buf: String::new(),
-        json_buf: Vec::new(),
+        message_buf: Vec::new(),
     };
     futures::stream::try_unfold(init, |mut state| {
         async move {
             // read size
             state.size_buf.clear();
-            state.reader.read_line(&mut state.size_buf).await?;
+            state
+                .reader
+                .read_line(&mut state.size_buf)
+                .await
+                .map_err(|error| RpcError {
+                    kind: RpcErrorKind::ParseError,
+                    data: format!("failed to read message size: {}", error),
+                })?;
             if state.size_buf.is_empty() {
                 return Ok(None);
             }
-            let size: usize = state.size_buf.trim().parse::<usize>()?;
+            let size: usize = state
+                .size_buf
+                .trim()
+                .parse::<usize>()
+                .map_err(|error| RpcError {
+                    kind: RpcErrorKind::ParseError,
+                    data: format!("failed parse message size: {}", error),
+                })?;
 
-            // read JSON
-            state.json_buf.clear();
-            state.json_buf.resize_with(size, || 0u8);
-            state.reader.read_exact(&mut state.json_buf).await?;
-            Ok(Some((Value::Null, state)))
+            // read message
+            state.message_buf.clear();
+            state.message_buf.resize_with(size, || 0u8);
+            state
+                .reader
+                .read_exact(&mut state.message_buf)
+                .await
+                .map_err(|error| RpcError {
+                    kind: RpcErrorKind::ParseError,
+                    data: format!("failed to read message: {}", error),
+                })?;
+
+            // parse message
+            let message =
+                serde_json::from_slice(state.message_buf.as_ref()).map_err(|error| RpcError {
+                    kind: RpcErrorKind::ParseError,
+                    data: format!("failed parse message: {}", error),
+                })?;
+
+            Ok(Some((message, state)))
         }
     })
 }
 
-pub type RpcHandler = Box<dyn FnMut(RpcParams) -> Box<dyn Future<Output = Result<Value, Error>>>>;
+pub type RpcHandler =
+    Box<dyn FnMut(RpcParams) -> Box<dyn Future<Output = Result<Value, RpcError>>>>;
 
-pub struct RPCPeerInner {
+pub struct RpcPeerInner {
     handlers: HashMap<String, RpcHandler>,
-    requests_last_id: u64,
-    requests: HashMap<u64, oneshot::Receiver<Value>>,
+    requests_next_id: i64,
+    requests: HashMap<RpcId, oneshot::Sender<Result<Value, RpcError>>>,
     write_enqueue: mpsc::Sender<RpcMessage>,
     write_queue: mpsc::Receiver<RpcMessage>,
 }
 
 #[derive(Clone)]
-pub struct RPCPeer {
-    inner: Arc<Mutex<RPCPeerInner>>,
+pub struct RpcPeer {
+    inner: Arc<Mutex<RpcPeerInner>>,
 }
 
-impl RPCPeer {
+impl RpcPeer {
     /// Register handler for the provided name
     pub fn regesiter(&self, method: String, handler: RpcHandler) -> Option<RpcHandler> {
         self.inner
             .with(move |inner| inner.handlers.insert(method, handler))
     }
 
-    /// Send event to the other peer
-    pub fn call_no_wait(&self, _method: impl AsRef<str>, _params: RpcParams) {}
-
-    pub async fn call(&self, _method: impl AsRef<str>, _params: RpcParams) -> Result<Value, Error> {
-        todo!()
+    /// Send rpc request to the other peer
+    pub fn send(&self, request: RpcRequest) -> Result<(), RpcError> {
+        self.inner
+            .with(move |inner| inner.write_enqueue.try_send(request.into()))
+            .map_err(|error| RpcError {
+                kind: RpcErrorKind::PeerDisconnected,
+                data: format!("failed to send message: {}", error),
+            })
     }
 
-    pub async fn run(&mut self) -> Result<(), Error> {
+    /// Issue rpc call and wait for response
+    pub async fn call(
+        &self,
+        method: impl Into<String>,
+        params: RpcParams,
+    ) -> Result<Value, RpcError> {
+        let (tx, rx) = oneshot::channel();
+        let id = self.inner.with(|inner| {
+            let id = RpcId::Int(inner.requests_next_id);
+            inner.requests_next_id += 1;
+            inner.requests.insert(id.clone(), tx);
+            id
+        });
+        self.send(RpcRequest {
+            method: method.into(),
+            params,
+            id,
+        })?;
+        rx.await.map_err(|_| RpcError {
+            kind: RpcErrorKind::PeerDisconnected,
+            data: "one shot channeld was destroyed".to_owned(),
+        })?
+    }
+
+    pub async fn serve(&mut self) -> Result<(), RpcError> {
         todo!()
     }
 }
-
-/*
-/// Create request receiver channel
-///
-/// This function will spawn a thread which will parse requests from input
-/// `BufRead` object, notify function will also be called on each request received.
-///
-/// Message protocol
-/// <decimal string parsable as usize>\n
-/// <json encoded RPCRequest>
-/// ...
-pub fn rpc_decode<I, N>(input: I, mut notify: N) -> Receiver<Result<RPCRequest, RPCError>>
-where
-    I: Read + Send + 'static,
-    N: FnMut() -> bool + Send + 'static,
-{
-    let (send, recv) = unbounded();
-    let mut input = BufReader::new(input);
-    std::thread::spawn(move || -> Result<(), Error> {
-        let mut size_buf = String::new();
-        let mut request_buf = Vec::new();
-        loop {
-            // parse request size
-            size_buf.clear();
-            input.read_line(&mut size_buf)?;
-            if size_buf.is_empty() {
-                break;
-            }
-            let size = match size_buf.trim().parse::<usize>() {
-                Ok(size) => size,
-                Err(_) => {
-                    send.send(Err(RPCError::new(
-                        RPCErrorKind::ParseError,
-                        None,
-                        Some("failed to parse request size"),
-                    )))?;
-                    break;
-                }
-            };
-
-            // parse request
-            request_buf.clear();
-            request_buf.resize_with(size, || 0u8);
-            input.read_exact(request_buf.as_mut_slice())?;
-            send.send(RPCRequest::try_from(request_buf.as_slice()))?;
-            if !notify() {
-                break;
-            }
-        }
-        notify();
-        Ok(())
-    });
-    recv
-}
-*/
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Error;
     use super::*;
 
     #[test]
-    fn test_serde() -> Result<(), Error> {
+    fn test_rpc_serde() -> Result<(), Error> {
         // response
         let mut response = RpcResponse {
             result: Ok("value".into()),
@@ -677,7 +748,10 @@ mod tests {
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}} ";
         let value: Value = serde_json::from_str(expected)?;
         assert_eq!(request, serde_json::from_value(value)?);
-        assert_eq!(expected[..expected.len() - 1], serde_json::to_string(&request)?);
+        assert_eq!(
+            expected[..expected.len() - 1],
+            serde_json::to_string(&request)?
+        );
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         request.params = RpcParams::Null;
