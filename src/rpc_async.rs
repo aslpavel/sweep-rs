@@ -562,9 +562,10 @@ impl<'de> Deserialize<'de> for RpcMessage {
     }
 }
 
-pub fn rpc_decoder<I>(reader: I) -> impl Stream<Item = Result<RpcMessage, RpcError>>
+/// Read stream of RpcMessages from AsyncRead
+pub fn rpc_decoder<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
 where
-    I: AsyncRead + Unpin,
+    R: AsyncRead + Unpin,
 {
     struct State<I> {
         reader: AsyncBufReader<I>,
@@ -572,7 +573,7 @@ where
         message_buf: Vec<u8>,
     }
     let init = State {
-        reader: AsyncBufReader::new(reader),
+        reader: AsyncBufReader::new(read),
         size_buf: String::new(),
         message_buf: Vec::new(),
     };
@@ -624,8 +625,7 @@ where
     })
 }
 
-pub type RpcHandler =
-    Box<dyn FnMut(RpcParams) -> Box<dyn Future<Output = Result<Value, RpcError>>>>;
+pub type RpcHandler = Arc<dyn Fn(RpcParams) -> Box<dyn Future<Output = Result<Value, RpcError>>>>;
 
 pub struct RpcPeerInner {
     handlers: HashMap<String, RpcHandler>,
@@ -681,15 +681,64 @@ impl RpcPeer {
         })?
     }
 
-    pub async fn serve(&mut self) -> Result<(), RpcError> {
+    /// Start serving rpc requests
+    pub async fn serve<R>(&self, _read: R) -> Result<(), RpcError>
+    where
+        R: AsyncRead + Unpin,
+    {
         todo!()
     }
+
+    /*
+    /// Handle incomming rpc message
+    async fn handle_message(&self, message: RpcMessage) -> Result<(), RpcError> {
+        match message {
+            RpcMessage::Response(response) => {
+                let future = match self.inner.with(|inner| inner.requests.remove(&response.id)) {
+                    Some(future) => future,
+                    None => {
+                        return response.result.map(|_| ());
+                    }
+                };
+                let _ = future.send(response.result);
+            }
+            RpcMessage::Request(request) => {
+                let handler = {
+                    let inner = self.inner.lock().expect("peer lock poisoned");
+                    match inner.handlers.get(&request.method) {
+                        Some(handler) => handler.clone(),
+                        None => {
+                            todo!()
+                        }
+                    }
+                };
+                let peer = self.clone();
+                let join = tokio::spawn(async move {
+                    let result = handler(request.params).await;
+                    let response = RpcResponse {
+                        result,
+                        id: request.id,
+                    };
+                    if request.id != RpcId::Null {
+                        peer.inner.with(|inner| {
+                            let _ = inner.write_enqueue.try_send(response.into());
+                        });
+                    } else {
+                        todo!()
+                    }
+                });
+                todo!();
+            }
+        }
+        Ok(())
+    }
+    */
 }
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Error;
     use super::*;
+    use anyhow::Error;
 
     #[test]
     fn test_rpc_serde() -> Result<(), Error> {
