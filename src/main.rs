@@ -4,7 +4,6 @@
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
 use crossbeam_channel::{never, select, unbounded};
-use serde_json::{self, Value};
 use std::{
     io::{Read, Write},
     os::unix::{io::FromRawFd, net::UnixStream},
@@ -76,18 +75,8 @@ async fn main() -> Result<(), Error> {
     if !args.rpc {
         let (haystack_send, haystack_recv) = unbounded();
         if args.json {
-            let request = serde_json::from_reader(input).context("failed to parse input JSON")?;
-            let items = match request {
-                Value::Array(items) => items,
-                _ => return Err(anyhow!("input must be an array")),
-            };
-            let candidates = items
-                .into_iter()
-                .map(|item| {
-                    Candidate::from_json(item, args.field_delimiter, args.field_selector.as_ref())
-                        .context("failed to parse input entry")
-                })
-                .collect::<Result<_, _>>()?;
+            let candidates =
+                serde_json::from_reader(input).context("failed to parse input JSON")?;
             haystack_send.send(candidates)?;
         } else {
             Candidate::load_from_reader(
@@ -120,7 +109,9 @@ async fn main() -> Result<(), Error> {
                             let input = sweep.niddle_get().await?;
                             std::mem::drop(sweep); // cleanup terminal
                             if args.json {
-                                let result = result.map_or_else(|| input.into(), |value| value.to_json());
+                                let result = result
+                                    .and_then(|candidate| serde_json::to_value(candidate).ok())
+                                    .unwrap_or_else(|| input.into());
                                 serde_json::to_writer(output, &result)?;
                             } else {
                                 writeln!(output, "{}", result.map_or_else(|| input, |value| value.to_string()))?;
@@ -155,21 +146,17 @@ async fn main() -> Result<(), Error> {
                             continue
                         }
                     };
-                    let response = sweep.process_request(
-                        request,
-                        args.field_delimiter,
-                        args.field_selector.as_ref()
-                    ).await;
+                    let response = sweep.process_request(request).await;
                     if let Some(response) = response {
                         rpc_encode(&mut output, response)?;
                     }
                 }
                 recv(events) -> event => {
                     match event {
-                        Ok(SweepEvent::Select(result)) => {
-                            match result {
-                                Some(result) => {
-                                    rpc_call(&mut output, "select", result.to_json())?;
+                        Ok(SweepEvent::Select(candidate)) => {
+                            match candidate {
+                                Some(candidate) => {
+                                    rpc_call(&mut output, "select", serde_json::to_value(candidate)?)?;
                                 }
                                 None => {
                                     if args.no_match_use_input {

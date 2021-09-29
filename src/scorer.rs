@@ -1,5 +1,11 @@
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::{borrow::Cow, collections::BTreeSet, fmt::{self, Debug}, ops::Deref, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    fmt::{self, Debug},
+    ops::Deref,
+    sync::Arc,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Field<'a> {
@@ -9,13 +15,19 @@ pub struct Field<'a> {
 
 impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
     fn from(text: &'b str) -> Self {
-        Self { text: text.into(), active: true }
+        Self {
+            text: text.into(),
+            active: true,
+        }
     }
 }
 
 impl From<String> for Field<'static> {
     fn from(text: String) -> Self {
-        Self { text: text.into(), active: true }
+        Self {
+            text: text.into(),
+            active: true,
+        }
     }
 }
 
@@ -521,6 +533,7 @@ impl<'a> ScoreMatrix<'a> {
 mod tests {
     use super::*;
     use anyhow::Error;
+    use serde_json::json;
 
     #[test]
     fn test_knuth_morris_pratt() {
@@ -601,9 +614,18 @@ mod tests {
         assert_eq!(field, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&field)?);
         assert_eq!(field, serde_json::from_str(expected)?);
+
         assert_eq!(field, serde_json::from_str("\"field text π\"")?);
+        assert_eq!(field, serde_json::from_value(json!("field text π"))?);
+
         assert_eq!(field, serde_json::from_str("[\"field text π\"]")?);
+        assert_eq!(field, serde_json::from_value(json!(["field text π"]))?);
+
         assert_eq!(field, serde_json::from_str("[\"field text π\", true]")?);
+        assert_eq!(
+            field,
+            serde_json::from_value(json!(["field text π", true]))?
+        );
 
         field.active = false;
         let expected = "{\"text\":\"field text π\",\"active\":false}";
@@ -611,7 +633,12 @@ mod tests {
         assert_eq!(field, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&field)?);
         assert_eq!(field, serde_json::from_str(expected)?);
+
         assert_eq!(field, serde_json::from_str("[\"field text π\", false]")?);
+        assert_eq!(
+            field,
+            serde_json::from_value(json!(["field text π", false]))?
+        );
 
         Ok(())
     }

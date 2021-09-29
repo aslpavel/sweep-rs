@@ -1,10 +1,11 @@
 use crate::{
-    Candidate, Field, FieldSelector, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker,
-    RankerResult, ScoreResult, ScorerBuilder,
+    Candidate, Field, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker, RankerResult,
+    ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use futures::channel::oneshot;
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -233,37 +234,20 @@ where
 }
 
 impl Sweep<Candidate> {
-    pub async fn process_request(
-        &self,
-        mut request: RPCRequest,
-        delimiter: char,
-        field_selector: Option<&FieldSelector>,
-    ) -> Option<Value> {
+    pub async fn process_request(&self, mut request: RPCRequest) -> Option<Value> {
         let params = request.params.take();
         let result = match request.method.as_ref() {
             "haystack_extend" => {
-                let items = if let Value::Array(items) = params {
-                    items
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[haystack_extend] parameters must be an array"),
-                    );
-                    return Some(error);
-                };
-                let mut candidates = Vec::new();
-                for item in items {
-                    match Candidate::from_json(item, delimiter, field_selector) {
-                        Ok(candidate) => candidates.push(candidate),
-                        Err(error) => {
-                            let error = request.response_err(
-                                RPCErrorKind::InvalidParams,
-                                Some(format!("[haystack_extend] {}", error)),
-                            );
-                            return Some(error);
-                        }
+                let candidates: Vec<Candidate> = match serde_json::from_value(params) {
+                    Ok(items) => items,
+                    Err(error) => {
+                        let error = request.response_err(
+                            RPCErrorKind::InvalidParams,
+                            Some(format!("[haystack_extend] {}", error)),
+                        );
+                        return Some(error);
                     }
-                }
+                };
                 self.haystack_extend(candidates);
                 Value::Null
             }
@@ -296,47 +280,35 @@ impl Sweep<Candidate> {
                 Value::Null
             }
             "key_binding" => {
-                let mut obj = if let Value::Object(obj) = params {
-                    obj
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[key_binding] parameters must be an object"),
-                    );
-                    return Some(error);
-                };
-                let key = if let Some(Value::String(key)) = obj.get_mut("key") {
-                    match Key::chord(key) {
-                        Ok(key) => key,
-                        Err(error) => {
-                            let error = request.response_err(
-                                RPCErrorKind::InvalidParams,
-                                Some(format!(
-                                    "[key_binding] failed to parse key attribute: {}",
-                                    error
-                                )),
-                            );
-                            return Some(error);
-                        }
-                    }
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[key_binding] \"key\" attribute must be present and be a string"),
-                    );
-                    return Some(error);
-                };
-                let tag = match obj.get_mut("tag").and_then(|v| v.as_str()) {
-                    Some(tag) => tag.to_owned(),
-                    None => {
+                #[derive(Deserialize)]
+                struct KeyBinding {
+                    key: String,
+                    tag: String,
+                }
+                let binding: KeyBinding = match serde_json::from_value(params) {
+                    Ok(key) => key,
+                    Err(error) => {
                         let error = request.response_err(
                             RPCErrorKind::InvalidParams,
-                            Some("[key_binding] \"tag\" attribute must be present"),
+                            Some(format!("[key_binding] {}", error)),
                         );
                         return Some(error);
                     }
                 };
-                self.bind(key, tag);
+                let key = match Key::chord(binding.key) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        let error = request.response_err(
+                            RPCErrorKind::InvalidParams,
+                            Some(format!(
+                                "[key_binding] failed to parse key attribute: {}",
+                                error
+                            )),
+                        );
+                        return Some(error);
+                    }
+                };
+                self.bind(key, binding.tag);
                 Value::Null
             }
             "prompt_set" => {
@@ -352,7 +324,9 @@ impl Sweep<Candidate> {
                 }
             }
             "current" => match self.current().await {
-                Ok(current) => current.map_or_else(|| Value::Null, |current| current.to_json()),
+                Ok(current) => current
+                    .and_then(|current| serde_json::to_value(current).ok())
+                    .unwrap_or(Value::Null),
                 Err(error) => {
                     let error =
                         request.response_err(RPCErrorKind::InternalError, Some(error.to_string()));
@@ -653,6 +627,8 @@ where
         let candidates = bindings
             .into_iter()
             .map(|(_action, (name, chrod))| {
+                let mut extra = HashMap::with_capacity(1);
+                extra.insert("name".to_owned(), name.clone().into());
                 Candidate::new(
                     vec![
                         Field {
@@ -668,7 +644,7 @@ where
                             active: true,
                         },
                     ],
-                    Some(Value::String(name)),
+                    Some(extra),
                 )
             })
             .collect();
@@ -789,7 +765,9 @@ where
                         }
                         SweepKeyEvent::Event(SweepEvent::Select(Some(bind))) => {
                             let name = bind
-                                .to_json()
+                                .extra()
+                                .get("name")
+                                .unwrap_or(&Value::Null)
                                 .as_str()
                                 .map_or_else(String::new, ToOwned::to_owned);
                             let action = state

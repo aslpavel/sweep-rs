@@ -63,7 +63,7 @@ class PathHistory:
     mtime: Optional[int]
     entries: Dict[Path, PathHistoryEntry]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator["PathHistoryEntry"]:
         return iter(self.entries.values())
 
 
@@ -94,7 +94,7 @@ class PathHistoryStore:
             paths[path] = PathHistoryEntry(path, count, date)
         return PathHistory(mtime, paths)
 
-    def update(self, update: Callable[[int, PathHistory], bool]):
+    def update(self, update: Callable[[int, PathHistory], bool]) -> None:
         """AddTo/Update path history"""
         while True:
             now = int(time.time())
@@ -245,7 +245,7 @@ KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
 KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
 KEY_ALL = {
-    KEY_LIST: "ctrl+i", # Tab
+    KEY_LIST: "ctrl+i",  # Tab
     KEY_PARENT: "backspace",
     KEY_HISTORY: "alt+.",
     KEY_OPEN: "ctrl+o",
@@ -331,7 +331,11 @@ class PathSelector:
                 if event.params == KEY_LIST:
                     niddle = (await self.sweep.niddle_get()).strip()
                     entry = await self.sweep.current()
-                    if niddle.startswith("/") or niddle.startswith("~") or entry is None:
+                    if (
+                        niddle.startswith("/")
+                        or niddle.startswith("~")
+                        or entry is None
+                    ):
                         self.path, niddle = get_path_and_query(niddle)
                         await self.sweep.niddle_set(niddle)
                         await self.show_path(reset_niddle=False)
@@ -376,8 +380,7 @@ class PathSelector:
 
 
 def get_path_and_query(input: str) -> Tuple[Path, str]:
-    """Find longest existing prefix path and remaining query
-    """
+    """Find longest existing prefix path and remaining query"""
     parts = list(Path(input).parts)
     query: List[str] = []
     path = Path()

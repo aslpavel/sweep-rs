@@ -1,31 +1,34 @@
 use crate::{Field, Haystack};
-use anyhow::{anyhow, Error};
-use serde::{de, Deserialize, Serialize};
+use anyhow::Error;
+use serde::{de, ser::SerializeMap, Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fmt,
     io::{BufRead, BufReader, Read},
     str::FromStr,
     sync::Arc,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct CandidateInner {
+    // haystack fields
     fields: Vec<Field<'static>>,
+    // searchable characters
     chars: Vec<char>,
-    // base JSON object that was used to constract the candidate, this
+    // extra fields extracted from candidate object during parsing, this
     // can be useful when candidate some additional data assocaited with it
-    json: Option<Value>,
+    extra: HashMap<String, Value>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     inner: Arc<CandidateInner>,
 }
 
 impl Candidate {
-    pub fn new(fields: Vec<Field<'static>>, json: Option<Value>) -> Self {
+    pub fn new(fields: Vec<Field<'static>>, extra: Option<HashMap<String, Value>>) -> Self {
         let chars = fields
             .iter()
             .filter_map(|f| {
@@ -38,22 +41,22 @@ impl Candidate {
             inner: Arc::new(CandidateInner {
                 fields,
                 chars,
-                json,
+                extra: extra.unwrap_or_else(|| HashMap::new()),
             }),
         }
+    }
+
+    pub fn extra(&self) -> &HashMap<String, Value> {
+        &self.inner.extra
     }
 
     pub fn from_string(
         string: String,
         delimiter: char,
         field_selector: Option<&FieldSelector>,
-        json: Option<Value>,
     ) -> Self {
         let fields = match field_selector {
-            None => vec![Field {
-                text: string.into(),
-                active: true,
-            }],
+            None => vec![string.into()],
             Some(field_selector) => {
                 let fields_count = split_inclusive(delimiter, string.as_ref()).count();
                 split_inclusive(delimiter, string.as_ref())
@@ -72,51 +75,7 @@ impl Candidate {
                     .collect()
             }
         };
-        Self::new(fields, json)
-    }
-
-    pub fn to_json(&self) -> Value {
-        self.inner
-            .json
-            .as_ref()
-            .map_or_else(|| Value::String(self.to_string()), |json| json.clone())
-    }
-
-    pub fn from_json(
-        json: Value,
-        delimiter: char,
-        field_selector: Option<&FieldSelector>,
-    ) -> Result<Self, Error> {
-        match &json {
-            Value::String(string) => Ok(Self::from_string(
-                string.clone(),
-                delimiter,
-                field_selector,
-                Some(json),
-            )),
-            Value::Object(map) => {
-                let entry = map
-                    .get("entry")
-                    .ok_or_else(|| anyhow!("entry attribute must be present"))?;
-                match entry {
-                    Value::String(string) => Ok(Self::from_string(
-                        string.clone(),
-                        delimiter,
-                        field_selector,
-                        Some(json),
-                    )),
-                    Value::Array(entry_fields) => {
-                        let fields = entry_fields
-                            .iter()
-                            .map(|field| serde_json::from_value(field.clone()))
-                            .collect::<Result<_, _>>()?;
-                        Ok(Self::new(fields, Some(json)))
-                    }
-                    _ => Err(anyhow!("entry attribute must a string or an array")),
-                }
-            }
-            _ => Err(anyhow!("string or object is expected")),
-        }
+        Self::new(fields, None)
     }
 
     pub fn load_from_reader<R, F>(
@@ -138,7 +97,6 @@ impl Candidate {
                     line,
                     delimiter,
                     field_selector.as_ref(),
-                    None,
                 ));
                 if buf.len() >= buf_size {
                     buf_size *= 2;
@@ -167,10 +125,12 @@ impl Serialize for Candidate {
     where
         S: serde::Serializer,
     {
-        match &self.inner.json {
-            Some(json) => json.serialize(serializer),
-            None => self.inner.fields.serialize(serializer),
+        let mut map = serializer.serialize_map(Some(1 + self.inner.extra.len()))?;
+        map.serialize_entry("entry", &self.inner.fields)?;
+        for (key, value) in self.inner.extra.iter() {
+            map.serialize_entry(key, value)?;
         }
+        map.end()
     }
 }
 
@@ -185,14 +145,38 @@ impl<'de> Deserialize<'de> for Candidate {
             type Value = Candidate;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("string or list of Fields")
+                formatter.write_str("string or dict with entry field")
             }
 
-            fn visit_str<E>(self, _v: &str) -> Result<Self::Value, E>
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
                 E: de::Error,
             {
-                todo!()
+                let fields = vec![Field::from(v.to_owned())];
+                Ok(Candidate::new(fields, None))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut fields = None;
+                let mut extra = HashMap::new();
+                while let Some(name) = map.next_key::<Cow<'de, str>>()? {
+                    match name.as_ref() {
+                        "entry" => {
+                            fields.replace(map.next_value()?);
+                        }
+                        _ => {
+                            extra.insert(name.into_owned(), map.next_value()?);
+                        }
+                    }
+                }
+                let fields = fields.ok_or_else(|| de::Error::missing_field("entry"))?;
+                Ok(Candidate::new(
+                    fields,
+                    (!extra.is_empty()).then(move || extra),
+                ))
             }
         }
 
@@ -407,17 +391,48 @@ mod tests {
     }
 
     #[test]
-    fn test_json_candidate() -> Result<(), Error> {
-        // string is parsed as usual string entry
-        Candidate::from_json(json!("one two"), ' ', None)?;
-        // JSON object must include "entry" field
-        Candidate::from_json(json!({"entry": "one"}), ' ', None)?;
-        // entry fields might be a list [(<string field>, <bool selected>)]
-        Candidate::from_json(
-            json!({"entry": ["two", ["three", false], ["four", true]]}),
-            ' ',
-            None,
-        )?;
+    fn test_serde_candidate() -> Result<(), Error> {
+        let mut extra = HashMap::new();
+        extra.insert("extra".to_owned(), 127.into());
+        let candidate = Candidate::new(
+            vec![
+                "one".into(),
+                Field {
+                    text: "two".into(),
+                    active: false,
+                },
+                Field {
+                    text: "three".into(),
+                    active: false,
+                },
+            ],
+            Some(extra),
+        );
+        let value = json!({
+            "entry": [
+                "one",
+                ["two", false],
+                {"text": "three", "active": false}
+            ],
+            "extra": 127
+        });
+        let candidate_string = serde_json::to_string(&candidate)?;
+        let value_string = serde_json::to_string(&value)?;
+        assert_eq!(candidate, serde_json::from_str(candidate_string.as_str())?);
+        assert_eq!(candidate, serde_json::from_str(value_string.as_str())?);
+        assert_eq!(candidate, serde_json::from_value(value)?);
+
+        assert_eq!(
+            Candidate::new(vec!["four".into()], None),
+            serde_json::from_str("\"four\"")?,
+        );
+
+        // I'm not sure if we want this at all
+        // assert_eq!(
+        //     Candidate::new(vec!["five".into()], None),
+        //     serde_json::from_value(json!({"entry": "five"}))?,
+        // );
+
         Ok(())
     }
 }
