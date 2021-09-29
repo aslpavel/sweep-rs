@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
+# pyright: strict
 import asyncio
 import json
 import os
@@ -14,10 +15,12 @@ from asyncio.subprocess import Process
 from collections import deque
 from typing import (
     Any,
+    AsyncIterator,
     Awaitable,
     Callable,
     Deque,
     Dict,
+    Generator,
     Generic,
     Iterable,
     List,
@@ -87,7 +90,7 @@ class Sweep:
         keep_order: bool = False,
         no_match: Optional[str] = None,
         altscreen: bool = False,
-    ):
+    ) -> None:
         args: List[str] = []
         args.extend(["--prompt", prompt])
         args.extend(["--height", str(height)])
@@ -116,14 +119,14 @@ class Sweep:
 
         self._args = [*sweep, "--rpc", *args]
         self._proc: Optional[Process] = None
-        self._io_sock = None
+        self._io_sock: Optional[socket.socket] = None
         self._last_id = 0
         self._read_events: Event[SweepRequest] = Event()
         self._read_requests: Dict[int, Future[Any]] = {}
         self._write_queue: Deque[SweepRequest] = deque()
         self._write_notify: Event[None] = Event()
 
-    async def _worker_main(self, sock: socket.socket):
+    async def _worker_main(self, sock: socket.socket) -> None:
         """Main worker coroutine which reads and write data to/from sweep"""
         if self._proc is None:
             return
@@ -141,7 +144,7 @@ class Sweep:
         finally:
             await self.terminate()
 
-    async def _worker_writer(self, writer: StreamWriter):
+    async def _worker_writer(self, writer: StreamWriter) -> None:
         """Write outging messages"""
         while self._proc is not None:
             if not self._write_queue:
@@ -151,7 +154,7 @@ class Sweep:
             await writer.drain()
         raise asyncio.CancelledError()
 
-    async def _worker_reader(self, reader: StreamReader):
+    async def _worker_reader(self, reader: StreamReader) -> None:
         """Read and dispatch incomming messages from the reader"""
         while self._proc is not None:
             data_size = await reader.readline()
@@ -164,7 +167,7 @@ class Sweep:
             self._read_dispatch(json.loads(data))
         raise asyncio.CancelledError()
 
-    def _read_dispatch(self, msg: Any):
+    def _read_dispatch(self, msg: Any) -> None:
         """Handle incomming messages"""
         # handle events
         method = msg.get("method")
@@ -208,7 +211,7 @@ class Sweep:
             self._read_requests[self._last_id] = future
         return future
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Sweep":
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
 
@@ -235,36 +238,36 @@ class Sweep:
 
         return self
 
-    async def __aexit__(self, _et: Any, ev: Any, _tb: Any):
+    async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
         if isinstance(ev, CancelledError):
             return True
         await self.terminate()
         return False
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncIterator["SweepRequest"]:
         return self
 
-    async def __anext__(self):
+    async def __anext__(self) -> "SweepRequest":
         if self._proc is None:
             raise StopAsyncIteration
         event = await self._read_events
         return event
 
-    def on(self, name: str, handler: Callable[["SweepRequest"], bool]):
+    def on(self, name: str, handler: Callable[["SweepRequest"], bool]) -> None:
         """Regester handler that will be called on event with mathching name
 
         Handler should return `True` value to continue reciving events.
         If `name` arguments is None handler will receive all events.
         """
 
-        def filtered_handler(event: SweepRequest):
+        def filtered_handler(event: SweepRequest) -> bool:
             if name is not None and event.method != name:
                 return True
             return handler(event)
 
         self._read_events.on(filtered_handler)
 
-    async def terminate(self):
+    async def terminate(self) -> None:
         """Terminate underlying sweep process"""
         proc, self._proc = self._proc, None
         io_sock, self._io_sock = self._io_sock, None
@@ -338,7 +341,7 @@ class SweepRequest(NamedTuple):
     params: Any
     id: Optional[int]
 
-    def encode(self):
+    def encode(self) -> bytes:
         message: Dict[str, Any] = {
             "jsonrpc": "2.0",
             "method": self.method,
@@ -358,28 +361,27 @@ E = TypeVar("E")
 class Event(Generic[E]):
     __slots__ = ["_handlers"]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._handlers: Set[Callable[[E], bool]] = set()
 
-    def __call__(self, event: E):
+    def __call__(self, event: E) -> None:
         handlers = self._handlers.copy()
         self._handlers.clear()
         for handler in handlers:
             if handler(event):
                 self._handlers.add(handler)
 
-    def on(self, handler: Callable[[E], bool]):
+    def on(self, handler: Callable[[E], bool]) -> None:
         self._handlers.add(handler)
 
-    def __await__(self):
+    def __await__(self) -> Generator[Any, None, E]:
         def handler(event: E) -> bool:
             future.set_result(event)
             return False
 
         future: Future[E] = asyncio.get_running_loop().create_future()
         self.on(handler)
-        value = yield from future
-        return value
+        return future.__await__()
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
@@ -391,7 +393,7 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
     server.bind(path)
     server.listen()
 
-    async def accept():
+    async def accept() -> socket.socket:
         try:
             accept = loop.create_future()
             loop.add_reader(server.fileno(), lambda: accept.set_result(None))
@@ -406,7 +408,7 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
     return asyncio.create_task(accept())
 
 
-async def main():
+async def main() -> None:
     import argparse
     import shlex
 
@@ -459,10 +461,11 @@ async def main():
     )
     args = parser.parse_args()
 
+    candidates: List[Candidate]
     if args.json:
-        candidates = cast(List[Candidate], json.load(args.input))
+        candidates = json.load(args.input)
     else:
-        candidates: List[Candidate] = []
+        candidates = []
         for line in args.input:
             candidates.append(line.strip())
 
