@@ -8,7 +8,7 @@ use serde::{
     ser::SerializeMap,
     Deserialize, Serialize,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{borrow::Cow, collections::HashMap, sync::{Arc, Mutex}};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader as AsyncBufReader},
@@ -50,7 +50,7 @@ impl RpcId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RpcParams {
     List(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Map(Map<String, Value>),
     Null,
 }
 
@@ -89,7 +89,7 @@ impl RpcParams {
         }
     }
 
-    pub fn as_map(&mut self) -> Option<&mut HashMap<String, Value>> {
+    pub fn as_map(&mut self) -> Option<&mut Map<String, Value>> {
         match self {
             RpcParams::Map(kwargs) => Some(kwargs),
             _ => None,
@@ -105,6 +105,14 @@ impl RpcParams {
 
     pub fn is_null(&self) -> bool {
         matches!(self, &RpcParams::Null)
+    }
+
+    pub fn into_value(self) -> Value {
+        match self {
+            Self::Map(map) => map.into(),
+            Self::List(list) => list.into(),
+            Self::Null => Value::Null,
+        }
     }
 }
 
@@ -235,7 +243,7 @@ impl<'de> Deserialize<'de> for RpcParams {
             where
                 A: de::MapAccess<'de>,
             {
-                let mut params = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+                let mut params = Map::with_capacity(map.size_hint().unwrap_or(0));
                 while let Some((key, value)) = map.next_entry()? {
                     params.insert(key, value);
                 }
@@ -663,7 +671,7 @@ mod tests {
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         request.id = RpcId::Null;
-        let mut params = HashMap::new();
+        let mut params = Map::new();
         params.insert("key".to_owned(), "value".into());
         request.params = RpcParams::Map(params);
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}} ";

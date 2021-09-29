@@ -58,21 +58,14 @@ impl Candidate {
         let fields = match field_selector {
             None => vec![string.into()],
             Some(field_selector) => {
-                let fields_count = split_inclusive(delimiter, string.as_ref()).count();
-                split_inclusive(delimiter, string.as_ref())
-                    .enumerate()
-                    .map(|(index, field)| {
-                        let text = Cow::Owned(field.to_owned());
-                        if field_selector.matches(index, fields_count) {
-                            Field { text, active: true }
-                        } else {
-                            Field {
-                                text,
-                                active: false,
-                            }
-                        }
-                    })
-                    .collect()
+                let mut fields: Vec<Field<'static>> = split_inclusive(delimiter, string.as_ref())
+                    .map(|field| Field::from(field.to_owned()))
+                    .collect();
+                let fields_len = fields.len();
+                fields.iter_mut().enumerate().for_each(|(index, field)| {
+                    field.active = field_selector.matches(index, fields_len)
+                });
+                fields
             }
         };
         Self::new(fields, None)
@@ -110,10 +103,7 @@ impl Candidate {
 
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, field) in self.inner.fields.iter().enumerate() {
-            if index != 0 {
-                f.write_str(" ")?;
-            }
+        for field in self.inner.fields.iter() {
             f.write_str(field.text.as_ref())?;
         }
         Ok(())
