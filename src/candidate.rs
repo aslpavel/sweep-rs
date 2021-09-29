@@ -1,5 +1,6 @@
 use crate::{Field, Haystack};
 use anyhow::{anyhow, Error};
+use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     borrow::Cow,
@@ -24,7 +25,25 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub fn new(
+    pub fn new(fields: Vec<Field<'static>>, json: Option<Value>) -> Self {
+        let chars = fields
+            .iter()
+            .filter_map(|f| {
+                f.active
+                    .then(|| f.text.chars().flat_map(char::to_lowercase))
+            })
+            .flatten()
+            .collect();
+        Self {
+            inner: Arc::new(CandidateInner {
+                fields,
+                chars,
+                json,
+            }),
+        }
+    }
+
+    pub fn from_string(
         string: String,
         delimiter: char,
         field_selector: Option<&FieldSelector>,
@@ -53,25 +72,7 @@ impl Candidate {
                     .collect()
             }
         };
-        Self::from_fields(fields, json)
-    }
-
-    pub fn from_fields(fields: Vec<Field<'static>>, json: Option<Value>) -> Self {
-        let chars = fields
-            .iter()
-            .filter_map(|f| {
-                f.active
-                    .then(|| f.text.chars().flat_map(char::to_lowercase))
-            })
-            .flatten()
-            .collect();
-        Self {
-            inner: Arc::new(CandidateInner {
-                fields,
-                chars,
-                json,
-            }),
-        }
+        Self::new(fields, json)
     }
 
     pub fn to_json(&self) -> Value {
@@ -87,7 +88,7 @@ impl Candidate {
         field_selector: Option<&FieldSelector>,
     ) -> Result<Self, Error> {
         match &json {
-            Value::String(string) => Ok(Self::new(
+            Value::String(string) => Ok(Self::from_string(
                 string.clone(),
                 delimiter,
                 field_selector,
@@ -98,39 +99,18 @@ impl Candidate {
                     .get("entry")
                     .ok_or_else(|| anyhow!("entry attribute must be present"))?;
                 match entry {
-                    Value::String(string) => Ok(Self::new(
+                    Value::String(string) => Ok(Self::from_string(
                         string.clone(),
                         delimiter,
                         field_selector,
                         Some(json),
                     )),
                     Value::Array(entry_fields) => {
-                        let mut fields = Vec::new();
-                        for filed in entry_fields {
-                            match filed {
-                                Value::String(string) => fields.push(Field {
-                                    text: string.clone().into(),
-                                    active: true,
-                                }),
-                                Value::Array(field) => match field.as_slice() {
-                                    [Value::String(string), Value::Bool(selected)] => {
-                                        fields.push(Field {
-                                            text: string.clone().into(),
-                                            active: *selected,
-                                        });
-                                    }
-                                    _ => {
-                                        return Err(anyhow!("entry field must be a [String, Bool]"))
-                                    }
-                                },
-                                _ => {
-                                    return Err(anyhow!(
-                                        "entry field must be either a strings or a pairs"
-                                    ))
-                                }
-                            }
-                        }
-                        Ok(Self::from_fields(fields, Some(json)))
+                        let fields = entry_fields
+                            .iter()
+                            .map(|field| serde_json::from_value(field.clone()))
+                            .collect::<Result<_, _>>()?;
+                        Ok(Self::new(fields, Some(json)))
                     }
                     _ => Err(anyhow!("entry attribute must a string or an array")),
                 }
@@ -154,7 +134,7 @@ impl Candidate {
             let mut lines = reader.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {
-                buf.push(Candidate::new(
+                buf.push(Candidate::from_string(
                     line,
                     delimiter,
                     field_selector.as_ref(),
@@ -179,6 +159,44 @@ impl fmt::Display for Candidate {
             f.write_str(field.text.as_ref())?;
         }
         Ok(())
+    }
+}
+
+impl Serialize for Candidate {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.inner.json {
+            Some(json) => json.serialize(serializer),
+            None => self.inner.fields.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Candidate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct CandidateVisitor;
+
+        impl<'de> de::Visitor<'de> for CandidateVisitor {
+            type Value = Candidate;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("string or list of Fields")
+            }
+
+            fn visit_str<E>(self, _v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                todo!()
+            }
+        }
+
+        deserializer.deserialize_any(CandidateVisitor)
     }
 }
 

@@ -653,7 +653,7 @@ where
         let candidates = bindings
             .into_iter()
             .map(|(_action, (name, chrod))| {
-                Candidate::from_fields(
+                Candidate::new(
                     vec![
                         Field {
                             text: format!("{0:<1$}", name, name_len).into(),
