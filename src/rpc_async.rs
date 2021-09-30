@@ -10,10 +10,13 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
+    io::Write,
     sync::{Arc, Mutex},
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader as AsyncBufReader},
+    io::{
+        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+    },
     sync::{mpsc, oneshot},
 };
 
@@ -138,6 +141,9 @@ pub enum RpcErrorKind {
     InvalidParams,
     InternalError,
     PeerDisconnected,
+    SerdeError,
+    IOError,
+    ServeError,
     Other { code: i32, message: String },
 }
 
@@ -151,6 +157,9 @@ impl RpcErrorKind {
             -32602 => InvalidParams,
             -32603 => InternalError,
             1000 => PeerDisconnected,
+            1001 => SerdeError,
+            1002 => IOError,
+            1003 => ServeError,
             _ => Other { code, message },
         }
     }
@@ -164,6 +173,9 @@ impl RpcErrorKind {
             InvalidParams => -32602,
             InternalError => -32603,
             PeerDisconnected => 1000,
+            SerdeError => 1001,
+            IOError => 1002,
+            ServeError => 1003,
             Other { code, .. } => *code,
         }
     }
@@ -177,6 +189,9 @@ impl RpcErrorKind {
             InvalidParams => "Invalid params",
             InternalError => "Internal error",
             PeerDisconnected => "Peer disconnected",
+            SerdeError => "Faield to (de)serialize",
+            IOError => "Imput/Output Error",
+            ServeError => "Serve called seond time",
             Other { message, .. } => message.as_ref(),
         }
     }
@@ -205,6 +220,16 @@ impl RpcError {
     }
 }
 
+impl fmt::Display for RpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.data.is_empty() {
+            write!(f, "{}", self.kind().message())
+        } else {
+            write!(f, "{}: {}", self.kind().message(), self.data())
+        }
+    }
+}
+
 impl From<RpcErrorKind> for RpcError {
     fn from(kind: RpcErrorKind) -> Self {
         Self {
@@ -214,12 +239,20 @@ impl From<RpcErrorKind> for RpcError {
     }
 }
 
-impl fmt::Display for RpcError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.data.is_empty() {
-            write!(f, "{}", self.kind().message())
-        } else {
-            write!(f, "{}: {}", self.kind().message(), self.data())
+impl From<serde_json::Error> for RpcError {
+    fn from(error: serde_json::Error) -> Self {
+        Self {
+            kind: RpcErrorKind::SerdeError,
+            data: error.to_string(),
+        }
+    }
+}
+
+impl From<std::io::Error> for RpcError {
+    fn from(error: std::io::Error) -> Self {
+        Self {
+            kind: RpcErrorKind::IOError,
+            data: error.to_string(),
         }
     }
 }
@@ -567,8 +600,8 @@ pub struct RpcPeerInner {
     handlers: HashMap<String, RpcHandler>,
     requests_next_id: i64,
     requests: HashMap<RpcId, oneshot::Sender<Result<Value, RpcError>>>,
-    write_enqueue: mpsc::Sender<RpcMessage>,
-    _write_queue: mpsc::Receiver<RpcMessage>,
+    write_sender: mpsc::UnboundedSender<RpcMessage>,
+    write_receiver: Option<mpsc::UnboundedReceiver<RpcMessage>>,
 }
 
 #[derive(Clone)]
@@ -577,6 +610,18 @@ pub struct RpcPeer {
 }
 
 impl RpcPeer {
+    pub fn new() -> Self {
+        let (write_sender, write_receiver) = mpsc::unbounded_channel();
+        let inner = Arc::new(Mutex::new(RpcPeerInner {
+            handlers: HashMap::new(),
+            requests_next_id: 0,
+            requests: HashMap::new(),
+            write_sender,
+            write_receiver: Some(write_receiver),
+        }));
+        Self { inner }
+    }
+
     /// Register handler for the provided name
     pub fn regesiter(&self, method: String, handler: RpcHandler) -> Option<RpcHandler> {
         self.inner
@@ -617,13 +662,22 @@ impl RpcPeer {
     }
 
     /// Start serving rpc requests
-    pub async fn serve<R>(&self, read: R) -> Result<(), RpcError>
+    pub async fn serve<R, W>(&self, read: R, write: W) -> Result<(), RpcError>
     where
         R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
     {
-        rpc_reader(read)
-            .try_for_each(|message| self.handle_message(message))
-            .await
+        let write_receiver = self
+            .inner
+            .with(|inner| inner.write_receiver.take())
+            .ok_or_else(|| RpcError::from(RpcErrorKind::ServeError))?;
+        let writer = rpc_writer(write, write_receiver);
+        let reader = rpc_reader(read).try_for_each(|message| self.handle_message(message));
+        tokio::pin!(reader, writer);
+        tokio::select! {
+            result = reader => result,
+            result = writer => result,
+        }
     }
 
     /// Sumbit message to be send to the other peer
@@ -631,7 +685,7 @@ impl RpcPeer {
         // not that we use unbound queue
         let message = message.into();
         self.inner
-            .with(move |inner| inner.write_enqueue.try_send(message))
+            .with(move |inner| inner.write_sender.send(message))
             .map_err(|error| RpcError {
                 kind: RpcErrorKind::PeerDisconnected,
                 data: format!("failed to send message: {}", error),
@@ -663,9 +717,7 @@ impl RpcPeer {
                                 result,
                                 id: request.id,
                             };
-                            peer.inner.with(|inner| {
-                                let _ = inner.write_enqueue.try_send(response.into());
-                            });
+                            let _ = peer.submit_message(response);
                         }
                     });
                 } else {
@@ -677,7 +729,7 @@ impl RpcPeer {
                             }),
                             id: request.id,
                         };
-                        self.submit_message(response)?
+                        self.submit_message(response)?;
                     }
                 }
             }
@@ -686,18 +738,47 @@ impl RpcPeer {
     }
 }
 
+/// Write stream of messages from message receiver
+async fn rpc_writer<W>(
+    write: W,
+    mut messages: mpsc::UnboundedReceiver<RpcMessage>,
+) -> Result<(), RpcError>
+where
+    W: AsyncWrite,
+{
+    let mut message_len = Vec::new();
+    let mut message_data = Vec::new();
+
+    let write = BufWriter::new(write);
+    tokio::pin!(write);
+
+    while let Some(message) = messages.recv().await {
+        // clear buffers
+        message_len.clear();
+        message_data.clear();
+        // serialize
+        serde_json::to_writer(&mut message_data, &message)?;
+        writeln!(&mut message_len, "{}", message_data.len())?;
+        // write
+        write.write_all(message_len.as_ref()).await?;
+        write.write_all(message_data.as_ref()).await?;
+        write.flush().await?;
+    }
+    Ok(())
+}
+
 /// Read stream of RpcMessages from AsyncRead
 fn rpc_reader<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
 where
     R: AsyncRead + Unpin,
 {
     struct State<I> {
-        reader: AsyncBufReader<I>,
+        reader: BufReader<I>,
         size_buf: String,
         message_buf: Vec<u8>,
     }
     let init = State {
-        reader: AsyncBufReader::new(read),
+        reader: BufReader::new(read),
         size_buf: String::new(),
         message_buf: Vec::new(),
     };
