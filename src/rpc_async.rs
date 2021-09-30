@@ -1,7 +1,5 @@
-#![allow(dead_code)]
-
 use crate::LockExt;
-use futures::{Future, Stream};
+use futures::{future::BoxFuture, Stream, TryStreamExt};
 use serde::{
     de::{self, DeserializeOwned, IgnoredAny, Visitor},
     ser::SerializeMap,
@@ -80,7 +78,7 @@ impl RpcParams {
             .and_then(|kwargs| kwargs.remove(name))
             .ok_or_else(|| RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("Missing required argument: {}", name),
+                data: format!("missing required argument: {}", name),
             })
             .and_then(|param| {
                 serde_json::from_value(param).map_err(|err| RpcError {
@@ -100,7 +98,7 @@ impl RpcParams {
             }
             _ => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("Missing required argument: {}", index),
+                data: format!("missing required argument: {}", index),
             }),
         }
     }
@@ -562,8 +560,134 @@ impl<'de> Deserialize<'de> for RpcMessage {
     }
 }
 
+pub type RpcHandler =
+    Arc<dyn Fn(RpcParams) -> BoxFuture<'static, Result<Value, RpcError>> + Sync + Send>;
+
+pub struct RpcPeerInner {
+    handlers: HashMap<String, RpcHandler>,
+    requests_next_id: i64,
+    requests: HashMap<RpcId, oneshot::Sender<Result<Value, RpcError>>>,
+    write_enqueue: mpsc::Sender<RpcMessage>,
+    _write_queue: mpsc::Receiver<RpcMessage>,
+}
+
+#[derive(Clone)]
+pub struct RpcPeer {
+    inner: Arc<Mutex<RpcPeerInner>>,
+}
+
+impl RpcPeer {
+    /// Register handler for the provided name
+    pub fn regesiter(&self, method: String, handler: RpcHandler) -> Option<RpcHandler> {
+        self.inner
+            .with(move |inner| inner.handlers.insert(method, handler))
+    }
+
+    /// Send event t to the other peer
+    pub fn notify(&self, method: String, params: RpcParams) -> Result<(), RpcError> {
+        self.submit_message(RpcRequest {
+            method,
+            params,
+            id: RpcId::Null,
+        })
+    }
+
+    /// Issue rpc call and wait for response
+    pub async fn call(
+        &self,
+        method: impl Into<String>,
+        params: RpcParams,
+    ) -> Result<Value, RpcError> {
+        let (tx, rx) = oneshot::channel();
+        let id = self.inner.with(|inner| {
+            let id = RpcId::Int(inner.requests_next_id);
+            inner.requests_next_id += 1;
+            inner.requests.insert(id.clone(), tx);
+            id
+        });
+        self.submit_message(RpcRequest {
+            method: method.into(),
+            params,
+            id,
+        })?;
+        rx.await.map_err(|_| RpcError {
+            kind: RpcErrorKind::PeerDisconnected,
+            data: "one shot channeld was destroyed".to_owned(),
+        })?
+    }
+
+    /// Start serving rpc requests
+    pub async fn serve<R>(&self, read: R) -> Result<(), RpcError>
+    where
+        R: AsyncRead + Unpin,
+    {
+        rpc_reader(read)
+            .try_for_each(|message| self.handle_message(message))
+            .await
+    }
+
+    /// Sumbit message to be send to the other peer
+    fn submit_message(&self, message: impl Into<RpcMessage>) -> Result<(), RpcError> {
+        // not that we use unbound queue
+        let message = message.into();
+        self.inner
+            .with(move |inner| inner.write_enqueue.try_send(message))
+            .map_err(|error| RpcError {
+                kind: RpcErrorKind::PeerDisconnected,
+                data: format!("failed to send message: {}", error),
+            })
+    }
+
+    /// Handle incomming rpc message
+    async fn handle_message(&self, message: RpcMessage) -> Result<(), RpcError> {
+        match message {
+            RpcMessage::Response(response) => {
+                if response.id == RpcId::Null {
+                    // propagate errors with no id
+                    return response.result.map(|_| ());
+                }
+                if let Some(future) = self.inner.with(|inner| inner.requests.remove(&response.id)) {
+                    let _ = future.send(response.result);
+                }
+            }
+            RpcMessage::Request(request) => {
+                let handler = self
+                    .inner
+                    .with(|inner| inner.handlers.get(&request.method).cloned());
+                if let Some(handler) = handler {
+                    let peer = self.clone();
+                    tokio::spawn(async move {
+                        let result = handler(request.params).await;
+                        if request.id != RpcId::Null {
+                            let response = RpcResponse {
+                                result,
+                                id: request.id,
+                            };
+                            peer.inner.with(|inner| {
+                                let _ = inner.write_enqueue.try_send(response.into());
+                            });
+                        }
+                    });
+                } else {
+                    if request.id != RpcId::Null {
+                        let response = RpcResponse {
+                            result: Err(RpcError {
+                                kind: RpcErrorKind::MethodNotFound,
+                                data: format!("no shuch method: {}", request.method),
+                            }),
+                            id: request.id,
+                        };
+                        self.submit_message(response)?
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Read stream of RpcMessages from AsyncRead
-pub fn rpc_decoder<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
+fn rpc_reader<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
 where
     R: AsyncRead + Unpin,
 {
@@ -623,116 +747,6 @@ where
             Ok(Some((message, state)))
         }
     })
-}
-
-pub type RpcHandler = Arc<dyn Fn(RpcParams) -> Box<dyn Future<Output = Result<Value, RpcError>>>>;
-
-pub struct RpcPeerInner {
-    handlers: HashMap<String, RpcHandler>,
-    requests_next_id: i64,
-    requests: HashMap<RpcId, oneshot::Sender<Result<Value, RpcError>>>,
-    write_enqueue: mpsc::Sender<RpcMessage>,
-    write_queue: mpsc::Receiver<RpcMessage>,
-}
-
-#[derive(Clone)]
-pub struct RpcPeer {
-    inner: Arc<Mutex<RpcPeerInner>>,
-}
-
-impl RpcPeer {
-    /// Register handler for the provided name
-    pub fn regesiter(&self, method: String, handler: RpcHandler) -> Option<RpcHandler> {
-        self.inner
-            .with(move |inner| inner.handlers.insert(method, handler))
-    }
-
-    /// Send rpc request to the other peer
-    pub fn send(&self, request: RpcRequest) -> Result<(), RpcError> {
-        self.inner
-            .with(move |inner| inner.write_enqueue.try_send(request.into()))
-            .map_err(|error| RpcError {
-                kind: RpcErrorKind::PeerDisconnected,
-                data: format!("failed to send message: {}", error),
-            })
-    }
-
-    /// Issue rpc call and wait for response
-    pub async fn call(
-        &self,
-        method: impl Into<String>,
-        params: RpcParams,
-    ) -> Result<Value, RpcError> {
-        let (tx, rx) = oneshot::channel();
-        let id = self.inner.with(|inner| {
-            let id = RpcId::Int(inner.requests_next_id);
-            inner.requests_next_id += 1;
-            inner.requests.insert(id.clone(), tx);
-            id
-        });
-        self.send(RpcRequest {
-            method: method.into(),
-            params,
-            id,
-        })?;
-        rx.await.map_err(|_| RpcError {
-            kind: RpcErrorKind::PeerDisconnected,
-            data: "one shot channeld was destroyed".to_owned(),
-        })?
-    }
-
-    /// Start serving rpc requests
-    pub async fn serve<R>(&self, _read: R) -> Result<(), RpcError>
-    where
-        R: AsyncRead + Unpin,
-    {
-        todo!()
-    }
-
-    /*
-    /// Handle incomming rpc message
-    async fn handle_message(&self, message: RpcMessage) -> Result<(), RpcError> {
-        match message {
-            RpcMessage::Response(response) => {
-                let future = match self.inner.with(|inner| inner.requests.remove(&response.id)) {
-                    Some(future) => future,
-                    None => {
-                        return response.result.map(|_| ());
-                    }
-                };
-                let _ = future.send(response.result);
-            }
-            RpcMessage::Request(request) => {
-                let handler = {
-                    let inner = self.inner.lock().expect("peer lock poisoned");
-                    match inner.handlers.get(&request.method) {
-                        Some(handler) => handler.clone(),
-                        None => {
-                            todo!()
-                        }
-                    }
-                };
-                let peer = self.clone();
-                let join = tokio::spawn(async move {
-                    let result = handler(request.params).await;
-                    let response = RpcResponse {
-                        result,
-                        id: request.id,
-                    };
-                    if request.id != RpcId::Null {
-                        peer.inner.with(|inner| {
-                            let _ = inner.write_enqueue.try_send(response.into());
-                        });
-                    } else {
-                        todo!()
-                    }
-                });
-                todo!();
-            }
-        }
-        Ok(())
-    }
-    */
 }
 
 #[cfg(test)]

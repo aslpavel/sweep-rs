@@ -13,7 +13,7 @@ mod rpc;
 pub use rpc::{rpc_call, rpc_decode, rpc_encode, RPCError, RPCErrorKind, RPCRequest};
 mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
-mod rpc_async;
+pub mod rpc_async;
 
 pub trait LockExt {
     type Value;
