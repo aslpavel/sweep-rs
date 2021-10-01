@@ -1,4 +1,4 @@
-use crate::{FuzzyScorer, Haystack, ScoreResult, Scorer, LockExt};
+use crate::{FuzzyScorer, Haystack, LockExt, ScoreResult, Scorer};
 use crossbeam_channel::{unbounded, Sender};
 use rayon::prelude::*;
 use std::{

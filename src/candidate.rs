@@ -41,7 +41,7 @@ impl Candidate {
             inner: Arc::new(CandidateInner {
                 fields,
                 chars,
-                extra: extra.unwrap_or_else(|| HashMap::new()),
+                extra: extra.unwrap_or_else(HashMap::new),
             }),
         }
     }

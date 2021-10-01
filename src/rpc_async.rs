@@ -602,17 +602,21 @@ impl<'de> Deserialize<'de> for RpcMessage {
                     }
                 }
 
-                if !result.is_none() || !error.is_none() {
-                    let result =
-                        result.ok_or_else(|| error.expect("programming error parsing rpc message"));
-                    let response = RpcResponse { result, id };
-                    Ok(RpcMessage::Response(response))
-                } else {
-                    let method =
-                        method.ok_or_else(|| de::Error::missing_field("{result|error|method}"))?;
-                    let request = RpcRequest { method, params, id };
-                    Ok(RpcMessage::Request(request))
-                }
+                let result = match (result, error, method) {
+                    (Some(result), None, None) => RpcResponse {
+                        result: Ok(result),
+                        id,
+                    }
+                    .into(),
+                    (None, Some(error), None) => RpcResponse {
+                        result: Err(error),
+                        id,
+                    }
+                    .into(),
+                    (None, None, Some(method)) => RpcRequest { method, params, id }.into(),
+                    _ => return Err(de::Error::missing_field("{result|error|method}")),
+                };
+                Ok(result)
             }
         }
 
@@ -634,6 +638,12 @@ pub struct RpcPeerInner {
 #[derive(Clone)]
 pub struct RpcPeer {
     inner: Arc<Mutex<RpcPeerInner>>,
+}
+
+impl Default for RpcPeer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RpcPeer {
@@ -805,17 +815,15 @@ impl RpcPeer {
                             let _ = peer.submit_message(response);
                         }
                     });
-                } else {
-                    if request.id != RpcId::Null {
-                        let response = RpcResponse {
-                            result: Err(RpcError {
-                                kind: RpcErrorKind::MethodNotFound,
-                                data: format!("no shuch method: {}", request.method),
-                            }),
-                            id: request.id,
-                        };
-                        self.submit_message(response)?;
-                    }
+                } else if request.id != RpcId::Null {
+                    let response = RpcResponse {
+                        result: Err(RpcError {
+                            kind: RpcErrorKind::MethodNotFound,
+                            data: format!("no shuch method: {}", request.method),
+                        }),
+                        id: request.id,
+                    };
+                    self.submit_message(response)?;
                 }
             }
         }

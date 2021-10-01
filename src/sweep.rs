@@ -6,9 +6,9 @@ use crate::{
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use futures::{
-    FutureExt,
     channel::oneshot,
     future::{self, BoxFuture},
+    FutureExt,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -916,7 +916,7 @@ where
                 match action {
                     SweepKeyEvent::Event(event) => {
                         if let Some(peer) = &state_peer {
-                            if let Err(_) = peer.send(event.clone()) {
+                            if peer.send(event.clone()).is_err() {
                                 state_peer.take();
                             }
                         }
