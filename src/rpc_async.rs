@@ -1,7 +1,10 @@
 //! Basic asynchronus [JSON-RPC](https://www.jsonrpc.org/specification) implementation
 
 use crate::LockExt;
-use futures::{future::BoxFuture, FutureExt, Stream, TryStreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    FutureExt, Stream, TryFutureExt, TryStreamExt,
+};
 use serde::{
     de::{self, DeserializeOwned, IgnoredAny, Visitor},
     ser::SerializeMap,
@@ -13,6 +16,7 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt,
+    future::Future,
     io::Write,
     sync::{Arc, Mutex},
 };
@@ -636,8 +640,34 @@ impl RpcPeer {
         Self { inner }
     }
 
+    /// Register callback for the provided method name
+    pub fn regesiter<H, HP, HF, HV>(
+        &self,
+        method: impl Into<String>,
+        callback: H,
+    ) -> Option<RpcHandler>
+    where
+        H: Fn(HP) -> HF + Send + Sync + 'static,
+        HF: Future<Output = Result<HV, RpcError>> + Send + 'static,
+        HV: Into<Value> + Send + 'static,
+        HP: DeserializeOwned,
+    {
+        let handler = Arc::new(move |params| {
+            let params = match serde_json::from_value(params) {
+                Ok(params) => params,
+                Err(error) => return future::err(RpcError::from(error)).boxed(),
+            };
+            callback(params).map_ok(Into::into).boxed()
+        });
+        self.regesiter_handler(method, handler)
+    }
+
     /// Register handler for the provided name
-    pub fn regesiter(&self, method: impl Into<String>, handler: RpcHandler) -> Option<RpcHandler> {
+    pub fn regesiter_handler(
+        &self,
+        method: impl Into<String>,
+        handler: RpcHandler,
+    ) -> Option<RpcHandler> {
         self.inner
             .with(move |inner| inner.handlers.insert(method.into(), handler))
     }
@@ -957,54 +987,34 @@ mod tests {
     async fn test_prc_peer() -> Result<(), RpcError> {
         let a = RpcPeer::new();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        a.regesiter(
+        a.regesiter_handler(
             "hello",
             Arc::new(|_params| async { Ok("a".into()) }.boxed()),
         );
-        a.regesiter(
-            "add",
-            Arc::new(|params| {
-                async move {
-                    let mut params = RpcParams::try_from(params)?;
-                    let a: i64 = params.take_by_name("a")?;
-                    let b: i64 = params.take_by_name("b")?;
-                    Ok((a + b).into())
-                }
-                .boxed()
-            }),
-        );
-        a.regesiter(
-            "send",
-            Arc::new({
-                move |params| {
-                    let tx = tx.clone();
-                    async move {
-                        tx.send(params.clone()).unwrap();
-                        Ok(params)
-                    }
-                    .boxed()
-                }
-            }),
-        );
+        a.regesiter("add", |mut params: RpcParams| async move {
+            let a: i64 = params.take_by_name("a")?;
+            let b: i64 = params.take_by_name("b")?;
+            Ok(a + b)
+        });
+        a.regesiter("send", move |params: Value| {
+            let tx = tx.clone();
+            async move {
+                tx.send(params.clone()).unwrap();
+                Ok(params)
+            }
+        });
         #[derive(Serialize, Deserialize)]
         struct ConcatParams {
             a: String,
             b: String,
         }
-        a.regesiter(
-            "concat",
-            Arc::new(|params| {
-                async move {
-                    let mut params: ConcatParams = serde_json::from_value(params)?;
-                    params.a.extend(params.b.chars());
-                    Ok(params.a.into())
-                }
-                .boxed()
-            }),
-        );
+        a.regesiter("concat", |mut params: ConcatParams| async move {
+            params.a.extend(params.b.chars());
+            Ok(params.a)
+        });
 
         let b = RpcPeer::new();
-        b.regesiter(
+        b.regesiter_handler(
             "hello",
             Arc::new(|_params| async { Ok("b".into()) }.boxed()),
         );
@@ -1054,6 +1064,10 @@ mod tests {
             )
             .await?;
         assert_eq!(json!("one two"), concat_result);
+        let concat_result = b
+            .call("concat", json!({ "a": "three ", "b": "four" }))
+            .await?;
+        assert_eq!(json!("three four"), concat_result);
 
         Ok(())
     }
