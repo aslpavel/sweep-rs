@@ -1,5 +1,7 @@
+//! Basic asynchronus [JSON-RPC](https://www.jsonrpc.org/specification) implementation
+
 use crate::LockExt;
-use futures::{future::BoxFuture, Stream, TryStreamExt};
+use futures::{future::BoxFuture, FutureExt, Stream, TryStreamExt};
 use serde::{
     de::{self, DeserializeOwned, IgnoredAny, Visitor},
     ser::SerializeMap,
@@ -9,6 +11,7 @@ use serde_json::{Map, Value};
 use std::{
     borrow::Cow,
     collections::HashMap,
+    convert::TryFrom,
     fmt,
     io::Write,
     sync::{Arc, Mutex},
@@ -133,6 +136,17 @@ impl RpcParams {
     }
 }
 
+impl TryFrom<Value> for RpcParams {
+    type Error = RpcError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        serde_json::from_value(value).map_err(|error| RpcError {
+            kind: RpcErrorKind::InvalidParams,
+            data: format!("failed to conver value into params: {}", error),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum RpcErrorKind {
     ParseError,
@@ -191,7 +205,7 @@ impl RpcErrorKind {
             PeerDisconnected => "Peer disconnected",
             SerdeError => "Faield to (de)serialize",
             IOError => "Imput/Output Error",
-            ServeError => "Serve called seond time",
+            ServeError => "RpcPeer::serve called second time",
             Other { message, .. } => message.as_ref(),
         }
     }
@@ -623,16 +637,20 @@ impl RpcPeer {
     }
 
     /// Register handler for the provided name
-    pub fn regesiter(&self, method: String, handler: RpcHandler) -> Option<RpcHandler> {
+    pub fn regesiter(&self, method: impl Into<String>, handler: RpcHandler) -> Option<RpcHandler> {
         self.inner
-            .with(move |inner| inner.handlers.insert(method, handler))
+            .with(move |inner| inner.handlers.insert(method.into(), handler))
     }
 
     /// Send event t to the other peer
-    pub fn notify(&self, method: String, params: RpcParams) -> Result<(), RpcError> {
+    pub fn notify(
+        &self,
+        method: impl Into<String>,
+        params: impl Into<RpcParams>,
+    ) -> Result<(), RpcError> {
         self.submit_message(RpcRequest {
-            method,
-            params,
+            method: method.into(),
+            params: params.into(),
             id: RpcId::Null,
         })
     }
@@ -641,7 +659,7 @@ impl RpcPeer {
     pub async fn call(
         &self,
         method: impl Into<String>,
-        params: RpcParams,
+        params: impl Into<RpcParams>,
     ) -> Result<Value, RpcError> {
         let (tx, rx) = oneshot::channel();
         let id = self.inner.with(|inner| {
@@ -652,7 +670,7 @@ impl RpcPeer {
         });
         self.submit_message(RpcRequest {
             method: method.into(),
-            params,
+            params: params.into(),
             id,
         })?;
         rx.await.map_err(|_| RpcError {
@@ -662,22 +680,26 @@ impl RpcPeer {
     }
 
     /// Start serving rpc requests
-    pub async fn serve<R, W>(&self, read: R, write: W) -> Result<(), RpcError>
+    pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
     where
-        R: AsyncRead + Unpin,
-        W: AsyncWrite + Unpin,
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
     {
-        let write_receiver = self
-            .inner
-            .with(|inner| inner.write_receiver.take())
-            .ok_or_else(|| RpcError::from(RpcErrorKind::ServeError))?;
-        let writer = rpc_writer(write, write_receiver);
-        let reader = rpc_reader(read).try_for_each(|message| self.handle_message(message));
-        tokio::pin!(reader, writer);
-        tokio::select! {
-            result = reader => result,
-            result = writer => result,
+        let peer = self.clone();
+        async move {
+            let write_receiver = peer
+                .inner
+                .with(|inner| inner.write_receiver.take())
+                .ok_or_else(|| RpcError::from(RpcErrorKind::ServeError))?;
+            let writer = rpc_writer(write, write_receiver);
+            let reader = rpc_reader(read).try_for_each(|message| peer.handle_message(message));
+            tokio::pin!(reader, writer);
+            tokio::select! {
+                result = reader => result,
+                result = writer => result,
+            }
         }
+        .boxed()
     }
 
     /// Sumbit message to be send to the other peer
@@ -834,6 +856,7 @@ where
 mod tests {
     use super::*;
     use anyhow::Error;
+    use serde_json::json;
 
     #[test]
     fn test_rpc_serde() -> Result<(), Error> {
@@ -904,6 +927,86 @@ mod tests {
         assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected[1..], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_prc_peer() -> Result<(), RpcError> {
+        let a = RpcPeer::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        a.regesiter(
+            "hello",
+            Arc::new(|_params| async { Ok("a".into()) }.boxed()),
+        );
+        a.regesiter(
+            "add",
+            Arc::new(|mut params| {
+                async move {
+                    let a: i64 = params.take_by_name("a")?;
+                    let b: i64 = params.take_by_name("b")?;
+                    Ok((a + b).into())
+                }
+                .boxed()
+            }),
+        );
+        a.regesiter(
+            "send",
+            Arc::new({
+                move |mut params| {
+                    let tx = tx.clone();
+                    async move {
+                        let val: Value = params.take_by_name("val")?;
+                        tx.send(val.clone()).unwrap();
+                        Ok(val)
+                    }.boxed()
+                }
+            })
+        );
+
+        let b = RpcPeer::new();
+        b.regesiter(
+            "hello",
+            Arc::new(|_params| async { Ok("b".into()) }.boxed()),
+        );
+
+        // connect and serve
+        let (a_stream, b_stream) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(a_stream);
+        tokio::spawn(a.serve(read, write));
+        let (read, write) = tokio::io::split(b_stream);
+        tokio::spawn(b.serve(read, write));
+
+        // basic
+        let hello_result = b.call("hello", RpcParams::Null).await?;
+        assert_eq!(json!("a"), hello_result);
+        let hello_result = a.call("hello", RpcParams::Null).await?;
+        assert_eq!(json!("b"), hello_result);
+
+        // add
+        let add_result = b
+            .call("add", RpcParams::try_from(json!({ "a": 1, "b": 2 }))?)
+            .await?;
+        assert_eq!(json!(3), add_result);
+        let add_error = b
+            .call("add", RpcParams::try_from(json!({ "a": 1 }))?)
+            .await
+            .unwrap_err();
+        assert_eq!(add_error.kind, RpcErrorKind::InvalidParams);
+
+        // invalid method
+        let method_error = b.call("blabla", RpcParams::Null).await.unwrap_err();
+        assert_eq!(method_error.kind, RpcErrorKind::MethodNotFound);
+
+        // send
+        let send_result = b.call("send", RpcParams::try_from(json!({"val": 127}))?).await?;
+        assert_eq!(json!(127), send_result);
+        assert_eq!(json!(127), rx.recv().await.unwrap());
+
+        // send notify
+        b.notify("send", RpcParams::try_from(json!({"val": 11}))?)?;
+        assert_eq!(json!(11), rx.recv().await.unwrap());
+
 
         Ok(())
     }
