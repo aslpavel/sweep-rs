@@ -1,10 +1,15 @@
 use crate::{
+    rpc_async::{RpcError, RpcParams, RpcPeer},
     Candidate, Field, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker, RankerResult,
     ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use futures::channel::oneshot;
+use futures::{
+    FutureExt,
+    channel::oneshot,
+    future::{self, BoxFuture},
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -22,6 +27,10 @@ use surf_n_term::{
     Blend, Cell, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
+};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::mpsc,
 };
 
 pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
@@ -80,6 +89,7 @@ enum SweepRequest<H> {
     Bind(Vec<Key>, String),
     Terminate,
     Current(oneshot::Sender<Option<H>>),
+    PeerSet(mpsc::UnboundedSender<SweepEvent<H>>),
 }
 
 #[derive(Clone, Debug)]
@@ -234,6 +244,124 @@ where
 }
 
 impl Sweep<Candidate> {
+    pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        let peer = RpcPeer::new();
+
+        // haystack extend
+        peer.regesiter("haystack_extend", {
+            let sweep = self.clone();
+            move |candidates: Vec<Candidate>| {
+                sweep.haystack_extend(candidates);
+                future::ok(Value::Null)
+            }
+        });
+
+        // haystack clear
+        peer.regesiter("haystack_clear", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                sweep.haystack_clear();
+                future::ok(Value::Null)
+            }
+        });
+
+        // niddle set
+        peer.regesiter("niddle_set", {
+            let sweep = self.clone();
+            move |niddle: String| {
+                sweep.niddle_set(niddle);
+                future::ok(Value::Null)
+            }
+        });
+
+        // niddle get
+        peer.regesiter("niddle_get", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                let sweep = sweep.clone();
+                async move { Ok(sweep.niddle_get().await?) }
+            }
+        });
+
+        // terminate
+        peer.regesiter("terminate", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                sweep.send_request(SweepRequest::Terminate);
+                future::ok(Value::Null)
+            }
+        });
+
+        // key binding
+        peer.regesiter("key_binding", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let tag: String = params.take_by_name("tag")?;
+                    let key: String = params.take_by_name("key")?;
+                    let chord = Key::chord(key).map_err(Error::from)?;
+                    sweep.bind(chord, tag);
+                    Ok(Value::Null)
+                }
+            }
+        });
+
+        // prompt set
+        peer.regesiter("prompt_set", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                sweep.send_request(SweepRequest::Terminate);
+                future::ok(Value::Null)
+            }
+        });
+
+        // current
+        peer.regesiter("current", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                let sweep = sweep.clone();
+                async move {
+                    let current = sweep
+                        .current()
+                        .await?
+                        .and_then(|current| serde_json::to_value(current).ok())
+                        .unwrap_or(Value::Null);
+                    Ok(current)
+                }
+            }
+        });
+
+        // set as current peer
+        let (send, recv) = mpsc::unbounded_channel();
+        self.send_request(SweepRequest::PeerSet(send));
+
+        // handle events and serve
+        async move {
+            let serve = peer.serve(read, write);
+            let events = async move {
+                tokio::pin!(recv);
+                while let Some(event) = recv.recv().await {
+                    match event {
+                        SweepEvent::Bind(tag) => peer.notify_with_value("tag", tag)?,
+                        SweepEvent::Select(Some(candidate)) => peer.notify("select", candidate)?,
+                        SweepEvent::Select(None) => {}
+                    }
+                }
+                Ok(())
+            };
+            tokio::select! {
+                result = serve => result,
+                result = events => result,
+            }
+        }
+        .boxed()
+    }
+
     pub async fn process_request(&self, mut request: RPCRequest) -> Option<Value> {
         let params = request.params.take();
         let result = match request.method.as_ref() {
@@ -707,6 +835,7 @@ where
     }
 
     let mut state = SweepState::new(options.prompt.clone(), ranker, options.theme.clone());
+    let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
     let mut state_help: Option<SweepState<Candidate>> = None;
 
     // render loop
@@ -722,6 +851,9 @@ where
                 for request in requests.try_iter() {
                     use SweepRequest::*;
                     match request {
+                        PeerSet(peer) => {
+                            state_peer.replace(peer);
+                        }
                         NiddleSet(niddle) => state.input.set(niddle.as_ref()),
                         NiddleGet(resolve) => {
                             mem::drop(resolve.send(state.input.get().collect()));
@@ -782,7 +914,14 @@ where
                     },
                 };
                 match action {
-                    SweepKeyEvent::Event(event) => events.send(event)?,
+                    SweepKeyEvent::Event(event) => {
+                        if let Some(peer) = &state_peer {
+                            if let Err(_) = peer.send(event.clone()) {
+                                state_peer.take();
+                            }
+                        }
+                        events.send(event)?;
+                    }
                     SweepKeyEvent::Quit => return Ok(TerminalAction::Quit(())),
                     SweepKeyEvent::Nothing => {}
                     SweepKeyEvent::Help => {

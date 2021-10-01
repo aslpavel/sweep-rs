@@ -275,6 +275,15 @@ impl From<std::io::Error> for RpcError {
     }
 }
 
+impl From<anyhow::Error> for RpcError {
+    fn from(error: anyhow::Error) -> Self {
+        Self {
+            kind: RpcErrorKind::InternalError,
+            data: error.to_string(),
+        }
+    }
+}
+
 impl std::error::Error for RpcError {}
 
 impl Serialize for RpcId {
