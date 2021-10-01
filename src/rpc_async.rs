@@ -26,7 +26,7 @@ use tokio::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcRequest {
     pub method: String,
-    pub params: RpcParams,
+    pub params: Value,
     pub id: RpcId,
 }
 
@@ -548,7 +548,7 @@ impl<'de> Deserialize<'de> for RpcMessage {
             {
                 // request
                 let mut method: Option<String> = None;
-                let mut params = RpcParams::Null;
+                let mut params = Value::Null;
 
                 // response
                 let mut result: Option<Value> = None;
@@ -608,7 +608,7 @@ impl<'de> Deserialize<'de> for RpcMessage {
 }
 
 pub type RpcHandler =
-    Arc<dyn Fn(RpcParams) -> BoxFuture<'static, Result<Value, RpcError>> + Sync + Send>;
+    Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, RpcError>> + Sync + Send>;
 
 pub struct RpcPeerInner {
     handlers: HashMap<String, RpcHandler>,
@@ -642,11 +642,23 @@ impl RpcPeer {
             .with(move |inner| inner.handlers.insert(method.into(), handler))
     }
 
-    /// Send event t to the other peer
-    pub fn notify(
+    /// Send event to the other peer
+    ///
+    /// Serializes params to `serde_json::Value` and issues `call_with_value`
+    pub fn notify<V: Serialize>(
         &self,
         method: impl Into<String>,
-        params: impl Into<RpcParams>,
+        params: V,
+    ) -> Result<(), RpcError> {
+        let params = serde_json::to_value(params)?;
+        self.notify_with_value(method, params)
+    }
+
+    /// Send event to the other peer
+    pub fn notify_with_value(
+        &self,
+        method: impl Into<String>,
+        params: impl Into<Value>,
     ) -> Result<(), RpcError> {
         self.submit_message(RpcRequest {
             method: method.into(),
@@ -656,10 +668,22 @@ impl RpcPeer {
     }
 
     /// Issue rpc call and wait for response
-    pub async fn call(
+    ///
+    /// Serializes params to `serde_json::Value` and issues `call_with_value`
+    pub async fn call<V: Serialize>(
         &self,
         method: impl Into<String>,
-        params: impl Into<RpcParams>,
+        params: V,
+    ) -> Result<Value, RpcError> {
+        let params = serde_json::to_value(params)?;
+        self.call_with_value(method, params).await
+    }
+
+    /// Issue rpc call and wait for response
+    pub async fn call_with_value(
+        &self,
+        method: impl Into<String>,
+        params: impl Into<Value>,
     ) -> Result<Value, RpcError> {
         let (tx, rx) = oneshot::channel();
         let id = self.inner.with(|inner| {
@@ -899,7 +923,7 @@ mod tests {
         // request
         let mut request = RpcRequest {
             method: "func".to_owned(),
-            params: RpcParams::List(vec![3.141.into(), 127.into()]),
+            params: json!([3.141, 127]),
             id: RpcId::Int(1),
         };
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":[3.141,127],\"id\":1}";
@@ -909,9 +933,7 @@ mod tests {
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
         request.id = RpcId::Null;
-        let mut params = Map::new();
-        params.insert("key".to_owned(), "value".into());
-        request.params = RpcParams::Map(params);
+        request.params = json!({"key": "value"});
         let expected = "{\"jsonrpc\":\"2.0\",\"method\":\"func\",\"params\":{\"key\":\"value\"}} ";
         let value: Value = serde_json::from_str(expected)?;
         assert_eq!(request, serde_json::from_value(value)?);
@@ -921,7 +943,7 @@ mod tests {
         );
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
 
-        request.params = RpcParams::Null;
+        request.params = Value::Null;
         let expected = " {\"jsonrpc\":\"2.0\",\"method\":\"func\"}";
         let value: Value = serde_json::from_str(expected)?;
         assert_eq!(request, serde_json::from_value(value)?);
@@ -941,8 +963,9 @@ mod tests {
         );
         a.regesiter(
             "add",
-            Arc::new(|mut params| {
+            Arc::new(|params| {
                 async move {
+                    let mut params = RpcParams::try_from(params)?;
                     let a: i64 = params.take_by_name("a")?;
                     let b: i64 = params.take_by_name("b")?;
                     Ok((a + b).into())
@@ -953,15 +976,31 @@ mod tests {
         a.regesiter(
             "send",
             Arc::new({
-                move |mut params| {
+                move |params| {
                     let tx = tx.clone();
                     async move {
-                        let val: Value = params.take_by_name("val")?;
-                        tx.send(val.clone()).unwrap();
-                        Ok(val)
-                    }.boxed()
+                        tx.send(params.clone()).unwrap();
+                        Ok(params)
+                    }
+                    .boxed()
                 }
-            })
+            }),
+        );
+        #[derive(Serialize, Deserialize)]
+        struct ConcatParams {
+            a: String,
+            b: String,
+        }
+        a.regesiter(
+            "concat",
+            Arc::new(|params| {
+                async move {
+                    let mut params: ConcatParams = serde_json::from_value(params)?;
+                    params.a.extend(params.b.chars());
+                    Ok(params.a.into())
+                }
+                .boxed()
+            }),
         );
 
         let b = RpcPeer::new();
@@ -978,20 +1017,15 @@ mod tests {
         tokio::spawn(b.serve(read, write));
 
         // basic
-        let hello_result = b.call("hello", RpcParams::Null).await?;
+        let hello_result = b.call("hello", Value::Null).await?;
         assert_eq!(json!("a"), hello_result);
         let hello_result = a.call("hello", RpcParams::Null).await?;
         assert_eq!(json!("b"), hello_result);
 
         // add
-        let add_result = b
-            .call("add", RpcParams::try_from(json!({ "a": 1, "b": 2 }))?)
-            .await?;
+        let add_result = b.call("add", json!({ "a": 1, "b": 2 })).await?;
         assert_eq!(json!(3), add_result);
-        let add_error = b
-            .call("add", RpcParams::try_from(json!({ "a": 1 }))?)
-            .await
-            .unwrap_err();
+        let add_error = b.call("add", json!({ "a": 1 })).await.unwrap_err();
         assert_eq!(add_error.kind, RpcErrorKind::InvalidParams);
 
         // invalid method
@@ -999,14 +1033,27 @@ mod tests {
         assert_eq!(method_error.kind, RpcErrorKind::MethodNotFound);
 
         // send
-        let send_result = b.call("send", RpcParams::try_from(json!({"val": 127}))?).await?;
-        assert_eq!(json!(127), send_result);
-        assert_eq!(json!(127), rx.recv().await.unwrap());
+        let msg = json!({"val": 127});
+        let send_result = b.call("send", msg.clone()).await?;
+        assert_eq!(msg, send_result);
+        assert_eq!(msg, rx.recv().await.unwrap());
 
         // send notify
-        b.notify("send", RpcParams::try_from(json!({"val": 11}))?)?;
-        assert_eq!(json!(11), rx.recv().await.unwrap());
+        let msg = json!({"val": 11});
+        b.notify("send", msg.clone())?;
+        assert_eq!(msg, rx.recv().await.unwrap());
 
+        // concat
+        let concat_result = b
+            .call(
+                "concat",
+                ConcatParams {
+                    a: "one ".to_string(),
+                    b: "two".to_string(),
+                },
+            )
+            .await?;
+        assert_eq!(json!("one two"), concat_result);
 
         Ok(())
     }
