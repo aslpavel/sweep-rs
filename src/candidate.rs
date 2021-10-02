@@ -1,15 +1,17 @@
 use crate::{Field, Haystack};
 use anyhow::Error;
+use futures::Stream;
 use serde::{de, ser::SerializeMap, Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, Read},
     str::FromStr,
     sync::Arc,
 };
+use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 #[derive(Debug, PartialEq, Eq)]
 struct CandidateInner {
@@ -71,7 +73,50 @@ impl Candidate {
         Self::new(fields, None)
     }
 
-    pub fn load_from_reader<R, F>(
+    /// Load batched stream of candidates from `AsyncRead`
+    pub fn load<R>(
+        read: R,
+        delimiter: char,
+        field_selector: Option<FieldSelector>,
+    ) -> impl Stream<Item = Result<Vec<Candidate>, Error>>
+    where
+        R: AsyncRead + Unpin,
+    {
+        struct State<R> {
+            reader: tokio::io::BufReader<R>,
+            batch_size: usize,
+            delimiter: char,
+            field_selector: Option<FieldSelector>,
+        }
+        let init = State {
+            reader: tokio::io::BufReader::new(read),
+            batch_size: 10,
+            delimiter,
+            field_selector,
+        };
+        futures::stream::try_unfold(init, |mut state| async move {
+            let mut batch = Vec::with_capacity(state.batch_size);
+            loop {
+                let mut line = String::new();
+                let line_len = state.reader.read_line(&mut line).await?;
+                if line_len == 0 || batch.len() >= state.batch_size {
+                    break;
+                };
+                batch.push(Candidate::from_string(
+                    line,
+                    state.delimiter,
+                    state.field_selector.as_ref(),
+                ));
+            }
+            if batch.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some((batch, state)))
+            }
+        })
+    }
+
+    pub fn load_with_callback<R, F>(
         reader: R,
         delimiter: char,
         field_selector: Option<FieldSelector>,
@@ -82,7 +127,7 @@ impl Candidate {
     {
         let mut buf_size = 10;
         std::thread::spawn(move || {
-            let reader = BufReader::new(reader);
+            let reader = std::io::BufReader::new(reader);
             let mut lines = reader.lines();
             let mut buf = Vec::with_capacity(buf_size);
             while let Some(Ok(line)) = lines.next() {

@@ -79,7 +79,7 @@ async fn main() -> Result<(), Error> {
                 serde_json::from_reader(input).context("failed to parse input JSON")?;
             haystack_send.send(candidates)?;
         } else {
-            Candidate::load_from_reader(
+            Candidate::load_with_callback(
                 input,
                 args.field_delimiter,
                 args.field_selector.clone(),
