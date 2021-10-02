@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2018"
 name = "sweep"
-version = "0.4.0"
+version = "0.5.0"
 
 [lib]
 name = "sweep"
@@ -14,21 +14,21 @@ name = "sweep"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0"
-argh = "0.1"
-crossbeam-channel = "0.5"
-futures = "0.3"
-nix = "0.20"
-rayon = "1.5"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+anyhow = "^1.0"
+argh = "^0.1"
+crossbeam-channel = "^0.5"
+futures = "^0.3"
+nix = "^0.20"
+rayon = "^1.5"
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"
 tokio = { version = "1", features = ["full"] }
 
 surf_n_term = "^0.1.6"
 # surf_n_term = {path = "../surf-n-term"}
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "^0.3"
 
 [[bench]]
 harness = false
