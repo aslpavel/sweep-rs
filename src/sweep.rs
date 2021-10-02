@@ -1,6 +1,6 @@
 use crate::{
-    rpc_async::{RpcError, RpcParams, RpcPeer},
-    Candidate, Field, FuzzyScorer, Haystack, RPCErrorKind, RPCRequest, Ranker, RankerResult,
+    rpc::{RpcError, RpcParams, RpcPeer},
+    Candidate, Field, FuzzyScorer, Haystack, Ranker, RankerResult,
     ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
@@ -10,7 +10,6 @@ use futures::{
     future::{self, BoxFuture},
     FutureExt,
 };
-use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -361,114 +360,6 @@ impl Sweep<Candidate> {
             }
         }
         .boxed()
-    }
-
-    pub async fn process_request(&self, mut request: RPCRequest) -> Option<Value> {
-        let params = request.params.take();
-        let result = match request.method.as_ref() {
-            "haystack_extend" => {
-                let candidates: Vec<Candidate> = match serde_json::from_value(params) {
-                    Ok(items) => items,
-                    Err(error) => {
-                        let error = request.response_err(
-                            RPCErrorKind::InvalidParams,
-                            Some(format!("[haystack_extend] {}", error)),
-                        );
-                        return Some(error);
-                    }
-                };
-                self.haystack_extend(candidates);
-                Value::Null
-            }
-            "haystack_clear" => {
-                self.haystack_clear();
-                Value::Null
-            }
-            "niddle_set" => {
-                if let Value::String(niddle) = params {
-                    self.niddle_set(niddle);
-                    Value::Null
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[niddle_set] parameters must be a string"),
-                    );
-                    return Some(error);
-                }
-            }
-            "niddle_get" => match self.niddle_get().await {
-                Ok(niddle) => niddle.into(),
-                Err(error) => {
-                    let error =
-                        request.response_err(RPCErrorKind::InternalError, Some(error.to_string()));
-                    return Some(error);
-                }
-            },
-            "terminate" => {
-                self.send_request(SweepRequest::Terminate);
-                Value::Null
-            }
-            "key_binding" => {
-                #[derive(Deserialize)]
-                struct KeyBinding {
-                    key: String,
-                    tag: String,
-                }
-                let binding: KeyBinding = match serde_json::from_value(params) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        let error = request.response_err(
-                            RPCErrorKind::InvalidParams,
-                            Some(format!("[key_binding] {}", error)),
-                        );
-                        return Some(error);
-                    }
-                };
-                let key = match Key::chord(binding.key) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        let error = request.response_err(
-                            RPCErrorKind::InvalidParams,
-                            Some(format!(
-                                "[key_binding] failed to parse key attribute: {}",
-                                error
-                            )),
-                        );
-                        return Some(error);
-                    }
-                };
-                self.bind(key, binding.tag);
-                Value::Null
-            }
-            "prompt_set" => {
-                if let Value::String(prompt) = params {
-                    self.prompt_set(prompt);
-                    Value::Null
-                } else {
-                    let error = request.response_err(
-                        RPCErrorKind::InvalidParams,
-                        Some("[prompt_set] parameters must be a string"),
-                    );
-                    return Some(error);
-                }
-            }
-            "current" => match self.current().await {
-                Ok(current) => current
-                    .and_then(|current| serde_json::to_value(current).ok())
-                    .unwrap_or(Value::Null),
-                Err(error) => {
-                    let error =
-                        request.response_err(RPCErrorKind::InternalError, Some(error.to_string()));
-                    return Some(error);
-                }
-            },
-            method => {
-                let error_data = Some(format!("unknown method: {}", method));
-                let error = request.response_err(RPCErrorKind::MethodNotFound, error_data);
-                return Some(error);
-            }
-        };
-        request.response_ok(result)
     }
 }
 

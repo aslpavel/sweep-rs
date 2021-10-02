@@ -1,5 +1,5 @@
 #![deny(warnings)]
-#![allow(clippy::reversed_empty_ranges)]
+#![allow(clippy::type_complexity)]
 
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;

@@ -7,7 +7,6 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
-    io::{BufRead, Read},
     str::FromStr,
     sync::Arc,
 };
@@ -114,35 +113,6 @@ impl Candidate {
                 Ok(Some((batch, state)))
             }
         })
-    }
-
-    pub fn load_with_callback<R, F>(
-        reader: R,
-        delimiter: char,
-        field_selector: Option<FieldSelector>,
-        callback: F,
-    ) where
-        R: Read + Send + 'static,
-        F: Fn(Vec<Candidate>) + Send + 'static,
-    {
-        let mut buf_size = 10;
-        std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(reader);
-            let mut lines = reader.lines();
-            let mut buf = Vec::with_capacity(buf_size);
-            while let Some(Ok(line)) = lines.next() {
-                buf.push(Candidate::from_string(
-                    line,
-                    delimiter,
-                    field_selector.as_ref(),
-                ));
-                if buf.len() >= buf_size {
-                    buf_size *= 2;
-                    callback(std::mem::replace(&mut buf, Vec::with_capacity(buf_size)));
-                }
-            }
-            callback(buf);
-        });
     }
 }
 
