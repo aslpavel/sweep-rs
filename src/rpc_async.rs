@@ -753,6 +753,8 @@ impl RpcPeer {
     }
 
     /// Start serving rpc requests
+    ///
+    /// NOTE: make sure read/write are properly configured to be non-blocking
     pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -764,6 +766,7 @@ impl RpcPeer {
                 .inner
                 .with(|inner| inner.write_receiver.take())
                 .ok_or_else(|| RpcError::from(RpcErrorKind::ServeError))?;
+
             let writer = rpc_writer(write, write_receiver);
             let reader = rpc_reader(read).try_for_each(|message| peer.handle_message(message));
             tokio::pin!(reader, writer);
@@ -865,8 +868,8 @@ fn rpc_reader<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
 where
     R: AsyncRead + Unpin,
 {
-    struct State<I> {
-        reader: BufReader<I>,
+    struct State<R> {
+        reader: BufReader<R>,
         size_buf: String,
         message_buf: Vec<u8>,
     }
@@ -1001,7 +1004,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_prc_peer() -> Result<(), RpcError> {
+    async fn test_rpc_peer_duplex() -> Result<(), RpcError> {
+        test_rpc_peer(tokio::io::duplex(16)).await
+    }
+
+    #[tokio::test]
+    async fn test_rpc_peer_socket() -> Result<(), RpcError> {
+        test_rpc_peer(tokio::net::UnixStream::pair()?).await
+    }
+
+    async fn test_rpc_peer<C>((a_channel, b_channel): (C, C)) -> Result<(), RpcError>
+    where
+        C: AsyncRead + AsyncWrite + Send + 'static,
+    {
         let a = RpcPeer::new();
         let (tx, mut rx) = mpsc::unbounded_channel();
         a.regesiter_handler(
@@ -1036,11 +1051,10 @@ mod tests {
             Arc::new(|_params| async { Ok("b".into()) }.boxed()),
         );
 
-        // connect and serve
-        let (a_stream, b_stream) = tokio::io::duplex(4096);
-        let (read, write) = tokio::io::split(a_stream);
+        // serve
+        let (read, write) = tokio::io::split(a_channel);
         tokio::spawn(a.serve(read, write));
-        let (read, write) = tokio::io::split(b_stream);
+        let (read, write) = tokio::io::split(b_channel);
         tokio::spawn(b.serve(read, write));
 
         // basic

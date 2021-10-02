@@ -82,6 +82,7 @@ where
     Ok(None)
 }
 
+#[derive(Debug)]
 enum SweepRequest<H> {
     NiddleSet(String),
     NiddleGet(oneshot::Sender<String>),
@@ -198,7 +199,7 @@ where
 pub struct SweepInner<H: Haystack> {
     ranker: Ranker<H>,
     waker: TerminalWaker,
-    worker: Option<JoinHandle<Result<(), Error>>>,
+    ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
     events: Receiver<SweepEvent<H>>,
 }
@@ -221,7 +222,7 @@ impl<H: Haystack> SweepInner<H> {
         Ok(SweepInner {
             ranker,
             waker,
-            worker: Some(worker),
+            ui_worker: Some(worker),
             requests: requests_send,
             events: events_recv,
         })
@@ -235,9 +236,9 @@ where
     fn drop(&mut self) {
         self.requests.send(SweepRequest::Terminate).unwrap_or(());
         self.waker.wake().unwrap_or(());
-        if let Some(handle) = self.worker.take() {
+        if let Some(handle) = self.ui_worker.take() {
             if let Err(error) = handle.join() {
-                eprintln!("sweep worker thread fail:\r\n{:?}", error);
+                eprintln!("sweep ui worker thread failed:\r\n{:?}", error);
             }
         }
     }
@@ -314,8 +315,8 @@ impl Sweep<Candidate> {
         // prompt set
         peer.regesiter("prompt_set", {
             let sweep = self.clone();
-            move |_params: Value| {
-                sweep.send_request(SweepRequest::Terminate);
+            move |prompt: String| {
+                sweep.prompt_set(prompt);
                 future::ok(Value::Null)
             }
         });
@@ -347,7 +348,7 @@ impl Sweep<Candidate> {
                 tokio::pin!(recv);
                 while let Some(event) = recv.recv().await {
                     match event {
-                        SweepEvent::Bind(tag) => peer.notify_with_value("tag", tag)?,
+                        SweepEvent::Bind(tag) => peer.notify_with_value("bind", tag)?,
                         SweepEvent::Select(Some(candidate)) => peer.notify("select", candidate)?,
                         SweepEvent::Select(None) => {}
                     }

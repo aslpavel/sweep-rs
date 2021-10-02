@@ -3,18 +3,19 @@
 
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
-use crossbeam_channel::select;
+use futures::TryStreamExt;
 use std::{
-    io::{Read, Write},
-    os::unix::{io::FromRawFd, net::UnixStream},
+    os::unix::{io::FromRawFd, net::UnixStream as StdUnixStream},
+    pin::Pin,
     str::FromStr,
     sync::Arc,
 };
 use surf_n_term::widgets::Theme;
 use sweep::{
-    rpc_call, rpc_decode, rpc_encode, Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder,
-    SubstrScorer, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG,
+    Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder, SubstrScorer, Sweep, SweepEvent,
+    SweepOptions, SCORER_NEXT_TAG,
 };
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -29,7 +30,10 @@ async fn main() -> Result<(), Error> {
         return Ok(());
     }
 
-    let (input, mut output): (Box<dyn Read + Send>, Box<dyn Write + Send>) = match args.io_socket {
+    let (mut input, mut output): (
+        Pin<Box<dyn AsyncRead + Send>>,
+        Pin<Box<dyn AsyncWrite + Send>>,
+    ) = match args.io_socket {
         None => {
             // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
             // from asyncio python interface, sweep subprocess is created with
@@ -45,17 +49,19 @@ async fn main() -> Result<(), Error> {
                     return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
                 }
             }
-            (Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+            (Box::pin(tokio::io::stdin()), Box::pin(tokio::io::stdout()))
         }
         Some(ref address) => {
-            let input = match address.parse() {
-                Ok(fd) => unsafe { UnixStream::from_raw_fd(fd) },
+            let stream = match address.parse() {
+                Ok(fd) => unsafe { StdUnixStream::from_raw_fd(fd) },
                 Err(_) => {
-                    UnixStream::connect(&address).context("failed to connnect to io-socket")?
+                    StdUnixStream::connect(&address).context("failed to connnect to io-socket")?
                 }
             };
-            let output = input.try_clone().context("failed to duplicate io-socket")?;
-            (Box::new(input), Box::new(output))
+            stream.set_nonblocking(true)?;
+            let stream = tokio::net::UnixStream::from_std(stream)?;
+            let (input, output) = tokio::io::split(stream);
+            (Box::pin(input), Box::pin(output))
         }
     };
 
@@ -71,22 +77,30 @@ async fn main() -> Result<(), Error> {
         debug: args.debug,
     })?;
     sweep.niddle_set(args.query.clone());
-    if !args.rpc {
+
+    if args.rpc {
+        sweep.serve(input, output).await?;
+    } else {
+        // TODO: create load future and wait for it
         if args.json {
+            let mut data: Vec<u8> = Vec::new();
+            tokio::io::copy(&mut input, &mut data).await?;
             let candidates: Vec<Candidate> =
-                serde_json::from_reader(input).context("failed to parse input JSON")?;
+                serde_json::from_slice(data.as_ref()).context("failed to parse input JSON")?;
             sweep.haystack_extend(candidates);
         } else {
-            Candidate::load_with_callback(
-                input,
-                args.field_delimiter,
-                args.field_selector.clone(),
-                {
-                    let sweep = sweep.clone();
-                    move |haystack| sweep.haystack_extend(haystack)
-                },
-            );
-        }
+            let sweep = sweep.clone();
+            let field_dilimiter = args.field_delimiter;
+            let field_selector = args.field_selector.clone();
+            tokio::spawn(async move {
+                let candidates = Candidate::from_lines(input, field_dilimiter, field_selector);
+                tokio::pin!(candidates);
+                while let Some(candidates) = candidates.try_next().await? {
+                    sweep.haystack_extend(candidates);
+                }
+                Ok::<_, Error>(())
+            });
+        };
         let events = sweep.events();
         while let Ok(event) = events.recv() {
             match event {
@@ -96,74 +110,17 @@ async fn main() -> Result<(), Error> {
                     }
                     let input = sweep.niddle_get().await?;
                     std::mem::drop(sweep); // cleanup terminal
-                    if args.json {
-                        let result = result
-                            .and_then(|candidate| serde_json::to_value(candidate).ok())
-                            .unwrap_or_else(|| input.into());
-                        serde_json::to_writer(output, &result)?;
-                    } else {
-                        writeln!(
-                            output,
-                            "{}",
-                            result.map_or_else(|| input, |value| value.to_string())
-                        )?;
-                    }
+                    let result = match result {
+                        Some(candidate) if args.json => serde_json::to_string(&candidate)?,
+                        Some(candidate) => candidate.to_string(),
+                        None => input,
+                    };
+                    output.write_all(result.as_bytes()).await?;
                     break;
                 }
                 SweepEvent::Bind(tag) => {
                     if tag == SCORER_NEXT_TAG {
                         sweep.scorer_set(args.scorer.toggle());
-                    }
-                }
-            }
-        }
-    } else {
-        let rpc = rpc_decode(input, || true);
-        let events = sweep.events();
-        loop {
-            select! {
-                recv(rpc) -> request => {
-                    let request = match request {
-                        Ok(request) => request,
-                        Err(_) => {
-                            // RPC socket was closed
-                            break
-                        }
-                    };
-                    let request = match request {
-                        Ok(request) => request,
-                        Err(error) => {
-                            rpc_encode(&mut output, error.into())?;
-                            continue
-                        }
-                    };
-                    let response = sweep.process_request(request).await;
-                    if let Some(response) = response {
-                        rpc_encode(&mut output, response)?;
-                    }
-                }
-                recv(events) -> event => {
-                    match event {
-                        Ok(SweepEvent::Select(candidate)) => {
-                            match candidate {
-                                Some(candidate) => {
-                                    rpc_call(&mut output, "select", serde_json::to_value(candidate)?)?;
-                                }
-                                None => {
-                                    if args.no_match_use_input {
-                                        rpc_call(&mut output, "select", sweep.niddle_get().await?)?;
-                                    }
-                                }
-                            }
-                        }
-                        Ok(SweepEvent::Bind(tag)) => {
-                            if tag == SCORER_NEXT_TAG {
-                                sweep.scorer_set(args.scorer.toggle());
-                            } else {
-                                rpc_call(&mut output, "bind", tag)?;
-                            }
-                        }
-                        Err(_) => break,
                     }
                 }
             }
