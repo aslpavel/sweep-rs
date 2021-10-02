@@ -6,7 +6,7 @@ pub use scorer::{
     Field, FuzzyScorer, Haystack, KMPPattern, ScoreResult, Scorer, StringHaystack, SubstrScorer,
 };
 mod rank;
-pub use rank::{Ranker, RankerResult, ScorerBuilder};
+pub use rank::{fuzzy_scorer, substr_scorer, Ranker, RankerResult, ScorerBuilder};
 mod candidate;
 pub use candidate::{Candidate, FieldSelector};
 mod sweep;

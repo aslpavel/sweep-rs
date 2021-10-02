@@ -1,4 +1,4 @@
-use crate::{FuzzyScorer, Haystack, LockExt, ScoreResult, Scorer};
+use crate::{FuzzyScorer, SubstrScorer, Haystack, LockExt, ScoreResult, Scorer};
 use crossbeam_channel::{unbounded, Sender};
 use rayon::prelude::*;
 use std::{
@@ -37,6 +37,22 @@ where
 
 /// Funciton to create scorer with the given niddle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
+
+/// Create case-insensetive fuzzy scorer builder
+pub fn fuzzy_scorer() -> ScorerBuilder {
+    Arc::new(|niddle: &str| {
+        let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
+        Arc::new(FuzzyScorer::new(niddle))
+    })
+}
+
+/// Create case-insensetive substr scorer builder
+pub fn substr_scorer() -> ScorerBuilder {
+    Arc::new(|niddle: &str| {
+        let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
+        Arc::new(SubstrScorer::new(niddle))
+    })
+}
 
 enum RankerCmd<H> {
     HaystackClear,

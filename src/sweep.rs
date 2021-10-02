@@ -1,7 +1,7 @@
 use crate::{
+    fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
-    Candidate, Field, FuzzyScorer, Haystack, Ranker, RankerResult,
-    ScoreResult, ScorerBuilder,
+    substr_scorer, Candidate, Field, Haystack, Ranker, RankerResult, ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -12,7 +12,7 @@ use futures::{
 };
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Write as _,
     io::Write,
     mem,
@@ -35,19 +35,22 @@ use tokio::{
 pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 pub struct SweepOptions {
-    pub height: usize,
-    pub prompt: String,
-    pub theme: Theme,
-    pub keep_order: bool,
-    pub tty_path: String,
-    pub title: String,
-    pub scorer_builder: ScorerBuilder,
     pub altscreen: bool,
     pub debug: bool,
+    pub height: usize,
+    pub keep_order: bool,
+    pub prompt: String,
+    pub scorers: VecDeque<ScorerBuilder>,
+    pub theme: Theme,
+    pub title: String,
+    pub tty_path: String,
 }
 
 impl Default for SweepOptions {
     fn default() -> Self {
+        let mut scorers = VecDeque::new();
+        scorers.push_back(fuzzy_scorer());
+        scorers.push_back(substr_scorer());
         Self {
             height: 11,
             prompt: "INPUT".to_string(),
@@ -55,10 +58,7 @@ impl Default for SweepOptions {
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
             title: "sweep".to_string(),
-            scorer_builder: Arc::new(|niddle: &str| {
-                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-                Arc::new(FuzzyScorer::new(niddle))
-            }),
+            scorers,
             altscreen: false,
             debug: false,
         }
@@ -90,6 +90,7 @@ enum SweepRequest<H> {
     Terminate,
     Current(oneshot::Sender<Option<H>>),
     PeerSet(mpsc::UnboundedSender<SweepEvent<H>>),
+    ScorerByName(Option<String>, oneshot::Sender<bool>),
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +168,16 @@ where
         self.ranker.scorer_set(scorer)
     }
 
+    /// Swith to next scorer
+    pub async fn scorer_by_name(&self, name: Option<String>) -> Result<(), Error> {
+        let (send, recv) = oneshot::channel();
+        self.send_request(SweepRequest::ScorerByName(name.clone(), send));
+        if !recv.await? {
+            return Err(anyhow::anyhow!("unkown scorer type: {:?}", name));
+        }
+        Ok(())
+    }
+
     /// Set prompt
     pub fn prompt_set(&self, prompt: String) {
         self.send_request(SweepRequest::PromptSet(prompt))
@@ -204,13 +215,17 @@ pub struct SweepInner<H: Haystack> {
 }
 
 impl<H: Haystack> SweepInner<H> {
-    pub fn new(options: SweepOptions) -> Result<Self, Error> {
+    pub fn new(mut options: SweepOptions) -> Result<Self, Error> {
+        if options.scorers.is_empty() {
+            options.scorers.push_back(fuzzy_scorer());
+            options.scorers.push_back(substr_scorer());
+        }
         let (requests_send, requests_recv) = unbounded();
         let (events_send, events_recv) = unbounded();
         let term = SystemTerminal::open(&options.tty_path)
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
-        let ranker = Ranker::new(options.scorer_builder.clone(), options.keep_order, {
+        let ranker = Ranker::new(options.scorers[0].clone(), options.keep_order, {
             let waker = waker.clone();
             move || waker.wake().is_ok()
         });
@@ -341,12 +356,16 @@ impl Sweep<Candidate> {
         self.send_request(SweepRequest::PeerSet(send));
 
         // handle events and serve
+        let sweep = self.clone();
         async move {
             let serve = peer.serve(read, write);
             let events = async move {
                 tokio::pin!(recv);
                 while let Some(event) = recv.recv().await {
                     match event {
+                        SweepEvent::Bind(tag) if tag == SCORER_NEXT_TAG => {
+                            sweep.scorer_by_name(None).await?;
+                        }
                         SweepEvent::Bind(tag) => peer.notify_with_value("bind", tag)?,
                         SweepEvent::Select(Some(candidate)) => peer.notify("select", candidate)?,
                         SweepEvent::Select(None) => {}
@@ -668,21 +687,14 @@ where
                 )
             })
             .collect();
-        let ranker = Ranker::new(
-            Arc::new(|niddle: &str| {
-                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-                Arc::new(FuzzyScorer::new(niddle))
-            }),
-            false,
-            move || term_waker.wake().is_ok(),
-        );
+        let ranker = Ranker::new(fuzzy_scorer(), false, move || term_waker.wake().is_ok());
         ranker.haystack_extend(candidates);
         SweepState::new("BINDINGS".to_owned(), ranker, self.theme.clone())
     }
 }
 
 fn sweep_ui_worker<H>(
-    options: SweepOptions,
+    mut options: SweepOptions,
     mut term: SystemTerminal,
     ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
@@ -775,6 +787,30 @@ where
                                 .current()
                                 .map(|candidate| candidate.result.haystack);
                             mem::drop(resolve.send(current));
+                        }
+                        ScorerByName(None, resolve) => {
+                            options.scorers.rotate_left(1);
+                            state.ranker.scorer_set(options.scorers[0].clone());
+                            let _ = resolve.send(true);
+                        }
+                        ScorerByName(Some(name), resolve) => {
+                            // find index of the scorer by its name
+                            let index = options.scorers.iter().enumerate().find_map(|(i, s)| {
+                                if s("").name() == name {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
+                            });
+                            let success = match index {
+                                None => false,
+                                Some(index) => {
+                                    options.scorers.swap(0, index);
+                                    state.ranker.scorer_set(options.scorers[0].clone());
+                                    true
+                                }
+                            };
+                            let _ = resolve.send(success);
                         }
                     }
                 }

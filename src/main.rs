@@ -5,21 +5,17 @@ use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
 use std::{
+    collections::VecDeque,
     os::unix::{io::FromRawFd, net::UnixStream as StdUnixStream},
     pin::Pin,
-    str::FromStr,
-    sync::Arc,
 };
 use surf_n_term::widgets::Theme;
-use sweep::{
-    Candidate, FieldSelector, FuzzyScorer, Scorer, ScorerBuilder, SubstrScorer, Sweep, SweepEvent,
-    SweepOptions, SCORER_NEXT_TAG,
-};
+use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let mut args: Args = argh::from_env();
+    let args: Args = argh::from_env();
 
     if args.version {
         println!(
@@ -72,11 +68,12 @@ async fn main() -> Result<(), Error> {
         keep_order: args.keep_order,
         tty_path: args.tty_path.clone(),
         title: args.title.clone(),
-        scorer_builder: args.scorer.toggle(),
+        scorers: VecDeque::new(),
         altscreen: args.altscreen,
         debug: args.debug,
     })?;
     sweep.niddle_set(args.query.clone());
+    sweep.scorer_by_name(Some(args.scorer)).await?;
 
     if args.rpc {
         sweep.serve(input, output).await?;
@@ -120,7 +117,7 @@ async fn main() -> Result<(), Error> {
                 }
                 SweepEvent::Bind(tag) => {
                     if tag == SCORER_NEXT_TAG {
-                        sweep.scorer_set(args.scorer.toggle());
+                        sweep.scorer_by_name(None).await?;
                     }
                 }
             }
@@ -128,62 +125,6 @@ async fn main() -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-#[derive(Clone)]
-pub struct ScorerSelector {
-    scorers: Vec<ScorerBuilder>,
-    index: usize,
-}
-
-impl Default for ScorerSelector {
-    fn default() -> Self {
-        Self::new(vec![
-            Arc::new(|niddle: &str| {
-                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-                Arc::new(FuzzyScorer::new(niddle))
-            }),
-            Arc::new(|niddle: &str| {
-                let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-                Arc::new(SubstrScorer::new(niddle))
-            }),
-        ])
-    }
-}
-
-impl ScorerSelector {
-    pub fn new(scorers: Vec<ScorerBuilder>) -> Self {
-        if scorers.is_empty() {
-            Default::default()
-        } else {
-            Self { scorers, index: 0 }
-        }
-    }
-
-    pub fn name(&self) -> String {
-        self.scorers[self.index]("").name().to_string()
-    }
-
-    pub fn toggle(&mut self) -> ScorerBuilder {
-        let scorer = self.scorers[self.index].clone();
-        self.index = (self.index + 1) % self.scorers.len();
-        scorer
-    }
-}
-
-impl FromStr for ScorerSelector {
-    type Err = Error;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        let this = Self::default();
-        let index = this
-            .scorers
-            .iter()
-            .enumerate()
-            .find_map(|(i, s)| if s("").name() == name { Some(i) } else { None })
-            .ok_or_else(|| anyhow!("Unknown scorer: {}", name))?;
-        Ok(Self { index, ..this })
-    }
 }
 
 /// Sweep is a command line fuzzy finder
@@ -218,8 +159,8 @@ pub struct Args {
     pub keep_order: bool,
 
     /// default scorer to rank candidates
-    #[argh(option, default = "ScorerSelector::default()")]
-    pub scorer: ScorerSelector,
+    #[argh(option, from_str_fn(scorer_arg), default = "\"fuzzy\".to_string()")]
+    pub scorer: String,
 
     /// enable debugging output
     #[argh(switch)]
@@ -268,5 +209,13 @@ fn parse_no_input(value: &str) -> Result<bool, String> {
         "nothing" => Ok(false),
         "input" => Ok(true),
         _ => Err("invalid no-match achtion, possible values {nothing|input}".to_string()),
+    }
+}
+
+fn scorer_arg(name: &str) -> Result<String, String> {
+    match name {
+        "substr" => Ok(name.to_string()),
+        "fuzzy" => Ok(name.to_string()),
+        _ => Err(format!("unknown scorer type: {}", name)),
     }
 }
