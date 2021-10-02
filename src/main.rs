@@ -3,7 +3,7 @@
 
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
-use crossbeam_channel::{never, select, unbounded};
+use crossbeam_channel::select;
 use std::{
     io::{Read, Write},
     os::unix::{io::FromRawFd, net::UnixStream},
@@ -71,57 +71,48 @@ async fn main() -> Result<(), Error> {
         debug: args.debug,
     })?;
     sweep.niddle_set(args.query.clone());
-
     if !args.rpc {
-        let (haystack_send, haystack_recv) = unbounded();
         if args.json {
-            let candidates =
+            let candidates: Vec<Candidate> =
                 serde_json::from_reader(input).context("failed to parse input JSON")?;
-            haystack_send.send(candidates)?;
+            sweep.haystack_extend(candidates);
         } else {
             Candidate::load_with_callback(
                 input,
                 args.field_delimiter,
                 args.field_selector.clone(),
-                move |haystack| {
-                    let _ = haystack_send.send(haystack);
+                {
+                    let sweep = sweep.clone();
+                    move |haystack| sweep.haystack_extend(haystack)
                 },
             );
         }
         let events = sweep.events();
-        let mut haystack_recv = Some(&haystack_recv);
-        loop {
-            select! {
-                recv(haystack_recv.unwrap_or(&never())) -> haystack => {
-                    match haystack {
-                        Ok(haystack) => sweep.haystack_extend(haystack),
-                        Err(_) => {
-                            haystack_recv.take();
-                        }
+        while let Ok(event) = events.recv() {
+            match event {
+                SweepEvent::Select(result) => {
+                    if result.is_none() && !args.no_match_use_input {
+                        continue;
                     }
+                    let input = sweep.niddle_get().await?;
+                    std::mem::drop(sweep); // cleanup terminal
+                    if args.json {
+                        let result = result
+                            .and_then(|candidate| serde_json::to_value(candidate).ok())
+                            .unwrap_or_else(|| input.into());
+                        serde_json::to_writer(output, &result)?;
+                    } else {
+                        writeln!(
+                            output,
+                            "{}",
+                            result.map_or_else(|| input, |value| value.to_string())
+                        )?;
+                    }
+                    break;
                 }
-                recv(events) -> event => {
-                    match event {
-                        Ok(SweepEvent::Select(result)) => {
-                            if result.is_none() && !args.no_match_use_input {
-                                continue
-                            }
-                            let input = sweep.niddle_get().await?;
-                            std::mem::drop(sweep); // cleanup terminal
-                            if args.json {
-                                let result = result
-                                    .and_then(|candidate| serde_json::to_value(candidate).ok())
-                                    .unwrap_or_else(|| input.into());
-                                serde_json::to_writer(output, &result)?;
-                            } else {
-                                writeln!(output, "{}", result.map_or_else(|| input, |value| value.to_string()))?;
-                            }
-                            break;
-                        }
-                        Ok(SweepEvent::Bind(tag)) => if tag == SCORER_NEXT_TAG {
-                            sweep.scorer_set(args.scorer.toggle());
-                        },
-                        Err(_) => break,
+                SweepEvent::Bind(tag) => {
+                    if tag == SCORER_NEXT_TAG {
+                        sweep.scorer_set(args.scorer.toggle());
                     }
                 }
             }

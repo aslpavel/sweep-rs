@@ -212,7 +212,7 @@ class FileNode:
                 queue.append((item, depth + 1))
 
                 count += 1
-                yield {"entry": f"{path_relative}{tag}", "path": path_relative}
+                yield {"entry": [f"{path_relative}{tag}"], "path": path_relative}
 
             if count >= limit:
                 max_depth = depth
@@ -276,7 +276,7 @@ class PathSelector:
         # create candidates
         cwd = str(Path.cwd())
         candidates: List[Candidate] = [
-            dict(entry=f"{' ' * count_align}{cwd}", path=cwd)
+            dict(entry=[f"{' ' * count_align}{cwd}"], path=cwd)
         ]
         for count, _, path in items:
             path = str(path)

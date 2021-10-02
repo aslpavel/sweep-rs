@@ -73,8 +73,8 @@ impl Candidate {
         Self::new(fields, None)
     }
 
-    /// Load batched stream of candidates from `AsyncRead`
-    pub fn load<R>(
+    /// Read batched stream of candidates from `AsyncRead`
+    pub fn from_lines<R>(
         read: R,
         delimiter: char,
         field_selector: Option<FieldSelector>,
@@ -160,12 +160,17 @@ impl Serialize for Candidate {
     where
         S: serde::Serializer,
     {
-        let mut map = serializer.serialize_map(Some(1 + self.inner.extra.len()))?;
-        map.serialize_entry("entry", &self.inner.fields)?;
-        for (key, value) in self.inner.extra.iter() {
-            map.serialize_entry(key, value)?;
+        let inner = &self.inner;
+        if inner.extra.is_empty() && inner.fields.len() == 1 && inner.fields[0].active {
+            self.to_string().serialize(serializer)
+        } else {
+            let mut map = serializer.serialize_map(Some(1 + inner.extra.len()))?;
+            map.serialize_entry("entry", &inner.fields)?;
+            for (key, value) in inner.extra.iter() {
+                map.serialize_entry(key, value)?;
+            }
+            map.end()
         }
-        map.end()
     }
 }
 
@@ -457,10 +462,9 @@ mod tests {
         assert_eq!(candidate, serde_json::from_str(value_string.as_str())?);
         assert_eq!(candidate, serde_json::from_value(value)?);
 
-        assert_eq!(
-            Candidate::new(vec!["four".into()], None),
-            serde_json::from_str("\"four\"")?,
-        );
+        let candidate = Candidate::new(vec!["four".into()], None);
+        assert_eq!(candidate, serde_json::from_str("\"four\"")?);
+        assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 
         // I'm not sure if we want this at all
         // assert_eq!(

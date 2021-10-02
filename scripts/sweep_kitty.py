@@ -43,6 +43,7 @@ async def main():
         "--keep-order",
         help="keep order of elements (do not use ranking score)",
     )
+    parser.add_argument("--sweep", default="sweep", help="sweep binary")
     args = parser.parse_args()
 
     if args.json:
@@ -54,7 +55,7 @@ async def main():
 
     result = await sweep(
         candidates,
-        sweep=["kitty", "--title", "sweep-menu", "sweep"],
+        sweep=["kitty", "--title", "sweep-menu", args.sweep],
         prompt=args.prompt,
         nth=args.nth,
         height=1024,
