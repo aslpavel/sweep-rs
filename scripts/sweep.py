@@ -538,17 +538,18 @@ class RpcPeer:
         "_write_queue",
         "_write_notify",
         "_is_terminated",
-        "_is_started",
         "_serve_task",
+        "_events",
     ]
-    _handlers: Dict[str, RpcHandler]
-    _requests: Dict[RpcId, "Future[Any]"]
-    _requests_next_id: int
-    _write_queue: Deque[RpcMessage]
-    _write_notify: "Event[None]"
-    _is_terminated: bool
-    _is_started: bool
-    _serve_task: Optional["Future[Any]"]
+
+    _handlers: Dict[str, RpcHandler]  # registred handlers
+    _requests: Dict[RpcId, "Future[Any]"]  # unanswerd requests
+    _requests_next_id: int  # index used for next request
+    _write_queue: Deque[RpcMessage]  # messages to be send to the other peer
+    _write_notify: "Event[None]"  # event used to wake up writer
+    _is_terminated: bool  # whether peer was terminated
+    _serve_task: Optional["Future[Any]"]  # running serve task
+    _events: "Event[RpcRequest]"  # received events (requests with id = None)
 
     def __init__(self) -> None:
         self._handlers = {}
@@ -558,18 +559,43 @@ class RpcPeer:
         self._write_notify = Event()
         self._is_terminated = False
         self._serve_task = None
+        self._events = Event()
+
+    @property
+    def events(self) -> "Event[RpcRequest]":
+        """Received events (requests with id = None)"""
+        if self._is_terminated:
+            raise RuntimeError("peer has already been terminated")
+        return self._events
 
     def register(self, method: str, handler: RpcHandler) -> RpcHandler:
         """Register handler for the provided method name"""
+        if self._is_terminated:
+            raise RuntimeError("peer has already been terminated")
+
         self._handlers[method] = handler
         return handler
 
-    def notify(self, method: str, params: Any) -> None:
+    def notify(self, method: str, *args: Any, **kwargs: Any) -> None:
         """Send event to the other peer"""
+        if self._is_terminated:
+            raise RuntimeError("peer has already been terminated")
+
+        params: RpcParams = None
+        if args and kwargs:
+            raise RpcError.invalid_params(data="cannot mix args and kwargs")
+        elif args:
+            params = list(args)
+        elif kwargs:
+            params = kwargs
+
         self._submit_message(RpcRequest(method, params, None))
 
     async def call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Call remote method"""
+        if self._is_terminated:
+            raise RuntimeError("peer has already been terminated")
+
         future: Future[Any] = asyncio.get_running_loop().create_future()
         id = self._requests_next_id
         self._requests_next_id += 1
@@ -587,17 +613,19 @@ class RpcPeer:
         return await future
 
     def __getattr__(self, method: str) -> Callable[..., Any]:
+        """Conviniet way to call remote methods"""
         return partial(self.call, method)
 
     def terminate(self) -> None:
         if self._is_terminated:
             return
         self._is_terminated = True
-        # cancel reqeusts
+        # cancel reqeusts and events
         requests = self._requests.copy()
         self._requests.clear()
         for request in requests.values():
             request.cancel("rpc peer has terminated")
+        self._events.cancel()
         # cancel serve future
         if self._serve_task is not None:
             self._serve_task.cancel("rpc peer has terminated")
@@ -611,14 +639,24 @@ class RpcPeer:
 
         try:
             self._serve_task = asyncio.gather(
-                self._reader_coro(reader),
-                self._writer_coro(writer),
+                self._reader(reader),
+                self._writer(writer),
             )
             await self._serve_task
         except (CancelledError, ConnectionResetError):
             pass
         finally:
             self.terminate()
+
+    def __aiter__(self) -> AsyncIterator[RpcRequest]:
+        """Asynchronus iterator of events (requests with id = None)"""
+        return self
+
+    async def __anext__(self) -> RpcRequest:
+        if self._is_terminated is None:
+            raise StopAsyncIteration
+        event = await self._events
+        return event
 
     def _submit_message(self, message: RpcMessage) -> None:
         """Sumbit message for sending to the other peer"""
@@ -628,6 +666,8 @@ class RpcPeer:
     def _handle_message(self, message: RpcMessage) -> None:
         """Handle incomming messages"""
         if isinstance(message, RpcRequest):
+            if message.id is None:
+                self._events(message)
             handler = self._handlers.get(message.method)
             if handler is not None:
                 asyncio.create_task(
@@ -668,14 +708,17 @@ class RpcPeer:
                 result = await result
             response = RpcResult(result, id)
         except TypeError as error:
-            response = RpcError.invalid_params(id=id, data=f"[{request.method}] {error}")
+            response = RpcError.invalid_params(
+                id=id,
+                data=f"[{request.method}] {error}",
+            )
         except Exception:
             response = RpcError.current(id=id, data=f"[{request.method}]")
 
         if request.id is not None:
             self._submit_message(response)
 
-    async def _writer_coro(self, writer: StreamWriter) -> None:
+    async def _writer(self, writer: StreamWriter) -> None:
         """Write subitted messages to the output stream"""
         while not self._is_terminated:
             if not self._write_queue:
@@ -686,7 +729,7 @@ class RpcPeer:
             writer.write(data)
             await writer.drain()
 
-    async def _reader_coro(self, reader: StreamReader) -> None:
+    async def _reader(self, reader: StreamReader) -> None:
         """Read and handle incomming messages"""
         while not self._is_terminated:
             # read json
@@ -723,18 +766,33 @@ E = TypeVar("E")
 
 
 class Event(Generic[E]):
-    __slots__ = ["_handlers"]
+    __slots__ = ["_handlers", "_futures"]
 
     def __init__(self) -> None:
         self._handlers: Set[Callable[[E], bool]] = set()
+        self._futures: Set[Future[E]] = set()
 
     def __call__(self, event: E) -> None:
         """Raise new event"""
         handlers = self._handlers.copy()
         self._handlers.clear()
         for handler in handlers:
-            if handler(event):
-                self._handlers.add(handler)
+            try:
+                if handler(event):
+                    self._handlers.add(handler)
+            except Exception:
+                pass
+        futures = self._futures.copy()
+        self._futures.clear()
+        for future in futures:
+            future.set_result(event)
+
+    def cancel(self):
+        """Canel all waiting futures"""
+        futures = self._futures.copy()
+        self._futures.clear()
+        for future in futures:
+            future.cancel()
 
     def on(self, handler: Callable[[E], bool]) -> None:
         """Register event handler
@@ -745,14 +803,12 @@ class Event(Generic[E]):
 
     def __await__(self) -> Generator[Any, None, E]:
         """Await for next event"""
-
-        def handler(event: E) -> bool:
-            future.set_result(event)
-            return False
-
         future: Future[E] = asyncio.get_running_loop().create_future()
-        self.on(handler)
+        self._futures.add(future)
         return future.__await__()
+
+    def __repr__(self) -> str:
+        return f"Events(handlers={len(self._handlers)}, futures={len(self._futures)})"
 
 
 # ------------------------------------------------------------------------------
@@ -762,6 +818,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
     async def test_event(self) -> None:
         total: int = 0
         once: int = 0
+        bad_count: int = 0
 
         def total_handler(value: int) -> bool:
             nonlocal total
@@ -773,16 +830,24 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             once += value
             return False
 
+        def bad_handler(_: int) -> bool:
+            nonlocal bad_count
+            bad_count += 1
+            raise RuntimeError()
+
         event = Event[int]()
         event.on(total_handler)
         event.on(once_handler)
+        event.on(bad_handler)
 
         event(5)
         self.assertEqual(5, total)
         self.assertEqual(5, once)
+        self.assertEqual(1, bad_count)
         event(3)
         self.assertEqual(8, total)
         self.assertEqual(5, once)
+        self.assertEqual(1, bad_count)
 
         f = asyncio.ensure_future(event)
         await asyncio.sleep(0.01)  # yield
@@ -818,30 +883,58 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         b_serve = b.serve(*(await asyncio.open_unix_connection(sock=b_sock)))
         serve = asyncio.gather(a_serve, b_serve)
 
+        # events iter
+        events: List[RpcRequest] = []
+        async def event_iter():
+            async for event in a:
+                events.append(event)
+        events_task = asyncio.ensure_future(event_iter())
+        event = asyncio.ensure_future(a.events)
+        await asyncio.sleep(0.01) # yield
+
+        # errors
         with self.assertRaisesRegex(RpcError, "Method not found.*"):
             await b.call("blablabla")
         with self.assertRaisesRegex(RpcError, "Invalid params.*"):
             await b.call("name", 1)
-
-        self.assertEqual("a", await b.call("name"))
-        self.assertEqual("b", await a.call("name"))
-
         with self.assertRaisesRegex(RpcError, "cannot mix.*"):
             await b.call("add", 1, b=2)
 
+        # basic calls
+        self.assertEqual("a", await b.call("name"))
+        self.assertEqual("b", await a.call("name"))
+        self.assertFalse(event.done())
+
+        # mixed calls with args and kwargs
         self.assertEqual(3, await b.call("add", 1, 2))
         self.assertEqual(3, await b.call("add", a=1, b=2))
         self.assertEqual("ab", await b.add(a="a", b="b"))
 
+        # events
         s = asyncio.ensure_future(send)
-        self.assertEqual(127, await b.call("send", value=127))
+        self.assertEqual(127, await b.send(value=127))
         self.assertEqual(127, await s)
+        s = asyncio.ensure_future(send)
+        b.notify("send", 17)
+        self.assertEqual(17, await s)
+        self.assertTrue(event.done())
+        send_event = RpcRequest("send", [17], None)
+        self.assertEqual(send_event, await event)
+        self.assertEqual([send_event], events)
+        b.notify("other", arg="something")
+        other_event = RpcRequest("other", {"arg": "something"}, None)
+        await asyncio.sleep(0.01)  # yield
+        self.assertEqual([send_event, other_event], events)
+        self.assertFalse(events_task.done())
 
+        # asynchronous handler
         self.assertEqual("done", await b.call("sleep"))
 
         # terminate peers
         a.terminate()
         b.terminate()
+        await asyncio.sleep(0.01)  # yield
+        self.assertTrue(events_task.cancelled())
         await serve
 
 
