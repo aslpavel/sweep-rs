@@ -37,6 +37,9 @@ from typing import (
 
 __all__ = ["Sweep", "SweepError", "sweep", "SWEEP_SELECTED", "SWEEP_KEYBINDING"]
 
+# ------------------------------------------------------------------------------
+# Sweep
+# ------------------------------------------------------------------------------
 SWEEP_SELECTED = "select"
 SWEEP_KEYBINDING = "bind"
 
@@ -885,12 +888,14 @@ class Tests(unittest.IsolatedAsyncioTestCase):
 
         # events iter
         events: List[RpcRequest] = []
+
         async def event_iter():
             async for event in a:
                 events.append(event)
+
         events_task = asyncio.ensure_future(event_iter())
         event = asyncio.ensure_future(a.events)
-        await asyncio.sleep(0.01) # yield
+        await asyncio.sleep(0.01)  # yield
 
         # errors
         with self.assertRaisesRegex(RpcError, "Method not found.*"):
