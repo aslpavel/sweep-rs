@@ -79,6 +79,7 @@ pub enum RpcParams {
 }
 
 impl RpcParams {
+    /// Take attribute by the name and deserialize it
     pub fn take_by_name<V: DeserializeOwned>(
         &mut self,
         name: impl AsRef<str>,
@@ -88,7 +89,7 @@ impl RpcParams {
             .and_then(|kwargs| kwargs.remove(name))
             .ok_or_else(|| RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("missing required argument: {}", name),
+                data: format!("missing required keyword argument: {}", name),
             })
             .and_then(|param| {
                 serde_json::from_value(param).map_err(|err| RpcError {
@@ -98,6 +99,7 @@ impl RpcParams {
             })
     }
 
+    /// Take attribute by the index and deserialize it
     pub fn take_by_index<V: DeserializeOwned>(&mut self, index: usize) -> Result<V, RpcError> {
         match self {
             RpcParams::List(args) if index < args.len() => {
@@ -108,11 +110,24 @@ impl RpcParams {
             }
             _ => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("missing required argument: {}", index),
+                data: format!("missing required positional argument: {}", index),
             }),
         }
     }
 
+    /// Take attribute by the name or the index and deserialize it
+    pub fn take<V: DeserializeOwned>(&mut self, index: usize, name: impl AsRef<str>) -> Result<V, RpcError> {
+        match self {
+            RpcParams::List(_) => self.take_by_index(index),
+            RpcParams::Map(_) => self.take_by_name(name.as_ref()),
+            RpcParams::Null => Err(RpcError {
+                kind: RpcErrorKind::InvalidParams,
+                data: format!("missing required argument: index:{} name:{}", index, name.as_ref()),
+            })
+        }
+    }
+
+    /// View parameters as a keywords map
     pub fn as_map(&mut self) -> Option<&mut Map<String, Value>> {
         match self {
             RpcParams::Map(kwargs) => Some(kwargs),
@@ -120,6 +135,7 @@ impl RpcParams {
         }
     }
 
+    /// View parameters as an argument list
     pub fn as_list(&mut self) -> Option<&mut Vec<Value>> {
         match self {
             RpcParams::List(args) => Some(args),
@@ -127,10 +143,12 @@ impl RpcParams {
         }
     }
 
+    /// Check if parameters are empty
     pub fn is_null(&self) -> bool {
         matches!(self, &RpcParams::Null)
     }
 
+    /// Convert parameters into JSON value
     pub fn into_value(self) -> Value {
         match self {
             Self::Map(map) => map.into(),
@@ -1040,6 +1058,10 @@ mod tests {
             params.a.extend(params.b.chars());
             Ok(params.a)
         });
+        a.regesiter("index_or_name", |mut params: RpcParams| async move {
+            let value: String = params.take(0, "value")?;
+            Ok(value)
+        });
 
         let b = RpcPeer::new();
         b.regesiter_handler("name", Arc::new(|_params| async { Ok("b".into()) }.boxed()));
@@ -1092,6 +1114,14 @@ mod tests {
             .call("concat", json!({ "a": "three ", "b": "four" }))
             .await?;
         assert_eq!(json!("three four"), concat_result);
+
+        // index or name
+        let value = b.call("index_or_name", json!(["index"])).await?;
+        assert_eq!(json!("index"), value);
+        let value = b.call("index_or_name", json!({"value": "name"})).await?;
+        assert_eq!(json!("name"), value);
+        let error = b.call("index_or_name", Value::Null).await.unwrap_err();
+        assert_eq!(error.kind, RpcErrorKind::InvalidParams);
 
         Ok(())
     }

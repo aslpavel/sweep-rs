@@ -759,6 +759,40 @@ class Event(Generic[E]):
 # Tests
 # ------------------------------------------------------------------------------
 class Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_event(self) -> None:
+        total: int = 0
+        once: int = 0
+
+        def total_handler(value: int) -> bool:
+            nonlocal total
+            total += value
+            return True
+
+        def once_handler(value: int) -> bool:
+            nonlocal once
+            once += value
+            return False
+
+        event = Event[int]()
+        event.on(total_handler)
+        event.on(once_handler)
+
+        event(5)
+        self.assertEqual(5, total)
+        self.assertEqual(5, once)
+        event(3)
+        self.assertEqual(8, total)
+        self.assertEqual(5, once)
+
+        f = asyncio.ensure_future(event)
+        await asyncio.sleep(0.01)  # yield
+        self.assertFalse(f.done())
+        event(6)
+        await asyncio.sleep(0.01)  # yield
+        self.assertEqual(14, total)
+        self.assertTrue(f.done())
+        self.assertEqual(6, await f)
+
     async def test_rpc(self) -> None:
         def send_handler(value: int) -> int:
             send(value)
@@ -783,7 +817,6 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         a_serve = a.serve(*(await asyncio.open_unix_connection(sock=a_sock)))
         b_serve = b.serve(*(await asyncio.open_unix_connection(sock=b_sock)))
         serve = asyncio.gather(a_serve, b_serve)
-        await asyncio.sleep(0.01)  # yield task
 
         with self.assertRaisesRegex(RpcError, "Method not found.*"):
             await b.call("blablabla")
