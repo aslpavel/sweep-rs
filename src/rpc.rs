@@ -174,10 +174,10 @@ impl RpcErrorKind {
             -32601 => MethodNotFound,
             -32602 => InvalidParams,
             -32603 => InternalError,
+            -32000 => ServeError,
             1000 => PeerDisconnected,
             1001 => SerdeError,
             1002 => IOError,
-            1003 => ServeError,
             _ => Other { code, message },
         }
     }
@@ -190,10 +190,10 @@ impl RpcErrorKind {
             MethodNotFound => -32601,
             InvalidParams => -32602,
             InternalError => -32603,
+            ServeError => -32000,
             PeerDisconnected => 1000,
             SerdeError => 1001,
             IOError => 1002,
-            ServeError => 1003,
             Other { code, .. } => *code,
         }
     }
@@ -769,7 +769,6 @@ impl RpcPeer {
 
             let writer = rpc_writer(write, write_receiver);
             let reader = rpc_reader(read).try_for_each(|message| peer.handle_message(message));
-            tokio::pin!(reader, writer);
             tokio::select! {
                 result = reader => result,
                 result = writer => result,
@@ -1019,10 +1018,7 @@ mod tests {
     {
         let a = RpcPeer::new();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        a.regesiter_handler(
-            "hello",
-            Arc::new(|_params| async { Ok("a".into()) }.boxed()),
-        );
+        a.regesiter_handler("name", Arc::new(|_params| async { Ok("a".into()) }.boxed()));
         a.regesiter("add", |mut params: RpcParams| async move {
             let a: i64 = params.take_by_name("a")?;
             let b: i64 = params.take_by_name("b")?;
@@ -1046,10 +1042,7 @@ mod tests {
         });
 
         let b = RpcPeer::new();
-        b.regesiter_handler(
-            "hello",
-            Arc::new(|_params| async { Ok("b".into()) }.boxed()),
-        );
+        b.regesiter_handler("name", Arc::new(|_params| async { Ok("b".into()) }.boxed()));
 
         // serve
         let (read, write) = tokio::io::split(a_channel);
@@ -1058,9 +1051,9 @@ mod tests {
         tokio::spawn(b.serve(read, write));
 
         // basic
-        let hello_result = b.call("hello", Value::Null).await?;
+        let hello_result = b.call("name", Value::Null).await?;
         assert_eq!(json!("a"), hello_result);
-        let hello_result = a.call("hello", RpcParams::Null).await?;
+        let hello_result = a.call("name", RpcParams::Null).await?;
         assert_eq!(json!("b"), hello_result);
 
         // add

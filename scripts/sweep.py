@@ -3,6 +3,7 @@
 """
 # pyright: strict
 import asyncio
+from functools import partial
 import json
 import os
 import socket
@@ -10,6 +11,8 @@ import sys
 import tempfile
 import time
 import traceback
+import unittest
+import inspect
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections import deque
@@ -122,7 +125,7 @@ class Sweep:
         self._io_sock: Optional[socket.socket] = None
         self._last_id = 0
         self._read_events: Event[SweepRequest] = Event()
-        self._read_requests: Dict[int, Future[Any]] = {}
+        self._read_requests: Dict[int, "Future[Any]"] = {}
         self._write_queue: Deque[SweepRequest] = deque()
         self._write_notify: Event[None] = Event()
 
@@ -161,7 +164,7 @@ class Sweep:
             if not data_size:
                 break
             size = int(data_size.strip())
-            data = await reader.read(size)
+            data = await reader.readexactly(size)
             if not data:
                 break
             self._read_dispatch(json.loads(data))
@@ -200,7 +203,7 @@ class Sweep:
             future.set_exception(error)
             return
 
-    def _call(self, method: str, params: Optional[Any] = None) -> Future[Any]:
+    def _call(self, method: str, params: Optional[Any] = None) -> "Future[Any]":
         future: Future[Any] = asyncio.get_running_loop().create_future()
         if self._proc is None:
             future.set_exception(RuntimeError("sweep process is not running"))
@@ -355,35 +358,6 @@ class SweepRequest(NamedTuple):
         return header + data
 
 
-E = TypeVar("E")
-
-
-class Event(Generic[E]):
-    __slots__ = ["_handlers"]
-
-    def __init__(self) -> None:
-        self._handlers: Set[Callable[[E], bool]] = set()
-
-    def __call__(self, event: E) -> None:
-        handlers = self._handlers.copy()
-        self._handlers.clear()
-        for handler in handlers:
-            if handler(event):
-                self._handlers.add(handler)
-
-    def on(self, handler: Callable[[E], bool]) -> None:
-        self._handlers.add(handler)
-
-    def __await__(self) -> Generator[Any, None, E]:
-        def handler(event: E) -> bool:
-            future.set_result(event)
-            return False
-
-        future: Future[E] = asyncio.get_running_loop().create_future()
-        self.on(handler)
-        return future.__await__()
-
-
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
     """Create unix server socket and accept one connection"""
     loop = asyncio.get_running_loop()
@@ -408,6 +382,439 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
     return asyncio.create_task(accept())
 
 
+# ------------------------------------------------------------------------------
+# JSON RPC
+# ------------------------------------------------------------------------------
+# Rpc request|response id
+RpcId = Union[int, str, None]
+
+
+class RpcRequest(NamedTuple):
+    method: str
+    params: "RpcParams"
+    id: RpcId
+
+    def serialize(self) -> bytes:
+        request: Dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": self.method,
+        }
+        if self.params is not None:
+            request["params"] = self.params
+        if self.id is not None:
+            request["id"] = self.id
+        return json.dumps(request).encode()
+
+    @classmethod
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcRequest"]:
+        method = obj.get("method")
+        if not isinstance(method, str):
+            return None
+        params = obj.get("params")
+        if params is None or isinstance(params, (list, dict)):
+            return cls(method, cast(RpcParams, params), obj.get("id"))
+        return None
+
+
+class RpcResult(NamedTuple):
+    result: Any
+    id: RpcId
+
+    def serialize(self) -> bytes:
+        response: Dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "result": self.result,
+        }
+        if self.id is not None:
+            response["id"] = self.id
+        return json.dumps(response).encode()
+
+    @classmethod
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcResult"]:
+        if "result" not in obj:
+            return None
+        return RpcResult(obj.get("result"), obj.get("id"))
+
+
+class RpcError(Exception):
+    __slots__ = ["code", "message", "data", "id"]
+
+    code: int
+    message: str
+    data: Optional[str]
+    id: RpcId
+
+    def __init__(self, code: int, message: str, data: Optional[str], id: RpcId) -> None:
+        self.code = code
+        self.message = message
+        self.data = data
+        self.id = id
+
+    def __str__(self) -> str:
+        return f"{self.message}: {self.data}"
+
+    def serialize(self) -> bytes:
+        error = {
+            "code": self.code,
+            "message": self.message,
+        }
+        if self.data is not None:
+            error["data"] = self.data
+        response: Dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "error": error,
+        }
+        if self.id is not None:
+            response["id"] = self.id
+        return json.dumps(response).encode()
+
+    @classmethod
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcError"]:
+        error: Optional[Dict[str, Any]] = obj.get("error")
+        if not isinstance(error, dict):
+            return None
+        code = error.get("code")
+        if not isinstance(code, int):
+            return None
+        message = error.get("message")
+        if not isinstance(message, str):
+            return None
+        return RpcError(code, message, error.get("data"), obj.get("id"))
+
+    @classmethod
+    def current(cls, *, data: Optional[str] = None, id: RpcId = None) -> "RpcError":
+        """Create internal error from current exception"""
+        etype, error, _ = sys.exc_info()
+        if etype is None:
+            return RpcError.internal_error(data=data, id=id)
+        if isinstance(error, RpcError):
+            return error
+        if data is None:
+            data = f"{error}"
+        else:
+            data = f"{data} {error}"
+        return cls.internal_error(data=data, id=id)
+
+    @classmethod
+    def parse_error(cls, *, data: Optional[str] = None, id: RpcId = None) -> "RpcError":
+        return RpcError(-32700, "Parse error", data, id)
+
+    @classmethod
+    def invalid_request(
+        cls, *, data: Optional[str] = None, id: RpcId = None
+    ) -> "RpcError":
+        return RpcError(-32600, "Invalid request", data, id)
+
+    @classmethod
+    def method_not_found(
+        cls, *, data: Optional[str] = None, id: RpcId = None
+    ) -> "RpcError":
+        return RpcError(-32601, "Method not found", data, id)
+
+    @classmethod
+    def invalid_params(
+        cls, *, data: Optional[str] = None, id: RpcId = None
+    ) -> "RpcError":
+        return RpcError(-32602, "Invalid params", data, id)
+
+    @classmethod
+    def internal_error(
+        cls, *, data: Optional[str] = None, id: RpcId = None
+    ) -> "RpcError":
+        return RpcError(-32603, "Internal error", data, id)
+
+
+RpcResponse = Union[RpcError, RpcResult]
+RpcMessage = Union[RpcRequest, RpcResponse]
+RpcParams = Union[List[Any], Dict[str, Any], None]
+RpcHandler = Callable[..., Any]
+
+
+class RpcPeer:
+    __slots__ = [
+        "_handlers",
+        "_requests",
+        "_requests_next_id",
+        "_write_queue",
+        "_write_notify",
+        "_is_terminated",
+        "_is_started",
+        "_serve_task",
+    ]
+    _handlers: Dict[str, RpcHandler]
+    _requests: Dict[RpcId, "Future[Any]"]
+    _requests_next_id: int
+    _write_queue: Deque[RpcMessage]
+    _write_notify: "Event[None]"
+    _is_terminated: bool
+    _is_started: bool
+    _serve_task: Optional["Future[Any]"]
+
+    def __init__(self) -> None:
+        self._handlers = {}
+        self._requests = {}
+        self._requests_next_id = 0
+        self._write_queue = deque()
+        self._write_notify = Event()
+        self._is_terminated = False
+        self._serve_task = None
+
+    def register(self, method: str, handler: RpcHandler) -> RpcHandler:
+        """Register handler for the provided method name"""
+        self._handlers[method] = handler
+        return handler
+
+    def notify(self, method: str, params: Any) -> None:
+        """Send event to the other peer"""
+        self._submit_message(RpcRequest(method, params, None))
+
+    async def call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Call remote method"""
+        future: Future[Any] = asyncio.get_running_loop().create_future()
+        id = self._requests_next_id
+        self._requests_next_id += 1
+
+        params: RpcParams = None
+        if args and kwargs:
+            raise RpcError.invalid_params(data="cannot mix args and kwargs")
+        elif args:
+            params = list(args)
+        elif kwargs:
+            params = kwargs
+
+        self._requests[id] = future
+        self._submit_message(RpcRequest(method, params, id))
+        return await future
+
+    def __getattr__(self, method: str) -> Callable[..., Any]:
+        return partial(self.call, method)
+
+    def terminate(self) -> None:
+        if self._is_terminated:
+            return
+        self._is_terminated = True
+        # cancel reqeusts
+        requests = self._requests.copy()
+        self._requests.clear()
+        for request in requests.values():
+            request.cancel("rpc peer has terminated")
+        # cancel serve future
+        if self._serve_task is not None:
+            self._serve_task.cancel("rpc peer has terminated")
+
+    async def serve(self, reader: StreamReader, writer: StreamWriter) -> None:
+        """Start serving rpc peer over provided streams"""
+        if self._is_terminated:
+            raise RuntimeError("peer has already been terminated")
+        if self._serve_task is not None:
+            raise RuntimeError("serve can only be called once")
+
+        try:
+            self._serve_task = asyncio.gather(
+                self._reader_coro(reader),
+                self._writer_coro(writer),
+            )
+            await self._serve_task
+        except (CancelledError, ConnectionResetError):
+            pass
+        finally:
+            self.terminate()
+
+    def _submit_message(self, message: RpcMessage) -> None:
+        """Sumbit message for sending to the other peer"""
+        self._write_queue.append(message)
+        self._write_notify(None)
+
+    def _handle_message(self, message: RpcMessage) -> None:
+        """Handle incomming messages"""
+        if isinstance(message, RpcRequest):
+            handler = self._handlers.get(message.method)
+            if handler is not None:
+                asyncio.create_task(
+                    self._handle_request(message, handler),
+                    name="rpc handler for {message.method}",
+                )
+            elif message.id is not None:
+                error = RpcError.method_not_found(
+                    id=message.id, data=str(message.method)
+                )
+                self._submit_message(error)
+        else:
+            future = self._requests.get(message.id)
+            if isinstance(message, RpcError):
+                if message.id is None:
+                    raise message
+                if future is not None:
+                    future.set_exception(message)
+            elif future is not None:
+                future.set_result(message.result)
+
+    async def _handle_request(self, request: RpcRequest, handler: RpcHandler) -> None:
+        """Coroutine handling incoming request"""
+        # convert params to either args or kwargs
+        args: List[Any] = []
+        kwargs: Dict[str, Any] = {}
+        if isinstance(request.params, list):
+            args = request.params
+        elif isinstance(request.params, dict):
+            kwargs = request.params
+
+        # execute handler
+        id = request.id
+        response: RpcResponse
+        try:
+            result = handler(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            response = RpcResult(result, id)
+        except TypeError as error:
+            response = RpcError.invalid_params(id=id, data=f"[{request.method}] {error}")
+        except Exception:
+            response = RpcError.current(id=id, data=f"[{request.method}]")
+
+        if request.id is not None:
+            self._submit_message(response)
+
+    async def _writer_coro(self, writer: StreamWriter) -> None:
+        """Write subitted messages to the output stream"""
+        while not self._is_terminated:
+            if not self._write_queue:
+                await self._write_notify
+                continue
+            data = self._write_queue.popleft().serialize()
+            writer.write(f"{len(data)}\n".encode())
+            writer.write(data)
+            await writer.drain()
+
+    async def _reader_coro(self, reader: StreamReader) -> None:
+        """Read and handle incomming messages"""
+        while not self._is_terminated:
+            # read json
+            size_data = await reader.readline()
+            if not size_data:
+                break
+            size = int(size_data.strip())
+            data = await reader.readexactly(size)
+            if not data:
+                break
+            obj = json.loads(data)
+            # deserialize
+            message: Optional[RpcMessage] = None
+            message = (
+                RpcRequest.deserialize(obj)
+                or RpcError.deserialize(obj)
+                or RpcResult.deserialize(obj)
+            )
+            if message is None:
+                error = RpcError.invalid_request(
+                    id=obj.get("id"),
+                    data=data.decode(),
+                )
+                self._submit_message(error)
+                continue
+            # handle message
+            self._handle_message(message)
+
+
+# ------------------------------------------------------------------------------
+# Event
+# ------------------------------------------------------------------------------
+E = TypeVar("E")
+
+
+class Event(Generic[E]):
+    __slots__ = ["_handlers"]
+
+    def __init__(self) -> None:
+        self._handlers: Set[Callable[[E], bool]] = set()
+
+    def __call__(self, event: E) -> None:
+        """Raise new event"""
+        handlers = self._handlers.copy()
+        self._handlers.clear()
+        for handler in handlers:
+            if handler(event):
+                self._handlers.add(handler)
+
+    def on(self, handler: Callable[[E], bool]) -> None:
+        """Register event handler
+
+        Handler is kept subscribed as long as it returns True
+        """
+        self._handlers.add(handler)
+
+    def __await__(self) -> Generator[Any, None, E]:
+        """Await for next event"""
+
+        def handler(event: E) -> bool:
+            future.set_result(event)
+            return False
+
+        future: Future[E] = asyncio.get_running_loop().create_future()
+        self.on(handler)
+        return future.__await__()
+
+
+# ------------------------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------------------------
+class Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_rpc(self) -> None:
+        def send_handler(value: int) -> int:
+            send(value)
+            return value
+
+        async def sleep() -> str:
+            await asyncio.sleep(0.01)
+            return "done"
+
+        a = RpcPeer()
+        a.register("name", lambda: "a")
+        a.register("add", lambda a, b: a + b)
+        send = Event[int]()
+        a.register("send", send_handler)
+        a.register("sleep", sleep)
+
+        b = RpcPeer()
+        b.register("name", lambda: "b")
+
+        # connect
+        a_sock, b_sock = socket.socketpair()
+        a_serve = a.serve(*(await asyncio.open_unix_connection(sock=a_sock)))
+        b_serve = b.serve(*(await asyncio.open_unix_connection(sock=b_sock)))
+        serve = asyncio.gather(a_serve, b_serve)
+        await asyncio.sleep(0.01)  # yield task
+
+        with self.assertRaisesRegex(RpcError, "Method not found.*"):
+            await b.call("blablabla")
+        with self.assertRaisesRegex(RpcError, "Invalid params.*"):
+            await b.call("name", 1)
+
+        self.assertEqual("a", await b.call("name"))
+        self.assertEqual("b", await a.call("name"))
+
+        with self.assertRaisesRegex(RpcError, "cannot mix.*"):
+            await b.call("add", 1, b=2)
+
+        self.assertEqual(3, await b.call("add", 1, 2))
+        self.assertEqual(3, await b.call("add", a=1, b=2))
+        self.assertEqual("ab", await b.add(a="a", b="b"))
+
+        s = asyncio.ensure_future(send)
+        self.assertEqual(127, await b.call("send", value=127))
+        self.assertEqual(127, await s)
+
+        self.assertEqual("done", await b.call("sleep"))
+
+        # terminate peers
+        a.terminate()
+        b.terminate()
+        await serve
+
+
+# ------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------
 async def main() -> None:
     import argparse
     import shlex
