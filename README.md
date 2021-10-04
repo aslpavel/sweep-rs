@@ -152,53 +152,31 @@ And here is how it looks
 ### Demo time!
 ![demo](resources/demo.gif)
 
-### JSON-RPC
+### [JSON-RPC](https://www.jsonrpc.org/specification)
 #### Wire protocol
 ```
 <decimal string representing size of JSON object in bytes>\n
 <JSON object>
 ```
-#### JSON-RPC [protocol](https://www.jsonrpc.org/specification)
-- **Candidate** - can either be
-  - `String` - parsed the same way as lines passed to stdin of the sweep
-  - `{"entry": [String|(String, Bool)]}` - JSON object with mandatory `entry` field which is a list of fields, indiviadual fields can either be a tuple with first element being a field value and second indicating whether this field is searchable, or a plain string which is the same as `(<field>, true)`
+#### Methods and Types
+- **Type**
+```
+Field = String | (String, bool) | {text: String, active: bool}
+Item = String | {entry: [Field], ...}
+```
 - **Methods**
-  - Extend list of searchable items
-    - method: `haystack_extend`
-    - params: `[Candidate]`
-    - result: `Null`
-  - Clear list of searchable items
-    - method: `haystack_clear`
-    - params: ignored
-    - result: `Null`
-  - Set query string used to filter items
-    - method: `niddle_set`
-    - params: `String`
-    - result: `Null`
-  - Get query string used to filter items
-    - method: `niddle_get`
-    - params: ignored
-    - result: `String`
-  - Set prompt string (lable string before search input)
-    - method: `prompt_set`
-    - params: `String`
-    - result: `Null`
-  - Get currently selected candidate
-    - method: `current`
-    - params: ingored
-    - result: `Candidate`
-  - Set key binding
-    - method: `key_binding`
-    - params: `{"key": String, "tag": String}` - associate keybind key (i.e `ctrl+o`) with the tag, empty tag string means unbind
-    - result: `Null`
-  - Terminate sweep process
-    - method: `terminate`
-    - params: ignored
-    - result: `Null`
+```
+items_extend(items: [Item])     // Extend list of searchable items
+items_clear()                   // Clear list of searchable items
+items_current() -> Item?        // Get currently selected item if any
+query_set(query: String)        // Set query string used to filter items
+query_get() -> String           // Get query string used to filter items
+terminate()                     // Gracefully terminate sweep process
+prompt_set(prompt: String)      // Set prompt string (lable string before search input)
+bind(key: String, tag: String)  // Assign new key binding. `key` is a space separted list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
+```
 - **Events** (encoded as method calls comming from the sweep process)
-  - Entry was selected by pressing `Enter`
-    - method: `select`
-    - params: `Candidate`
-  - Key binding was pressed
-    - method: `bind`
-    - params: `String` - tag associated with key binding
+```
+select(item: Item)  // Entry was selected by pressing `Enter` ("sweep.select" action)
+bind(tag: String)   // Key binding was pressed, with previously registred key binding
+```
