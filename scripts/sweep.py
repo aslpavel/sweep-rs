@@ -3,7 +3,7 @@
 """
 # pyright: strict
 import asyncio
-from functools import partial
+import inspect
 import json
 import os
 import socket
@@ -11,10 +11,10 @@ import sys
 import tempfile
 import time
 import unittest
-import inspect
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from collections import deque
+from functools import partial
 from typing import (
     Any,
     AsyncGenerator,
@@ -81,12 +81,13 @@ class Sweep(Generic[I]):
         - Now you can call all the methods of the Sweep class in an interractive mode.
     """
 
-    __slots__ = ["_args", "_proc", "_io_sock", "_peer"]
+    __slots__ = ["_args", "_proc", "_io_sock", "_peer", "_tmp_socket"]
 
     _args: List[str]
     _proc: Optional[Process]
     _io_sock: Optional[socket.socket]
     _peer: "RpcPeer"
+    _tmp_socket: bool  # create tmp socket instead of communicating via socketpair
 
     def __init__(
         self,
@@ -104,6 +105,7 @@ class Sweep(Generic[I]):
         keep_order: bool = False,
         no_match: Optional[str] = None,
         altscreen: bool = False,
+        tmp_socket: bool = False,
     ) -> None:
         args: List[str] = []
         args.extend(["--prompt", prompt])
@@ -134,12 +136,37 @@ class Sweep(Generic[I]):
         self._args = [*sweep, "--rpc", *args]
         self._proc = None
         self._io_sock = None
+        self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
 
     async def __aenter__(self) -> "Sweep[I]":
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
 
+        if self._tmp_socket:
+            self._io_sock = await self._proc_tmp_socket()
+        else:
+            self._io_sock = await self._proc_pair_socket()
+        reader, writer = await asyncio.open_unix_connection(sock=self._io_sock)
+        peer = asyncio.create_task(self._peer.serve(reader, writer))
+        peer.set_name("sweep rpc peer")
+
+        return self
+
+    async def _proc_pair_socket(self) -> socket.socket:
+        """Create sweep subprocess and connect via inherited socket pair"""
+        remote, local = socket.socketpair()
+        prog, *args = self._args
+        self._proc = await asyncio.create_subprocess_exec(
+            prog,
+            *[*args, "--io-socket", str(remote.fileno())],
+            pass_fds=[remote.fileno()],
+        )
+        remote.close()
+        return local
+
+    async def _proc_tmp_socket(self) -> socket.socket:
+        """Create sweep subprocess and connect via on disk socket"""
         io_sock_path = os.path.join(
             tempfile.gettempdir(),
             f"sweep-io-{os.getpid()}.socket",
@@ -147,19 +174,12 @@ class Sweep(Generic[I]):
         if os.path.exists(io_sock_path):
             os.unlink(io_sock_path)
         io_sock_accept = unix_server_once(io_sock_path)
-
         prog, *args = self._args
         self._proc = await asyncio.create_subprocess_exec(
             prog,
             *[*args, "--io-socket", io_sock_path],
         )
-
-        self._io_sock = await io_sock_accept
-        reader, writer = await asyncio.open_unix_connection(sock=self._io_sock)
-        peer = asyncio.create_task(self._peer.serve(reader, writer))
-        peer.set_name("sweep rpc peer")
-
-        return self
+        return await io_sock_accept
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
         if isinstance(ev, CancelledError):
@@ -871,6 +891,11 @@ async def main() -> None:
         default=sys.stdin,
         help="file from which input is read",
     )
+    parser.add_argument(
+        "--tmp-socket",
+        action="store_true",
+        help="create temporary socket in tmp for rpc",
+    )
     args = parser.parse_args()
 
     candidates: List[Any]
@@ -895,6 +920,7 @@ async def main() -> None:
         keep_order=args.keep_order,
         no_match=args.no_match,
         altscreen=args.altscreen,
+        tmp_socket=args.tmp_socket,
     )
 
     if result is None:

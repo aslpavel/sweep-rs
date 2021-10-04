@@ -66,6 +66,7 @@ async def main() -> None:
         keep_order=args.keep_order,
         no_match=args.no_match,
         altscreen=True,
+        tmp_socket=True,
     )
 
     if args.json:
