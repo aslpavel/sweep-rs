@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2018"
 name = "sweep"
-version = "0.5.0"
+version = "0.6.0"
 
 [lib]
 name = "sweep"

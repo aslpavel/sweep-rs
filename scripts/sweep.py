@@ -10,7 +10,6 @@ import socket
 import sys
 import tempfile
 import time
-import traceback
 import unittest
 import inspect
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
@@ -18,6 +17,7 @@ from asyncio.subprocess import Process
 from collections import deque
 from typing import (
     Any,
+    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
@@ -35,30 +35,42 @@ from typing import (
     cast,
 )
 
-__all__ = ["Sweep", "SweepError", "sweep", "SWEEP_SELECTED", "SWEEP_KEYBINDING"]
+__all__ = ["Sweep", "SweepSelect", "SweepBind", "SweepEvent", "sweep"]
 
 # ------------------------------------------------------------------------------
 # Sweep
 # ------------------------------------------------------------------------------
-SWEEP_SELECTED = "select"
-SWEEP_KEYBINDING = "bind"
-
-Candidate = Union[str, Dict[str, Any]]
+I = TypeVar("I")  # sweep item
 
 
-async def sweep(chandidates: List[Candidate], **options: Any) -> Any:
+async def sweep(items: Iterable[I], **options: Any) -> Optional[I]:
     """Convinience wrapper around `Sweep`
 
     Useful when you only need to select one candidate from a list of items
     """
-    async with Sweep(**options) as sweep:
-        await sweep.candidates_extend(chandidates)
-        async for msg in sweep:
-            if msg.method == SWEEP_SELECTED:
-                return msg.params
+    async with Sweep[I](**options) as sweep:
+        await sweep.items_extend(items)
+        async for event in sweep:
+            if isinstance(event, SweepSelect):
+                return event.item
+    return None
 
 
-class Sweep:
+class SweepBind(NamedTuple):
+    tag: str
+
+
+class SweepSelect(Generic[I]):
+    item: Optional[I]
+
+    def __init__(self, item: Optional[I]):
+        self.item = item
+
+
+SweepEvent = Union[SweepBind, SweepSelect[I]]
+
+
+class Sweep(Generic[I]):
     """RPC wrapper around sweep process
 
     DEBUGGING:
@@ -69,16 +81,12 @@ class Sweep:
         - Now you can call all the methods of the Sweep class in an interractive mode.
     """
 
-    __slots__ = [
-        "_args",
-        "_proc",
-        "_io_sock",
-        "_last_id",
-        "_read_events",
-        "_read_requests",
-        "_write_queue",
-        "_write_notify",
-    ]
+    __slots__ = ["_args", "_proc", "_io_sock", "_peer"]
+
+    _args: List[str]
+    _proc: Optional[Process]
+    _io_sock: Optional[socket.socket]
+    _peer: "RpcPeer"
 
     def __init__(
         self,
@@ -124,100 +132,11 @@ class Sweep:
             args.append("--altscreen")
 
         self._args = [*sweep, "--rpc", *args]
-        self._proc: Optional[Process] = None
-        self._io_sock: Optional[socket.socket] = None
-        self._last_id = 0
-        self._read_events: Event[SweepRequest] = Event()
-        self._read_requests: Dict[int, "Future[Any]"] = {}
-        self._write_queue: Deque[SweepRequest] = deque()
-        self._write_notify: Event[None] = Event()
+        self._proc = None
+        self._io_sock = None
+        self._peer = RpcPeer()
 
-    async def _worker_main(self, sock: socket.socket) -> None:
-        """Main worker coroutine which reads and write data to/from sweep"""
-        if self._proc is None:
-            return
-        try:
-            reader, writer = await asyncio.open_unix_connection(sock=sock)
-            await asyncio.gather(
-                self._worker_writer(writer),
-                self._worker_reader(reader),
-            )
-        except (asyncio.CancelledError, ConnectionResetError):
-            pass
-        except Exception:
-            sys.stderr.write("sweep worker failed with error:\n")
-            traceback.print_exc(file=sys.stderr)
-        finally:
-            await self.terminate()
-
-    async def _worker_writer(self, writer: StreamWriter) -> None:
-        """Write outging messages"""
-        while self._proc is not None:
-            if not self._write_queue:
-                await self._write_notify
-                continue
-            writer.write(self._write_queue.popleft().encode())
-            await writer.drain()
-        raise asyncio.CancelledError()
-
-    async def _worker_reader(self, reader: StreamReader) -> None:
-        """Read and dispatch incomming messages from the reader"""
-        while self._proc is not None:
-            data_size = await reader.readline()
-            if not data_size:
-                break
-            size = int(data_size.strip())
-            data = await reader.readexactly(size)
-            if not data:
-                break
-            self._read_dispatch(json.loads(data))
-        raise asyncio.CancelledError()
-
-    def _read_dispatch(self, msg: Any) -> None:
-        """Handle incomming messages"""
-        # handle events
-        method = msg.get("method")
-        if method:
-            event = SweepRequest(method, msg.get("params"), None)
-            self._read_events(event)
-            return
-
-        future = self._read_requests.pop(msg.get("id"), None)
-        if future is None:
-            return
-        error = msg.get("error")
-        if error is None:
-            # handle results
-            result = msg.get("result")
-            future.set_result(result)
-        else:
-            # handle errors
-            if isinstance(error, dict):
-                error = cast(Dict[str, Any], error)
-                error = SweepError(
-                    error.get("code", -32603),
-                    error.get("message", ""),
-                    error.get("data", ""),
-                )
-            else:
-                error = SweepError(
-                    -32700, "Parse error", f"Error must be an object: {msg}"
-                )
-            future.set_exception(error)
-            return
-
-    def _call(self, method: str, params: Optional[Any] = None) -> "Future[Any]":
-        future: Future[Any] = asyncio.get_running_loop().create_future()
-        if self._proc is None:
-            future.set_exception(RuntimeError("sweep process is not running"))
-        else:
-            self._last_id += 1
-            self._write_queue.append(SweepRequest(method, params, self._last_id))
-            self._write_notify(None)
-            self._read_requests[self._last_id] = future
-        return future
-
-    async def __aenter__(self) -> "Sweep":
+    async def __aenter__(self) -> "Sweep[I]":
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
 
@@ -236,11 +155,9 @@ class Sweep:
         )
 
         self._io_sock = await io_sock_accept
-        worker = asyncio.create_task(
-            self._worker_main(self._io_sock),
-            name="sweep_main",
-        )
-        worker.add_done_callback(lambda _: None)  # worker should not raise
+        reader, writer = await asyncio.open_unix_connection(sock=self._io_sock)
+        peer = asyncio.create_task(self._peer.serve(reader, writer))
+        peer.set_name("sweep rpc peer")
 
         return self
 
@@ -250,52 +167,33 @@ class Sweep:
         await self.terminate()
         return False
 
-    def __aiter__(self) -> AsyncIterator["SweepRequest"]:
-        return self
+    def __aiter__(self) -> AsyncIterator[SweepEvent[I]]:
+        async def event_iter() -> AsyncGenerator[SweepEvent[I], None]:
+            async for event in self._peer:
+                if not isinstance(event.params, dict):
+                    continue
+                if event.method == "select":
+                    yield SweepSelect(event.params.get("item"))
+                elif event.method == "bind":
+                    yield SweepBind(event.params.get("tag", ""))
 
-    async def __anext__(self) -> "SweepRequest":
-        if self._proc is None:
-            raise StopAsyncIteration
-        event = await self._read_events
-        return event
-
-    def on(self, name: str, handler: Callable[["SweepRequest"], bool]) -> None:
-        """Regester handler that will be called on event with mathching name
-
-        Handler should return `True` value to continue reciving events.
-        If `name` arguments is None handler will receive all events.
-        """
-
-        def filtered_handler(event: SweepRequest) -> bool:
-            if name is not None and event.method != name:
-                return True
-            return handler(event)
-
-        self._read_events.on(filtered_handler)
+        return event_iter()
 
     async def terminate(self) -> None:
         """Terminate underlying sweep process"""
         proc, self._proc = self._proc, None
         io_sock, self._io_sock = self._io_sock, None
-        if io_sock:
+        self._peer.terminate()
+        if io_sock is not None:
             io_sock.close()
-        if proc is None:
-            return
+        if proc is not None:
+            await proc.wait()
 
-        # resolve all futures
-        requests = self._read_requests.copy()
-        self._read_requests.clear()
-        for request in requests.values():
-            request.cancel("sweep process has terminated")
-        self._read_events(SweepRequest("quit", None, None))
-
-        await proc.wait()
-
-    async def candidates_extend(self, items: Iterable[Candidate]) -> None:
-        """Extend candidates set"""
+    async def items_extend(self, items: Iterable[I]) -> None:
+        """Extend list of searchable items"""
         time_start = time.monotonic()
         time_limit = 0.05
-        batch: List[Candidate] = []
+        batch: List[I] = []
         for item in items:
             batch.append(item)
 
@@ -303,62 +201,36 @@ class Sweep:
             if time_now - time_start >= time_limit:
                 time_start = time_now
                 time_limit *= 1.25
-                await self._call("haystack_extend", batch)
+                await self._peer.items_extend(items=batch)
                 batch.clear()
         if batch:
-            await self._call("haystack_extend", batch)
+            await self._peer.items_extend(items=batch)
 
-    def candidates_clear(self) -> Awaitable[None]:
-        """Clear all candidates"""
-        return self._call("haystack_clear")
+    async def items_clear(self) -> None:
+        """Clear list of searchable items"""
+        await self._peer.items_clear()
 
-    def niddle_set(self, niddle: str) -> Awaitable[None]:
-        """Set new niddle"""
-        return self._call("niddle_set", niddle)
+    async def items_current(self) -> Optional[I]:
+        """Get currently selected item if any"""
+        item: Optional[I] = await self._peer.items_current()
+        return item
 
-    def niddle_get(self) -> Awaitable[str]:
-        return self._call("niddle_get")
+    async def query_set(self, query: str) -> None:
+        """Set query string used to filter items"""
+        await self._peer.query_set(query=query)
 
-    def key_binding(self, key: str, tag: str) -> Awaitable[None]:
-        """Register new hotkey"""
-        return self._call("key_binding", {"key": key, "tag": tag})
+    async def query_get(self) -> str:
+        """Get query string used to filter items"""
+        query: str = await self._peer.query_get()
+        return query
 
-    def prompt_set(self, prompt: str) -> Awaitable[None]:
-        """Set sweep's prompt string"""
-        return self._call("prompt_set", prompt)
+    async def prompt_set(self, prompt: str) -> None:
+        """Set prompt string"""
+        await self._peer.prompt_set(prompt=prompt)
 
-    def current(self) -> Awaitable[Optional[Candidate]]:
-        """Currently selected element"""
-        return self._call("current")
-
-
-class SweepError(Exception):
-    def __init__(self, code: int, message: str, data: str):
-        self.code = code
-        self.message = message
-        self.data = data
-
-    def __str__(self) -> str:
-        return self.data
-
-
-class SweepRequest(NamedTuple):
-    method: str
-    params: Any
-    id: Optional[int]
-
-    def encode(self) -> bytes:
-        message: Dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "method": self.method,
-        }
-        if self.params is not None:
-            message["params"] = self.params
-        if self.id is not None:
-            message["id"] = self.id
-        data = json.dumps(message).encode()
-        header = f"{len(data)}\n".encode()
-        return header + data
+    async def bind(self, key: str, tag: str) -> None:
+        """Assing new key binding"""
+        await self._peer.bind(key=key, tag=tag)
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
@@ -673,10 +545,10 @@ class RpcPeer:
                 self._events(message)
             handler = self._handlers.get(message.method)
             if handler is not None:
-                asyncio.create_task(
-                    self._handle_request(message, handler),
-                    name="rpc handler for {message.method}",
+                rpc_handler = asyncio.create_task(
+                    self._handle_request(message, handler)
                 )
+                rpc_handler.set_name("rpc handler for {message.method}")
             elif message.id is not None:
                 error = RpcError.method_not_found(
                     id=message.id, data=str(message.method)
@@ -731,6 +603,7 @@ class RpcPeer:
             writer.write(f"{len(data)}\n".encode())
             writer.write(data)
             await writer.drain()
+        raise CancelledError()
 
     async def _reader(self, reader: StreamReader) -> None:
         """Read and handle incomming messages"""
@@ -760,6 +633,7 @@ class RpcPeer:
                 continue
             # handle message
             self._handle_message(message)
+        raise CancelledError()
 
 
 # ------------------------------------------------------------------------------
@@ -790,7 +664,7 @@ class Event(Generic[E]):
         for future in futures:
             future.set_result(event)
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Canel all waiting futures"""
         futures = self._futures.copy()
         self._futures.clear()
@@ -889,7 +763,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         # events iter
         events: List[RpcRequest] = []
 
-        async def event_iter():
+        async def event_iter() -> None:
             async for event in a:
                 events.append(event)
 
@@ -999,7 +873,7 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    candidates: List[Candidate]
+    candidates: List[Any]
     if args.json:
         candidates = json.load(args.input)
     else:

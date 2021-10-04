@@ -8,5 +8,9 @@
         "*.py"
     ],
     "python.testing.pytestEnabled": false,
-    "python.testing.unittestEnabled": true
+    "python.testing.unittestEnabled": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/scripts"
+    ],
+    "python.analysis.diagnosticMode": "workspace"
 }

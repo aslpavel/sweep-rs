@@ -7,10 +7,10 @@ import argparse
 import asyncio
 import re
 import sys
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Candidate, sweep
+from sweep import sweep
 
 BASH_HISTORY_FILE = "~/.bash_history"
 DATE_RE = re.compile(r"^#(\d+)$")
@@ -40,7 +40,7 @@ def history(history_file: Optional[str] = None) -> Iterable[Tuple[datetime, str]
     )
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theme", help="sweep theme (see sweep help)")
     parser.add_argument(
@@ -51,7 +51,7 @@ async def main():
     parser.add_argument("--query", help="initial query")
     opts = parser.parse_args()
 
-    candidates: List[Candidate] = []
+    candidates: List[Any] = []
     for date, entry in history(opts.history_file):
         candidates.append(
             {

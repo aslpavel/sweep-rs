@@ -14,7 +14,6 @@ import re
 import sys
 import time
 from typing import (
-    Any,
     Callable,
     Deque,
     Dict,
@@ -22,12 +21,12 @@ from typing import (
     List,
     Optional,
     Tuple,
-    cast,
+    TypedDict,
 )
 from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Sweep, SWEEP_SELECTED, SWEEP_KEYBINDING, Candidate
+from sweep import Sweep, SweepBind, SweepSelect
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -87,10 +86,10 @@ class PathHistoryStore:
         mtime = int(content.readline().strip() or "0")
         paths: Dict[Path, PathHistoryEntry] = {}
         for line in content:
-            count, timestamp, path = line.split("\t")
-            count = int(count)
+            count_str, timestamp, path_str = line.split("\t")
+            count = int(count_str)
             date = int(timestamp)
-            path = Path(path.strip("\n"))
+            path = Path(path_str.strip("\n"))
             paths[path] = PathHistoryEntry(path, count, date)
         return PathHistory(mtime, paths)
 
@@ -123,10 +122,10 @@ class PathHistoryStore:
                 finally:
                     fcntl.lockf(file, fcntl.LOCK_UN)
 
-    def add(self, path: Path):
+    def add(self, path: Path) -> None:
         """Add/Update path in the history"""
 
-        def update_add(now: int, history: PathHistory):
+        def update_add(now: int, history: PathHistory) -> bool:
             entry = history.entries.get(path, PathHistoryEntry(path, 0, now))
             if history.mtime == entry.atime:
                 # last update was for the same path, do not update
@@ -135,14 +134,13 @@ class PathHistoryStore:
             return True
 
         path = Path(path).expanduser().resolve()
-        if not path.exists():
-            return
-        self.update(update_add)
+        if path.exists():
+            self.update(update_add)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Remove paths from the history which no longre exist"""
 
-        def update_cleanup(_: int, history: PathHistory):
+        def update_cleanup(_: int, history: PathHistory) -> bool:
             updated = False
             for entry in list(history):
                 exists = False
@@ -158,6 +156,11 @@ class PathHistoryStore:
         self.update(update_cleanup)
 
 
+class PathItem(TypedDict):
+    entry: List[Tuple[str, bool]]
+    path: str
+
+
 class FileNode:
     __slots__ = ["path", "is_dir", "_children"]
 
@@ -165,7 +168,7 @@ class FileNode:
     is_dir: bool
     _children: Optional[Dict[str, "FileNode"]]
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path) -> None:
         self.path = path
         self.is_dir = self.path.is_dir()
         self._children = None if self.is_dir else {}
@@ -190,12 +193,13 @@ class FileNode:
     def find(self, path: Path) -> Optional["FileNode"]:
         node = self
         for name in path.parts:
-            node = node.get(name)
-            if node is None:
+            node_next = node.get(name)
+            if node_next is None:
                 return None
+            node = node_next
         return node
 
-    def candidates(self, limit: Optional[int] = None) -> Iterator[Candidate]:
+    def candidates(self, limit: Optional[int] = None) -> Iterator[PathItem]:
         limit = DEFAULT_SOFT_LIMIT if limit is None else limit
         parts_len = len(self.path.parts)
         max_depth = None
@@ -212,20 +216,22 @@ class FileNode:
                 queue.append((item, depth + 1))
 
                 count += 1
-                yield {"entry": [f"{path_relative}{tag}"], "path": path_relative}
+                yield PathItem(
+                    entry=[(f"{path_relative}{tag}", True)], path=path_relative
+                )
 
             if count >= limit:
                 max_depth = depth
 
-    def _sort_key(self):
+    def _sort_key(self) -> Tuple[int, int, Path]:
         hidden = 1 if self.path.name.startswith(".") else 0
         not_dir = 0 if self.is_dir else 1
         return (hidden, not_dir, self.path)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.path)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return 'FileNode("{}")'.format(self.path)
 
 
@@ -253,7 +259,7 @@ KEY_ALL = {
 
 
 class PathSelector:
-    def __init__(self, sweep: Sweep, history: PathHistoryStore):
+    def __init__(self, sweep: Sweep[PathItem], history: PathHistoryStore) -> None:
         self.sweep = sweep
         self.history = history
         # None - history mode
@@ -261,7 +267,7 @@ class PathSelector:
         self.path: Optional[Path] = None
         self.path_cache = FileNode(Path("/"))
 
-    async def show_history(self, reset_niddle: bool = True):
+    async def show_history(self, reset_niddle: bool = True) -> None:
         """Show history"""
         # load history items
         history = self.history.load()
@@ -275,35 +281,37 @@ class PathSelector:
 
         # create candidates
         cwd = str(Path.cwd())
-        candidates: List[Candidate] = [
-            dict(entry=[f"{' ' * count_align}{cwd}"], path=cwd)
+        candidates: List[PathItem] = [
+            PathItem(entry=[(f"{' ' * count_align}{cwd}", True)], path=cwd)
         ]
         for count, _, path in items:
-            path = str(path)
-            if path == cwd:
+            path_str = str(path)
+            if path_str == cwd:
                 continue
-            candidates.append(
-                {"entry": [(str(count).ljust(count_align), False), path], "path": path}
+            item = PathItem(
+                entry=[(str(count).ljust(count_align), False), (path_str, True)],
+                path=path_str,
             )
+            candidates.append(item)
 
         # update sweep
         await self.sweep.prompt_set("󰪻  PATH HISTORY")
         if reset_niddle:
-            await self.sweep.niddle_set("")
-        await self.sweep.candidates_clear()
-        await self.sweep.candidates_extend(candidates)
+            await self.sweep.query_set("")
+        await self.sweep.items_clear()
+        await self.sweep.items_extend(candidates)
 
-    async def show_path(self, reset_niddle: bool = True):
+    async def show_path(self, reset_niddle: bool = True) -> None:
         """Show current path"""
         if self.path is None:
             return
         if reset_niddle:
-            await self.sweep.niddle_set("")
+            await self.sweep.query_set("")
         await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
         node = self.path_cache.find(self.path.relative_to("/"))
         if node is not None:
-            await self.sweep.candidates_clear()
-            await self.sweep.candidates_extend(node.candidates())
+            await self.sweep.items_clear()
+            await self.sweep.items_extend(node.candidates())
 
     async def run(self, path: Optional[Path] = None) -> Optional[Path]:
         """Run path selelector
@@ -311,7 +319,7 @@ class PathSelector:
         If path is provided it will start in path mode otherwise in history mode
         """
         for name, key in KEY_ALL.items():
-            await self.sweep.key_binding(key, name)
+            await self.sweep.bind(key, name)
 
         if path and path.is_dir():
             self.path = path
@@ -320,27 +328,26 @@ class PathSelector:
             await self.show_history(reset_niddle=False)
 
         async for event in self.sweep:
-            if event.method == SWEEP_SELECTED:
-                path = Path(event.params["path"])
+            if isinstance(event, SweepSelect) and event.item is not None:
+                path = Path(event.item["path"])
                 if self.path is None:
                     return path
                 return self.path / path
 
-            elif event.method == SWEEP_KEYBINDING:
+            elif isinstance(event, SweepBind):
                 # list directory under cursor
-                if event.params == KEY_LIST:
-                    niddle = (await self.sweep.niddle_get()).strip()
-                    entry = await self.sweep.current()
+                if event.tag == KEY_LIST:
+                    niddle = (await self.sweep.query_get()).strip()
+                    entry = await self.sweep.items_current()
                     if (
                         niddle.startswith("/")
                         or niddle.startswith("~")
                         or entry is None
                     ):
                         self.path, niddle = get_path_and_query(niddle)
-                        await self.sweep.niddle_set(niddle)
+                        await self.sweep.query_set(niddle)
                         await self.show_path(reset_niddle=False)
                     else:
-                        entry = cast(Dict[str, Any], entry)
                         path = Path(entry["path"])
                         if self.path is None:
                             self.path = path
@@ -350,7 +357,7 @@ class PathSelector:
                             await self.show_path()
 
                 # list parent directory, list current directory in history mode
-                elif event.params == KEY_PARENT:
+                elif event.tag == KEY_PARENT:
                     if self.path is None:
                         self.path = Path.cwd()
                     else:
@@ -358,17 +365,15 @@ class PathSelector:
                     await self.show_path()
 
                 # switch to history mode
-                elif event.params == KEY_HISTORY:
+                elif event.tag == KEY_HISTORY:
                     self.path = None
                     await self.show_history()
 
                 # return directory associted with current entry
-                elif event.params == KEY_OPEN:
-                    entry = await self.sweep.current()
+                elif event.tag == KEY_OPEN:
+                    entry = await self.sweep.items_current()
                     if entry is None:
                         continue
-                    entry = cast(Dict[str, Any], entry)
-
                     path = Path(entry["path"])
                     if self.path is None:
                         return path
@@ -377,6 +382,7 @@ class PathSelector:
                         if path.is_dir():
                             return path
                         return path.parent
+        return None
 
 
 def get_path_and_query(input: str) -> Tuple[Path, str]:
@@ -402,7 +408,7 @@ class ReadLine:
     query: Optional[str]
     path: Optional[Path]
 
-    def __init__(self, readline: str, point: int):
+    def __init__(self, readline: str, point: int) -> None:
         self.readline = readline
         self.readpoint = point
 
@@ -429,7 +435,7 @@ class ReadLine:
         return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\nREADLINE_MARK={mark}\n'
 
 
-async def main():
+async def main() -> None:
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=inspect.getdoc(main))
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -473,6 +479,7 @@ async def main():
     elif opts.command == "select":
         path_history.cleanup()
 
+        readline: Optional[ReadLine]
         if opts.readline:
             readline = ReadLine(
                 os.environ.get("READLINE_LINE", ""),
@@ -486,7 +493,7 @@ async def main():
             path = None
 
         result = None
-        async with Sweep(
+        async with Sweep[PathItem](
             sweep=[opts.sweep],
             theme=opts.theme,
             title="path history",
