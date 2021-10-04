@@ -72,7 +72,7 @@ async fn main() -> Result<(), Error> {
         altscreen: args.altscreen,
         debug: args.debug,
     })?;
-    sweep.niddle_set(args.query.clone());
+    sweep.query_set(args.query.clone());
     sweep.scorer_by_name(Some(args.scorer)).await?;
 
     if args.rpc {
@@ -84,7 +84,7 @@ async fn main() -> Result<(), Error> {
             tokio::io::copy(&mut input, &mut data).await?;
             let candidates: Vec<Candidate> =
                 serde_json::from_slice(data.as_ref()).context("failed to parse input JSON")?;
-            sweep.haystack_extend(candidates);
+            sweep.items_extend(candidates);
         } else {
             let sweep = sweep.clone();
             let field_dilimiter = args.field_delimiter;
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Error> {
                 let candidates = Candidate::from_lines(input, field_dilimiter, field_selector);
                 tokio::pin!(candidates);
                 while let Some(candidates) = candidates.try_next().await? {
-                    sweep.haystack_extend(candidates);
+                    sweep.items_extend(candidates);
                 }
                 Ok::<_, Error>(())
             });
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Error> {
                     if result.is_none() && !args.no_match_use_input {
                         continue;
                     }
-                    let input = sweep.niddle_get().await?;
+                    let input = sweep.query_get().await?;
                     std::mem::drop(sweep); // cleanup terminal
                     let result = match result {
                         Some(candidate) if args.json => serde_json::to_string(&candidate)?,

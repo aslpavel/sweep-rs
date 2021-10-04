@@ -10,7 +10,7 @@ use futures::{
     future::{self, BoxFuture},
     FutureExt,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fmt::Write as _,
@@ -72,7 +72,7 @@ where
     H: Haystack + From<HS::Item>,
 {
     let sweep = Sweep::new(options.unwrap_or_default())?;
-    sweep.haystack_extend(haystack);
+    sweep.items_extend(haystack);
     for event in sweep.events().iter() {
         if let SweepEvent::Select(Some(entry)) = event {
             return Ok(Some(entry));
@@ -131,33 +131,40 @@ where
         self.waker.wake().expect("failed to wake terminal");
     }
 
-    /// Extend haystack with entries
-    pub fn haystack_extend<HS>(&self, haystack: HS)
+    /// Extend list of searchable items
+    pub fn items_extend<HS>(&self, items: HS)
     where
         HS: IntoIterator,
         H: From<HS::Item>,
     {
         self.ranker
-            .haystack_extend(haystack.into_iter().map(From::from).collect())
+            .haystack_extend(items.into_iter().map(From::from).collect())
     }
 
-    /// Remove all entries from the haystack
-    pub fn haystack_clear(&self) {
+    /// Clear list of searchable items
+    pub fn items_clear(&self) {
         self.ranker.haystack_clear()
     }
 
+    /// Get currently selected candidates
+    pub async fn items_current(&self) -> Result<Option<H>, Error> {
+        let (send, recv) = oneshot::channel();
+        self.send_request(SweepRequest::Current(send));
+        Ok(recv.await?)
+    }
+
     /// Reverse haystack
-    pub fn haystack_reverse(&self) {
+    pub fn items_reverse(&self) {
         self.ranker.haystack_reverse()
     }
 
     /// Set niddle to the spcified string
-    pub fn niddle_set(&self, niddle: impl AsRef<str>) {
+    pub fn query_set(&self, niddle: impl AsRef<str>) {
         self.send_request(SweepRequest::NiddleSet(niddle.as_ref().to_string()))
     }
 
     /// Get current niddle value
-    pub async fn niddle_get(&self) -> Result<String, Error> {
+    pub async fn query_get(&self) -> Result<String, Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::NiddleGet(send));
         Ok(recv.await?)
@@ -181,13 +188,6 @@ where
     /// Set prompt
     pub fn prompt_set(&self, prompt: String) {
         self.send_request(SweepRequest::PromptSet(prompt))
-    }
-
-    /// Get currently selected candidates
-    pub async fn current(&self) -> Result<Option<H>, Error> {
-        let (send, recv) = oneshot::channel();
-        self.send_request(SweepRequest::Current(send));
-        Ok(recv.await?)
     }
 
     /// Bind specified chord to the tag
@@ -266,39 +266,63 @@ impl Sweep<Candidate> {
     {
         let peer = RpcPeer::new();
 
-        // haystack extend
-        peer.regesiter("haystack_extend", {
+        // items extend
+        peer.regesiter("items_extend", {
             let sweep = self.clone();
-            move |candidates: Vec<Candidate>| {
-                sweep.haystack_extend(candidates);
-                future::ok(Value::Null)
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let items: Vec<Candidate> = params.take(0, "items")?;
+                    sweep.items_extend(items);
+                    Ok(Value::Null)
+                }
             }
         });
 
-        // haystack clear
-        peer.regesiter("haystack_clear", {
+        // items clear
+        peer.regesiter("items_clear", {
             let sweep = self.clone();
             move |_params: Value| {
-                sweep.haystack_clear();
+                sweep.items_clear();
                 future::ok(Value::Null)
             }
         });
 
-        // niddle set
-        peer.regesiter("niddle_set", {
-            let sweep = self.clone();
-            move |niddle: String| {
-                sweep.niddle_set(niddle);
-                future::ok(Value::Null)
-            }
-        });
-
-        // niddle get
-        peer.regesiter("niddle_get", {
+        // items current
+        peer.regesiter("items_current", {
             let sweep = self.clone();
             move |_params: Value| {
                 let sweep = sweep.clone();
-                async move { Ok(sweep.niddle_get().await?) }
+                async move {
+                    let current = sweep
+                        .items_current()
+                        .await?
+                        .and_then(|current| serde_json::to_value(current).ok())
+                        .unwrap_or(Value::Null);
+                    Ok(current)
+                }
+            }
+        });
+
+        // query set
+        peer.regesiter("query_set", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let query: String = params.take(0, "query")?;
+                    sweep.query_set(query);
+                    Ok(Value::Null)
+                }
+            }
+        });
+
+        // query get
+        peer.regesiter("query_get", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                let sweep = sweep.clone();
+                async move { Ok(sweep.query_get().await?) }
             }
         });
 
@@ -311,42 +335,30 @@ impl Sweep<Candidate> {
             }
         });
 
-        // key binding
-        peer.regesiter("key_binding", {
+        // prompt set
+        peer.regesiter("prompt_set", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let tag: String = params.take_by_name("tag")?;
-                    let key: String = params.take_by_name("key")?;
-                    let chord = Key::chord(key).map_err(Error::from)?;
-                    sweep.bind(chord, tag);
+                    let prompt: String = params.take(0, "prompt")?;
+                    sweep.prompt_set(prompt);
                     Ok(Value::Null)
                 }
             }
         });
 
-        // prompt set
-        peer.regesiter("prompt_set", {
+        // key binding
+        peer.regesiter("bind", {
             let sweep = self.clone();
-            move |prompt: String| {
-                sweep.prompt_set(prompt);
-                future::ok(Value::Null)
-            }
-        });
-
-        // current
-        peer.regesiter("current", {
-            let sweep = self.clone();
-            move |_params: Value| {
+            move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let current = sweep
-                        .current()
-                        .await?
-                        .and_then(|current| serde_json::to_value(current).ok())
-                        .unwrap_or(Value::Null);
-                    Ok(current)
+                    let key: String = params.take(0, "key")?;
+                    let tag: String = params.take(1, "tag")?;
+                    let chord = Key::chord(key).map_err(Error::from)?;
+                    sweep.bind(chord, tag);
+                    Ok(Value::Null)
                 }
             }
         });
@@ -366,8 +378,8 @@ impl Sweep<Candidate> {
                         SweepEvent::Bind(tag) if tag == SCORER_NEXT_TAG => {
                             sweep.scorer_by_name(None).await?;
                         }
-                        SweepEvent::Bind(tag) => peer.notify_with_value("bind", tag)?,
-                        SweepEvent::Select(Some(candidate)) => peer.notify("select", candidate)?,
+                        SweepEvent::Bind(tag) => peer.notify_with_value("bind", json!({"tag": tag}))?,
+                        SweepEvent::Select(Some(item)) => peer.notify("select", json!({"item": item}))?,
                         SweepEvent::Select(None) => {}
                     }
                 }
