@@ -1,6 +1,7 @@
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
+    cell::RefCell,
     fmt::{self, Debug},
     ops::Deref,
     sync::Arc,
@@ -376,6 +377,10 @@ pub struct FuzzyScorer {
     niddle: Vec<char>,
 }
 
+thread_local! {
+    static DATA_CELL: RefCell<Vec<Score>> = RefCell::new(Vec::new());
+}
+
 impl FuzzyScorer {
     pub fn new(niddle: Vec<char>) -> Self {
         Self { niddle }
@@ -437,8 +442,11 @@ impl FuzzyScorer {
         }
 
         // find scores
-        // use single allocation for all data needed for calulating score and positions
-        let mut data = vec![0.0; n_len * h_len * 2 + h_len];
+        // use thread local storage for all data needed for calulating score and positions
+        let mut data = DATA_CELL.with(|data_cell| data_cell.take());
+        data.clear();
+        data.resize(n_len * h_len * 2 + h_len, 0.0);
+
         let (bonus_score, matrix_data) = data.split_at_mut(h_len);
         let (d_data, m_data) = matrix_data.split_at_mut(n_len * h_len);
         Self::bonus(haystack, bonus_score);
@@ -492,8 +500,10 @@ impl FuzzyScorer {
             }
         }
         positions.reverse();
+        let score = m.get(n_len - 1, h_len - 1);
 
-        (m.get(n_len - 1, h_len - 1), positions)
+        DATA_CELL.with(move |data_cell| data_cell.replace(data));
+        (score, positions)
     }
 }
 
