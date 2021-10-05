@@ -182,8 +182,8 @@ pub trait Scorer: Send + Sync + Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
 
-    /// Actual scorer implementation which takes haystack as a dynamic referece.
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)>;
+    /// Actual scorer non generic implementation
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool;
 
     /// Generic implementation over anyting that implements `Haystack` trati.
     fn score<H>(&self, haystack: H) -> Option<ScoreResult<H>>
@@ -191,12 +191,14 @@ pub trait Scorer: Send + Sync + Debug {
         H: Haystack,
         Self: Sized,
     {
-        let (score, positions) = self.score_ref(haystack.chars())?;
-        Some(ScoreResult {
-            haystack,
-            score,
-            positions,
-        })
+        let mut score = f32::MIN;
+        let mut positions = Positions::new();
+        self.score_ref(haystack.chars(), &mut score, &mut positions)
+            .then(move || ScoreResult {
+                haystack,
+                score,
+                positions,
+            })
     }
 }
 
@@ -217,8 +219,8 @@ impl<'a, S: Scorer> Scorer for &'a S {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
-        (*self).score_ref(haystack)
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        (**self).score_ref(haystack, score, positions)
     }
 }
 
@@ -226,8 +228,8 @@ impl Scorer for Box<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
-        (**self).score_ref(haystack)
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        (**self).score_ref(haystack, score, positions)
     }
 }
 
@@ -235,8 +237,8 @@ impl Scorer for Arc<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
-        (**self).score_ref(haystack)
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        (**self).score_ref(haystack, score, positions)
     }
 }
 
@@ -282,16 +284,20 @@ impl Scorer for SubstrScorer {
         "substr"
     }
 
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        positions.clear();
         if self.words.is_empty() {
-            return Some((SCORE_MAX, Positions::new()));
+            *score = SCORE_MAX;
+            return true;
         }
 
-        let mut positions = Positions::new();
         let mut match_start = 0;
         let mut match_end = 0;
         for (i, word) in self.words.iter().enumerate() {
-            match_end += word.search(&haystack[match_end..])?;
+            match_end += match word.search(&haystack[match_end..]) {
+                Some(match_start) => match_start,
+                None => return false,
+            };
             if i == 0 {
                 match_start = match_end;
             }
@@ -303,12 +309,11 @@ impl Scorer for SubstrScorer {
         let match_start = match_start as Score;
         let match_end = match_end as Score;
         let heystack_len = haystack.len() as Score;
-        let score = (match_start - match_end)
+        *score = (match_start - match_end)
             + (match_end - match_start) / heystack_len
             + (match_start + 1.0).recip()
             + (heystack_len - match_end + 1.0).recip();
-
-        Some((score, positions))
+        true
     }
 }
 
@@ -349,6 +354,7 @@ impl<T: PartialEq> KMPPattern<T> {
         self.niddle.is_empty()
     }
 
+    /// Search for the match in the haystack, return start of the match on success
     pub fn search(&self, haystack: impl AsRef<[T]>) -> Option<usize> {
         if self.niddle.is_empty() {
             return None;
@@ -432,13 +438,16 @@ impl FuzzyScorer {
 
     // This function is only called when we know that niddle is a sub-string of
     // the haystack string.
-    fn score_impl(niddle: &[char], haystack: &[char]) -> (Score, Positions) {
+    fn score_impl(niddle: &[char], haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        positions.clear();
         let n_len = niddle.len();
         let h_len = haystack.len();
 
         if n_len == 0 || n_len == h_len {
             // full match
-            return (SCORE_MAX, (0..n_len).collect());
+            *score = SCORE_MAX;
+            positions.extend(0..n_len);
+            return true;
         }
 
         // find scores
@@ -482,7 +491,6 @@ impl FuzzyScorer {
 
         // find positions
         let mut match_required = false;
-        let mut positions = Vec::new();
         let mut j = h_len;
         for i in (0..n_len).rev() {
             while j > 0 {
@@ -500,10 +508,10 @@ impl FuzzyScorer {
             }
         }
         positions.reverse();
-        let score = m.get(n_len - 1, h_len - 1);
+        *score = m.get(n_len - 1, h_len - 1);
 
         DATA_CELL.with(move |data_cell| data_cell.replace(data));
-        (score, positions)
+        true
     }
 }
 
@@ -512,12 +520,9 @@ impl Scorer for FuzzyScorer {
         "fuzzy"
     }
 
-    fn score_ref(&self, haystack: &[char]) -> Option<(Score, Positions)> {
-        if Self::subseq(self.niddle.as_ref(), haystack) {
-            Some(Self::score_impl(self.niddle.as_ref(), haystack))
-        } else {
-            None
-        }
+    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+        Self::subseq(self.niddle.as_ref(), haystack)
+            && Self::score_impl(self.niddle.as_ref(), haystack, score, positions)
     }
 }
 
