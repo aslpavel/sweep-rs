@@ -1,7 +1,6 @@
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
     fmt::{self, Debug},
     ops::Deref,
     sync::Arc,
@@ -201,7 +200,7 @@ pub trait Scorer: Send + Sync + Debug {
 }
 
 /// Matched positions in heystack
-pub type Positions = BTreeSet<usize>;
+pub type Positions = Vec<usize>;
 
 /// Result of the scoring
 #[derive(Debug, Clone)]
@@ -475,10 +474,11 @@ impl FuzzyScorer {
 
         // find positions
         let mut match_required = false;
-        let mut positions = BTreeSet::new();
-        let mut h_iter = (0..h_len).rev();
+        let mut positions = Vec::new();
+        let mut j = h_len;
         for i in (0..n_len).rev() {
-            for j in &mut h_iter {
+            while j > 0 {
+                j -= 1;
                 if (match_required || (d.get(i, j) - m.get(i, j)).abs() < Score::EPSILON)
                     && d.get(i, j) != SCORE_MIN
                 {
@@ -486,11 +486,12 @@ impl FuzzyScorer {
                         && j > 0
                         && (m.get(i, j) - (d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE)).abs()
                             < Score::EPSILON;
-                    positions.insert(j);
+                    positions.push(j);
                     break;
                 }
             }
         }
+        positions.reverse();
 
         (m.get(n_len - 1, h_len - 1), positions)
     }
@@ -569,10 +570,7 @@ mod tests {
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(niddle));
 
         let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
-        assert_eq!(
-            result.positions,
-            [1, 2, 4].iter().copied().collect::<BTreeSet<_>>()
-        );
+        assert_eq!(result.positions, vec![1, 2, 4]);
         assert!((result.score - 2.665).abs() < 0.001);
 
         assert!(scorer.score(StringHaystack::new("two")).is_none());
@@ -585,21 +583,12 @@ mod tests {
         let score = scorer
             .score(StringHaystack::new(" one babababcd "))
             .unwrap();
-        assert_eq!(
-            score.positions,
-            [1, 2, 3, 8, 9, 10, 11, 12]
-                .iter()
-                .copied()
-                .collect::<BTreeSet<_>>()
-        );
+        assert_eq!(score.positions, vec![1, 2, 3, 8, 9, 10, 11, 12]);
 
         let niddle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
         let score = scorer.score(StringHaystack::new("one")).unwrap();
-        assert_eq!(
-            score.positions,
-            [0].iter().copied().collect::<BTreeSet<_>>()
-        );
+        assert_eq!(score.positions, vec![0]);
     }
 
     #[test]
