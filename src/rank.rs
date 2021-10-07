@@ -1,4 +1,4 @@
-use crate::{FuzzyScorer, SubstrScorer, Haystack, LockExt, ScoreResult, Scorer};
+use crate::{FuzzyScorer, Haystack, LockExt, ScoreResult, Scorer, SubstrScorer};
 use crossbeam_channel::{unbounded, Sender};
 use rayon::prelude::*;
 use std::{
@@ -28,12 +28,29 @@ where
         .filter_map(move |haystack| scorer.score(focus(haystack)))
         .collect();
     if !keep_order {
-        result.par_sort_unstable_by(|a, b| {
-            a.score.partial_cmp(&b.score).expect("Nan score").reverse()
-        });
+        result.par_sort_unstable_by(|a, b| a.score.cmp(&b.score));
     }
     result
 }
+
+/*
+/// Rank slice of items in place
+///
+/// TODO:
+///   - we should probably path whole ranker result here?
+///   - haystack probably should include index of item if we want keep order to work properly
+pub fn runk_mut<S, H>(scorer: S, haystack: &mut [ScoreResult<H>])
+where
+    S: Scorer + Clone,
+    H: Haystack,
+{
+    haystack
+        .par_iter_mut()
+        .for_each_with(scorer, |scorer, item| {
+            scorer.score_ref(item.haystack.chars(), &mut item.score, &mut item.positions);
+        });
+}
+*/
 
 /// Funciton to create scorer with the given niddle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;

@@ -2,6 +2,7 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
     cell::RefCell,
+    cmp::Ordering,
     fmt::{self, Debug},
     ops::Deref,
     sync::Arc,
@@ -191,7 +192,7 @@ pub trait Scorer: Send + Sync + Debug {
         H: Haystack,
         Self: Sized,
     {
-        let mut score = f32::MIN;
+        let mut score = Score::MIN;
         let mut positions = Positions::new();
         self.score_ref(haystack.chars(), &mut score, &mut positions)
             .then(move || ScoreResult {
@@ -242,17 +243,57 @@ impl Scorer for Arc<dyn Scorer> {
     }
 }
 
-pub type Score = f32;
-const SCORE_MIN: Score = Score::NEG_INFINITY;
-const SCORE_MAX: Score = Score::INFINITY;
-const SCORE_GAP_LEADING: Score = -0.005;
-const SCORE_GAP_TRAILING: Score = -0.005;
-const SCORE_GAP_INNER: Score = -0.01;
-const SCORE_MATCH_CONSECUTIVE: Score = 1.0;
-const SCORE_MATCH_SLASH: Score = 0.9;
-const SCORE_MATCH_WORD: Score = 0.8;
-const SCORE_MATCH_CAPITAL: Score = 0.7;
-const SCORE_MATCH_DOT: Score = 0.6;
+#[derive(Debug, Clone, Copy)]
+pub struct Score(f32);
+
+impl Score {
+    pub const MIN: Score = Score(f32::NEG_INFINITY);
+    pub const MAX: Score = Score(f32::INFINITY);
+
+    pub const fn new(score: f32) -> Score {
+        Score(score)
+    }
+}
+
+impl fmt::Display for Score {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl PartialEq for Score {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Score {}
+
+impl PartialOrd for Score {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Score {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // This is copied from std::f32::total_cmp to avoid nightly requirement
+        let mut left = self.0.to_bits() as i32;
+        let mut right = other.0.to_bits() as i32;
+        left ^= (((left >> 31) as u32) >> 1) as i32;
+        right ^= (((right >> 31) as u32) >> 1) as i32;
+        left.cmp(&right)
+    }
+}
+
+const SCORE_GAP_LEADING: f32 = -0.005;
+const SCORE_GAP_TRAILING: f32 = -0.005;
+const SCORE_GAP_INNER: f32 = -0.01;
+const SCORE_MATCH_CONSECUTIVE: f32 = 1.0;
+const SCORE_MATCH_SLASH: f32 = 0.9;
+const SCORE_MATCH_WORD: f32 = 0.8;
+const SCORE_MATCH_CAPITAL: f32 = 0.7;
+const SCORE_MATCH_DOT: f32 = 0.6;
 
 /// Sub-string scorer
 ///
@@ -287,7 +328,7 @@ impl Scorer for SubstrScorer {
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
         positions.clear();
         if self.words.is_empty() {
-            *score = SCORE_MAX;
+            *score = Score::MAX;
             return true;
         }
 
@@ -306,13 +347,15 @@ impl Scorer for SubstrScorer {
             positions.extend(word_start..match_end);
         }
 
-        let match_start = match_start as Score;
-        let match_end = match_end as Score;
-        let heystack_len = haystack.len() as Score;
-        *score = (match_start - match_end)
-            + (match_end - match_start) / heystack_len
-            + (match_start + 1.0).recip()
-            + (heystack_len - match_end + 1.0).recip();
+        let match_start = match_start as f32;
+        let match_end = match_end as f32;
+        let heystack_len = haystack.len() as f32;
+        *score = Score::new(
+            (match_start - match_end)
+                + (match_end - match_start) / heystack_len
+                + (match_start + 1.0).recip()
+                + (heystack_len - match_end + 1.0).recip(),
+        );
         true
     }
 }
@@ -384,7 +427,7 @@ pub struct FuzzyScorer {
 }
 
 thread_local! {
-    static DATA_CELL: RefCell<Vec<Score>> = RefCell::new(Vec::new());
+    static DATA_CELL: RefCell<Vec<f32>> = RefCell::new(Vec::new());
 }
 
 impl FuzzyScorer {
@@ -392,7 +435,7 @@ impl FuzzyScorer {
         Self { niddle }
     }
 
-    fn bonus(haystack: &[char], bonus: &mut [Score]) {
+    fn bonus(haystack: &[char], bonus: &mut [f32]) {
         let mut c_prev = '/';
         for (i, c) in haystack.iter().enumerate() {
             bonus[i] = if c.is_ascii_lowercase() || c.is_ascii_digit() {
@@ -438,14 +481,19 @@ impl FuzzyScorer {
 
     // This function is only called when we know that niddle is a sub-string of
     // the haystack string.
-    fn score_impl(niddle: &[char], haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_impl(
+        niddle: &[char],
+        haystack: &[char],
+        score: &mut Score,
+        positions: &mut Positions,
+    ) -> bool {
         positions.clear();
         let n_len = niddle.len();
         let h_len = haystack.len();
 
         if n_len == 0 || n_len == h_len {
             // full match
-            *score = SCORE_MAX;
+            *score = Score::MAX;
             positions.extend(0..n_len);
             return true;
         }
@@ -462,7 +510,7 @@ impl FuzzyScorer {
         let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with niddle[..i]
         let mut m = ScoreMatrix::new(h_len, m_data); // best score for niddle[..i]
         for (i, n_char) in niddle.iter().enumerate() {
-            let mut prev_score = SCORE_MIN;
+            let mut prev_score = f32::NEG_INFINITY;
             let gap_score = if i == n_len - 1 {
                 SCORE_GAP_TRAILING
             } else {
@@ -471,19 +519,19 @@ impl FuzzyScorer {
             for (j, h_char) in haystack.iter().enumerate() {
                 if n_char == h_char {
                     let score = if i == 0 {
-                        (j as Score) * SCORE_GAP_LEADING + bonus_score[j]
+                        (j as f32) * SCORE_GAP_LEADING + bonus_score[j]
                     } else if j != 0 {
                         let a = m.get(i - 1, j - 1) + bonus_score[j];
                         let b = d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
                         a.max(b)
                     } else {
-                        SCORE_MIN
+                        f32::NEG_INFINITY
                     };
                     prev_score = score.max(prev_score + gap_score);
                     d.set(i, j, score);
                 } else {
                     prev_score += gap_score;
-                    d.set(i, j, SCORE_MIN);
+                    d.set(i, j, f32::NEG_INFINITY);
                 }
                 m.set(i, j, prev_score);
             }
@@ -495,20 +543,20 @@ impl FuzzyScorer {
         for i in (0..n_len).rev() {
             while j > 0 {
                 j -= 1;
-                if (match_required || (d.get(i, j) - m.get(i, j)).abs() < Score::EPSILON)
-                    && d.get(i, j) != SCORE_MIN
+                if (match_required || (d.get(i, j) - m.get(i, j)).abs() < f32::EPSILON)
+                    && d.get(i, j) != f32::NEG_INFINITY
                 {
                     match_required = i > 0
                         && j > 0
                         && (m.get(i, j) - (d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE)).abs()
-                            < Score::EPSILON;
+                            < f32::EPSILON;
                     positions.push(j);
                     break;
                 }
             }
         }
         positions.reverse();
-        *score = m.get(n_len - 1, h_len - 1);
+        *score = Score::new(m.get(n_len - 1, h_len - 1));
 
         DATA_CELL.with(move |data_cell| data_cell.replace(data));
         true
@@ -527,20 +575,20 @@ impl Scorer for FuzzyScorer {
 }
 
 struct ScoreMatrix<'a> {
-    data: &'a mut [Score],
+    data: &'a mut [f32],
     width: usize,
 }
 
 impl<'a> ScoreMatrix<'a> {
-    fn new<'b: 'a>(width: usize, data: &'b mut [Score]) -> Self {
+    fn new<'b: 'a>(width: usize, data: &'b mut [f32]) -> Self {
         Self { data, width }
     }
 
-    fn get(&self, row: usize, col: usize) -> Score {
+    fn get(&self, row: usize, col: usize) -> f32 {
         self.data[row * self.width + col]
     }
 
-    fn set(&mut self, row: usize, col: usize, val: Score) {
+    fn set(&mut self, row: usize, col: usize, val: f32) {
         self.data[row * self.width + col] = val;
     }
 }
@@ -586,7 +634,7 @@ mod tests {
 
         let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
         assert_eq!(result.positions, vec![1, 2, 4]);
-        assert!((result.score - 2.665).abs() < 0.001);
+        assert!((result.score.0 - 2.665).abs() < 0.001);
 
         assert!(scorer.score(StringHaystack::new("two")).is_none());
     }
