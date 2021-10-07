@@ -694,4 +694,11 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_score() {
+        assert!(Score::new(1.0) > Score::new(0.9));
+        assert!(Score::new(1.0) == Score::new(1.0));
+        assert!(Score::MIN < Score::MAX);
+    }
 }

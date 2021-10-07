@@ -28,7 +28,7 @@ where
         .filter_map(move |haystack| scorer.score(focus(haystack)))
         .collect();
     if !keep_order {
-        result.par_sort_unstable_by(|a, b| a.score.cmp(&b.score));
+        result.par_sort_unstable_by(|a, b| b.score.cmp(&a.score));
     }
     result
 }
