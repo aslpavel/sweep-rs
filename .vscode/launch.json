@@ -11,6 +11,16 @@
             "program": "${workspaceFolder}/scripts/sweep.py",
             "args": ["--input", "${workspaceFolder}/Cargo.toml", "--sweep", "cargo run --"],
             "console": "integratedTerminal"
+        },
+        {
+            "name": "cargo test",
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": ["rust"],
+            "cargo": {
+                "args": ["test", "--no-run", "--lib"], // Cargo command line to build the debug target
+                // "args": ["build", "--bin=foo"] is another possibility
+            }
         }
     ]
 }
