@@ -1,5 +1,4 @@
 //! Basic asynchronus [JSON-RPC](https://www.jsonrpc.org/specification) implementation
-
 use crate::LockExt;
 use futures::{
     future::{self, BoxFuture},
@@ -26,6 +25,7 @@ use tokio::{
     },
     sync::{mpsc, oneshot},
 };
+use tracing_futures::Instrument;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcRequest {
@@ -116,14 +116,22 @@ impl RpcParams {
     }
 
     /// Take attribute by the name or the index and deserialize it
-    pub fn take<V: DeserializeOwned>(&mut self, index: usize, name: impl AsRef<str>) -> Result<V, RpcError> {
+    pub fn take<V: DeserializeOwned>(
+        &mut self,
+        index: usize,
+        name: impl AsRef<str>,
+    ) -> Result<V, RpcError> {
         match self {
             RpcParams::List(_) => self.take_by_index(index),
             RpcParams::Map(_) => self.take_by_name(name.as_ref()),
             RpcParams::Null => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("missing required argument: index:{} name:{}", index, name.as_ref()),
-            })
+                data: format!(
+                    "missing required argument: index:{} name:{}",
+                    index,
+                    name.as_ref()
+                ),
+            }),
         }
     }
 
@@ -826,7 +834,12 @@ impl RpcPeer {
                 if let Some(handler) = handler {
                     let peer = self.clone();
                     tokio::spawn(async move {
-                        let result = handler(request.params).await;
+                        let span = tracing::debug_span!(
+                            "handling request",
+                            method = %request.method,
+                            params = ?request.params,
+                        );
+                        let result = handler(request.params).instrument(span).await;
                         if request.id != RpcId::Null {
                             let response = RpcResponse {
                                 result,
