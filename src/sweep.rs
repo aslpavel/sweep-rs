@@ -252,7 +252,7 @@ where
         self.waker.wake().unwrap_or(());
         if let Some(handle) = self.ui_worker.take() {
             if let Err(error) = handle.join() {
-                eprintln!("sweep ui worker thread failed:\r\n{:?}", error);
+                tracing::error!("sweep ui worker thread failed:\r\n{:?}", error);
             }
         }
     }

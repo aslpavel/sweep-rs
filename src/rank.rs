@@ -23,11 +23,15 @@ where
     F: Fn(&H) -> FR + Send + Sync,
     FR: Haystack + Send,
 {
-    let mut result: Vec<_> = haystack
-        .into_par_iter()
-        .filter_map(move |haystack| scorer.score(focus(haystack)))
-        .collect();
+    let rank_scope = tracing::debug_span!("ranking", len = %haystack.len());
+    let mut result: Vec<_> = rank_scope.in_scope(|| {
+        haystack
+            .into_par_iter()
+            .filter_map(move |haystack| scorer.score(focus(haystack)))
+            .collect()
+    });
     if !keep_order {
+        let _ = tracing::debug_span!("sorting", len = %haystack.len()).enter();
         result.par_sort_unstable_by(|a, b| b.score.cmp(&a.score));
     }
     result
