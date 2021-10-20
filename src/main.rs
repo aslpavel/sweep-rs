@@ -1,17 +1,20 @@
 #![deny(warnings)]
-#![allow(clippy::type_complexity)]
 
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
 use std::{
     collections::VecDeque,
+    fs::File,
+    io::Write,
     os::unix::{io::FromRawFd, net::UnixStream as StdUnixStream},
     pin::Pin,
+    sync::{Arc, Mutex},
 };
 use surf_n_term::widgets::Theme;
 use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -24,6 +27,16 @@ async fn main() -> Result<(), Error> {
             env!("COMMIT_INFO")
         );
         return Ok(());
+    }
+
+    if let Some(log_path) = args.log {
+        let log = Log::new(log_path)?;
+        tracing_subscriber::fmt()
+            .json()
+            .with_span_events(FmtSpan::CLOSE)
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(move || log.clone())
+            .init();
     }
 
     let (mut input, mut output): (
@@ -70,7 +83,6 @@ async fn main() -> Result<(), Error> {
         title: args.title.clone(),
         scorers: VecDeque::new(),
         altscreen: args.altscreen,
-        debug: args.debug,
     })?;
     sweep.query_set(args.query.clone());
     sweep.scorer_by_name(Some(args.scorer)).await?;
@@ -127,6 +139,30 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct Log {
+    file: Arc<Mutex<File>>,
+}
+
+impl Log {
+    fn new(file: String) -> Result<Self, Error> {
+        let file = Arc::new(Mutex::new(File::create(file)?));
+        Ok(Self { file })
+    }
+}
+
+impl Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut file = self.file.lock().expect("lock poisoned");
+        file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut file = self.file.lock().expect("lock poisoned");
+        file.flush()
+    }
+}
+
 /// Sweep is a command line fuzzy finder
 #[derive(FromArgs)]
 pub struct Args {
@@ -161,10 +197,6 @@ pub struct Args {
     /// default scorer to rank candidates
     #[argh(option, from_str_fn(scorer_arg), default = "\"fuzzy\".to_string()")]
     pub scorer: String,
-
-    /// enable debugging output
-    #[argh(switch)]
-    pub debug: bool,
 
     /// use JSON-RPC protocol to communicate
     #[argh(switch)]
@@ -202,6 +234,10 @@ pub struct Args {
     /// show sweep version and quit
     #[argh(switch)]
     pub version: bool,
+
+    /// enable logging into specified file path configured with RUST_LOG
+    #[argh(option)]
+    pub log: Option<String>,
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

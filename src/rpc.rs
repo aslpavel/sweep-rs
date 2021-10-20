@@ -735,11 +735,15 @@ impl RpcPeer {
         method: impl Into<String>,
         params: impl Into<Value>,
     ) -> Result<(), RpcError> {
-        self.submit_message(RpcRequest {
-            method: method.into(),
-            params: params.into(),
-            id: RpcId::Null,
-        })
+        let method = method.into();
+        let params = params.into();
+        let id = RpcId::Null;
+        tracing::debug!(
+            method = %method,
+            params = %params,
+            "outgoing event"
+        );
+        self.submit_message(RpcRequest { method, params, id })
     }
 
     /// Issue rpc call and wait for response
@@ -767,12 +771,16 @@ impl RpcPeer {
             inner.requests.insert(id.clone(), tx);
             id
         });
-        self.submit_message(RpcRequest {
-            method: method.into(),
-            params: params.into(),
-            id,
-        })?;
-        rx.await.map_err(|_| RpcError {
+        let method = method.into();
+        let params = params.into();
+        let span = tracing::debug_span!(
+            "outging request",
+            method = %method,
+            params = %params,
+            id = ?id,
+        );
+        self.submit_message(RpcRequest { method, params, id })?;
+        rx.instrument(span).await.map_err(|_| RpcError {
             kind: RpcErrorKind::PeerDisconnected,
             data: "one shot channeld was destroyed".to_owned(),
         })?
@@ -835,9 +843,10 @@ impl RpcPeer {
                     let peer = self.clone();
                     tokio::spawn(async move {
                         let span = tracing::debug_span!(
-                            "handling request",
+                            "incoming request",
                             method = %request.method,
-                            params = ?request.params,
+                            params = %request.params,
+                            id = ?request.id,
                         );
                         let result = handler(request.params).instrument(span).await;
                         if request.id != RpcId::Null {
@@ -849,6 +858,12 @@ impl RpcPeer {
                         }
                     });
                 } else if request.id != RpcId::Null {
+                    tracing::warn!(
+                        method = %request.method,
+                        params = %request.params,
+                        id = ?request.id,
+                        "invalid method"
+                    );
                     let response = RpcResponse {
                         result: Err(RpcError {
                             kind: RpcErrorKind::MethodNotFound,

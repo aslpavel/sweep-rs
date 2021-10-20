@@ -36,7 +36,6 @@ pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 pub struct SweepOptions {
     pub altscreen: bool,
-    pub debug: bool,
     pub height: usize,
     pub keep_order: bool,
     pub prompt: String,
@@ -60,7 +59,6 @@ impl Default for SweepOptions {
             title: "sweep".to_string(),
             scorers,
             altscreen: false,
-            debug: false,
         }
     }
 }
@@ -727,7 +725,7 @@ where
             mode: DecMode::AltScreen,
         })?;
     }
-    if options.debug {
+    if false {
         term.duplicate_output("/tmp/sweep.log")?;
     }
 

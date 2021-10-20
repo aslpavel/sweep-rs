@@ -79,6 +79,8 @@ class Sweep(Generic[I]):
           will not steal characters for sweep process like `$ sleep 1000`.
         - Instantiate Sweep class with the tty device path of the other terminal.
         - Now you can call all the methods of the Sweep class in an interractive mode.
+        - set RUST_LOG=debug
+        - specify log file
     """
 
     __slots__ = ["_args", "_proc", "_io_sock", "_peer", "_tmp_socket"]
@@ -100,7 +102,7 @@ class Sweep(Generic[I]):
         theme: Optional[str] = None,
         scorer: Optional[str] = None,
         tty: Optional[str] = None,
-        debug: bool = False,
+        log: Optional[str] = None,
         title: Optional[str] = None,
         keep_order: bool = False,
         no_match: Optional[str] = None,
@@ -122,8 +124,8 @@ class Sweep(Generic[I]):
             args.extend(["--scorer", scorer])
         if tty is not None:
             args.extend(["--tty", tty])
-        if debug:
-            args.append("--debug")
+        if log:
+            args.append("--log")
         if title:
             args.extend(["--title", title])
         if keep_order:
