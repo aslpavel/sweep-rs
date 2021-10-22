@@ -1,9 +1,9 @@
 [package]
 authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
-edition = "2018"
+edition = "2021"
 name = "sweep"
-version = "0.6.0"
+version = "0.6.1"
 
 [lib]
 name = "sweep"

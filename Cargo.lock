@@ -402,9 +402,9 @@ dependencies = [
 
 [[package]]
 name = "half"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac5956d4e63858efaec57e0d6c1c2f6a41e1487f830314a324ccd7e2223a7ca0"
+checksum = "3bd566f08830dd1fa75b2a5f1d8def8336de7f08b2692a9a71efbe7188aea36f"
 
 [[package]]
 name = "heck"
@@ -762,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "280145fa82527ae65b5a0ba6d9678b10fbf8a5f9e7a0d26432f093da3c9de63d"
+checksum = "feca68aba4ec26b10b525879a1a29cf82631cff9a006a128eb132b17726bf46a"
 
 [[package]]
 name = "rayon"
@@ -943,9 +943,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "surf_n_term"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9bb5c8597fa61d0798ce64dbae05ff12231655d64fa07899152cc454c3f2fc9"
+checksum = "65207c9e339a8b8e1c9bb643758367c9ad98f65e9c9d2ff282cd382847a88cd3"
 dependencies = [
  "flate2",
  "fnv",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "argh",
