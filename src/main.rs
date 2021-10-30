@@ -1,4 +1,5 @@
 #![deny(warnings)]
+#![allow(clippy::type_complexity)]
 
 use anyhow::{anyhow, Context, Error};
 use argh::FromArgs;
