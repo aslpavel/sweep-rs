@@ -30,12 +30,13 @@ from typing import (
     NamedTuple,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Union,
     cast,
 )
 
-__all__ = ["Sweep", "SweepSelect", "SweepBind", "SweepEvent", "sweep"]
+__all__ = ["Sweep", "SweepSelect", "SweepBind", "SweepEvent", "SweepIcon", "sweep"]
 
 # ------------------------------------------------------------------------------
 # Sweep
@@ -43,31 +44,60 @@ __all__ = ["Sweep", "SweepSelect", "SweepBind", "SweepEvent", "sweep"]
 I = TypeVar("I")  # sweep item
 
 
-async def sweep(items: Iterable[I], **options: Any) -> Optional[I]:
-    """Convinience wrapper around `Sweep`
-
-    Useful when you only need to select one candidate from a list of items
-    """
-    async with Sweep[I](**options) as sweep:
-        await sweep.items_extend(items)
-        async for event in sweep:
-            if isinstance(event, SweepSelect):
-                return event.item
-    return None
-
-
 class SweepBind(NamedTuple):
+    """Event genereted on bound key press"""
+
     tag: str
 
 
 class SweepSelect(Generic[I]):
+    """Event generated on item select"""
+
     item: Optional[I]
 
     def __init__(self, item: Optional[I]):
         self.item = item
 
 
+class SweepIcon(NamedTuple):
+    """Rasterizable SVG icon"""
+
+    path: str
+    view_box: Optional[Tuple[float, float, float, float]] = None
+    fill_rule: Optional[str] = None
+    size: Optional[Tuple[int, int]] = None
+
+    def to_json(self) -> Dict[str, Any]:
+        """Create JSON object out sweep icon struct"""
+        obj: Dict[str, Any] = dict(path=self.path)
+        if self.view_box is not None:
+            obj["view_box"] = self.view_box
+        if self.fill_rule is not None:
+            obj["fill_rule"] = self.fill_rule
+        if self.size is not None:
+            obj["size"] = self.size
+        return obj
+
+
 SweepEvent = Union[SweepBind, SweepSelect[I]]
+
+
+async def sweep(
+    items: Iterable[I],
+    prompt_icon: Optional[SweepIcon] = None,
+    **options: Any,
+) -> Optional[I]:
+    """Convinience wrapper around `Sweep`
+
+    Useful when you only need to select one candidate from a list of items
+    """
+    async with Sweep[I](**options) as sweep:
+        await sweep.prompt_set(prompt=options.get("prompt"), icon=prompt_icon)
+        await sweep.items_extend(items)
+        async for event in sweep:
+            if isinstance(event, SweepSelect):
+                return event.item
+    return None
 
 
 class Sweep(Generic[I]):
@@ -108,6 +138,7 @@ class Sweep(Generic[I]):
         no_match: Optional[str] = None,
         altscreen: bool = False,
         tmp_socket: bool = False,
+        border: Optional[int] = None,
     ) -> None:
         args: List[str] = []
         args.extend(["--prompt", prompt])
@@ -124,8 +155,8 @@ class Sweep(Generic[I]):
             args.extend(["--scorer", scorer])
         if tty is not None:
             args.extend(["--tty", tty])
-        if log:
-            args.append("--log")
+        if log is not None:
+            args.extend(["--log", log])
         if title:
             args.extend(["--title", title])
         if keep_order:
@@ -134,6 +165,8 @@ class Sweep(Generic[I]):
             args.extend(["--no-match", no_match])
         if altscreen:
             args.append("--altscreen")
+        if border is not None:
+            args.extend(["--border", str(border)])
 
         self._args = [*sweep, "--rpc", *args]
         self._proc = None
@@ -246,9 +279,19 @@ class Sweep(Generic[I]):
         query: str = await self._peer.query_get()
         return query
 
-    async def prompt_set(self, prompt: str) -> None:
-        """Set prompt string"""
-        await self._peer.prompt_set(prompt=prompt)
+    async def prompt_set(
+        self,
+        prompt: Optional[str] = None,
+        icon: Optional[SweepIcon] = None,
+    ) -> None:
+        """Set prompt label and icon"""
+        attrs: Dict[str, Any] = {}
+        if prompt is not None:
+            attrs["prompt"] = prompt
+        if icon is not None:
+            attrs["icon"] = icon.to_json()
+        if attrs:
+            await self._peer.prompt_set(**attrs)
 
     async def bind(self, key: str, tag: str) -> None:
         """Assing new key binding"""
@@ -898,6 +941,12 @@ async def main() -> None:
         action="store_true",
         help="create temporary socket in tmp for rpc",
     )
+    parser.add_argument("--log", help="path to the log file")
+    parser.add_argument(
+        "--border",
+        type=int,
+        help="borders on the side of the sweep view",
+    )
     args = parser.parse_args()
 
     candidates: List[Any]
@@ -923,6 +972,8 @@ async def main() -> None:
         no_match=args.no_match,
         altscreen=args.altscreen,
         tmp_socket=args.tmp_socket,
+        log=args.log,
+        border=args.border,
     )
 
     if result is None:

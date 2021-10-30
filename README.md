@@ -163,17 +163,23 @@ And here is how it looks
 ```
 Field = String | (String, bool) | {text: String, active: bool}
 Item = String | {entry: [Field], ...}
+Icon = {
+    path?: String,                    // d attribute of SVG path (default: empty path)
+    view_box?: [float; 4],            // minx, miny, width, height (default: bounding box of path)
+    fill_rule?: "nonzero" | "evenodd" // same as SVG fill-rule (defualt: "nonzero")
+    size?: [float; 2],                // height, width in terminal cells (defualt: [1, 1])
+}
 ```
 - **Methods**
 ```
-items_extend(items: [Item])     // Extend list of searchable items
-items_clear()                   // Clear list of searchable items
-items_current() -> Item?        // Get currently selected item if any
-query_set(query: String)        // Set query string used to filter items
-query_get() -> String           // Get query string used to filter items
-terminate()                     // Gracefully terminate sweep process
-prompt_set(prompt: String)      // Set prompt string (lable string before search input)
-bind(key: String, tag: String)  // Assign new key binding. `key` is a space separted list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
+items_extend(items: [Item])              // Extend list of searchable items
+items_clear()                            // Clear list of searchable items
+items_current() -> Item?                 // Get currently selected item if any
+query_set(query: String)                 // Set query string used to filter items
+query_get() -> String                    // Get query string used to filter items
+terminate()                              // Gracefully terminate sweep process
+prompt_set(prompt: String, icon?: Icon)  // Set prompt string (lable string before search input)
+bind(key: String, tag: String)           // Assign new key binding. `key` is a space separted list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
 ```
 - **Events** (encoded as method calls comming from the sweep process)
 ```

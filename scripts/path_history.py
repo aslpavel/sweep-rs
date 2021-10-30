@@ -26,7 +26,7 @@ from typing import (
 from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Sweep, SweepBind, SweepSelect
+from sweep import Sweep, SweepBind, SweepIcon, SweepSelect
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -47,6 +47,29 @@ DEFAULT_IGNORE = re.compile(
             ".*\\.pyc",
         ]
     )
+)
+
+# folder-clock-outline (Material Design)
+HISTORY_ICON = SweepIcon(
+    path="M15,12H16.5V16.25L19.36,17.94L18.61,19.16L15,17V12M19,8H3V18H9.29"
+    "C9.1,17.37 9,16.7 9,16A7,7 0 0,1 16,9C17.07,9 18.09,9.24 19,9.67V8"
+    "M3,20C1.89,20 1,19.1 1,18V6A2,2 0 0,1 3,4H9L11,6H19A2,2 0 0,1 21,8"
+    "V11.1C22.24,12.36 23,14.09 23,16A7,7 0 0,1 16,23C13.62,23 11.5,21.81 10.25,20"
+    "H3M16,11A5,5 0 0,0 11,16A5,5 0 0,0 16,21A5,5 0 0,0 21,16A5,5 0 0,0 16,11Z",
+    view_box=(0, 0, 24, 24),
+    size=(1, 3),
+)
+
+# folder-search-outline (Material Design)
+SEARCH_ICON = SweepIcon(
+    path="M16.5,12C19,12 21,14 21,16.5C21,17.38 20.75,18.21 20.31,18.9L23.39,22"
+    "L22,23.39L18.88,20.32C18.19,20.75 17.37,21 16.5,21C14,21 12,19 12,16.5"
+    "C12,14 14,12 16.5,12M16.5,14A2.5,2.5 0 0,0 14,16.5A2.5,2.5 0 0,0 16.5,19"
+    "A2.5,2.5 0 0,0 19,16.5A2.5,2.5 0 0,0 16.5,14M19,8H3V18H10.17"
+    "C10.34,18.72 10.63,19.39 11,20H3C1.89,20 1,19.1 1,18V6C1,4.89 1.89,4 3,4"
+    "H9L11,6H19A2,2 0 0,1 21,8V11.81C20.42,11.26 19.75,10.81 19,10.5V8Z",
+    view_box=(0, 0, 24, 24),
+    size=(1, 3),
 )
 
 
@@ -295,7 +318,7 @@ class PathSelector:
             candidates.append(item)
 
         # update sweep
-        await self.sweep.prompt_set("󰪻  PATH HISTORY")
+        await self.sweep.prompt_set("PATH HISTORY", HISTORY_ICON)
         if reset_niddle:
             await self.sweep.query_set("")
         await self.sweep.items_clear()
@@ -307,7 +330,7 @@ class PathSelector:
             return
         if reset_niddle:
             await self.sweep.query_set("")
-        await self.sweep.prompt_set("󰥩  {}".format(collapse_path(self.path)))
+        await self.sweep.prompt_set(str(collapse_path(self.path)), SEARCH_ICON)
         node = self.path_cache.find(self.path.relative_to("/"))
         if node is not None:
             await self.sweep.items_clear()
@@ -453,6 +476,7 @@ async def main() -> None:
     )
     parser_select.add_argument("--query", help="initial query")
     parser_select.add_argument("--tty", help="path to the tty")
+    parser_select.add_argument("--log", help="path to the log file")
     parser_select.add_argument(
         "--readline",
         action="store_true",
@@ -499,6 +523,7 @@ async def main() -> None:
             title="path history",
             tty=opts.tty,
             query=query,
+            log=opts.log,
         ) as sweep:
             selector = PathSelector(sweep, path_history)
             result = await selector.run(path)

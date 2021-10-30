@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2018"
 name = "sweep"
-version = "0.6.0"
+version = "0.7.0"
 
 [lib]
 name = "sweep"
@@ -24,7 +24,8 @@ serde_json = "^1.0"
 tokio = { version = "1", features = ["full"] }
 tracing = "^0.1"
 tracing-futures = "^0.2"
-surf_n_term = "^0.1.6"
+lazy_static = "^1.1"
+surf_n_term = "^0.2"
 # surf_n_term = {path = "../surf-n-term"}
 
 # binary dependencies (TODO: use workspace)

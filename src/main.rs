@@ -32,7 +32,7 @@ async fn main() -> Result<(), Error> {
     if let Some(log_path) = args.log {
         let log = Log::new(log_path)?;
         tracing_subscriber::fmt()
-            .json()
+            //.json()
             .with_span_events(FmtSpan::CLOSE)
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .with_writer(move || log.clone())
@@ -83,6 +83,8 @@ async fn main() -> Result<(), Error> {
         title: args.title.clone(),
         scorers: VecDeque::new(),
         altscreen: args.altscreen,
+        border: args.border,
+        ..SweepOptions::default()
     })?;
     sweep.query_set(args.query.clone());
     sweep.scorer_by_name(Some(args.scorer)).await?;
@@ -90,7 +92,6 @@ async fn main() -> Result<(), Error> {
     if args.rpc {
         sweep.serve(input, output).await?;
     } else {
-        // TODO: create load future and wait for it
         if args.json {
             let mut data: Vec<u8> = Vec::new();
             tokio::io::copy(&mut input, &mut data).await?;
@@ -238,6 +239,10 @@ pub struct Args {
     /// enable logging into specified file path configured with RUST_LOG
     #[argh(option)]
     pub log: Option<String>,
+
+    /// leave border on the sides
+    #[argh(option, default = "1")]
+    pub border: usize,
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

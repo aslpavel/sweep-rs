@@ -402,9 +402,9 @@ dependencies = [
 
 [[package]]
 name = "half"
-version = "1.8.0"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac5956d4e63858efaec57e0d6c1c2f6a41e1487f830314a324ccd7e2223a7ca0"
+checksum = "eabb4a44450da02c90444cf74558da904edde8fb4e9035a9a6a4e15445af0bd7"
 
 [[package]]
 name = "heck"
@@ -465,9 +465,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.104"
+version = "0.2.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b2f96d100e1cf1929e7719b7edb3b90ab5298072638fccd77be9ce942ecdfce"
+checksum = "869d572136620d55835903746bcb5cdc54cb2851fd0aeec53220b4bb65ef3013"
 
 [[package]]
 name = "lock_api"
@@ -744,9 +744,9 @@ checksum = "bc881b2c22681370c6a780e47af9840ef841837bc98118431d4e1868bd0c1086"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.30"
+version = "1.0.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edc3358ebc67bc8b7fa0c007f945b0b18226f78437d61bec735a9eb96b61ee70"
+checksum = "ba508cc11742c0dc5c1659771673afbab7a0efab23aa17e854cbab0837ed0b43"
 dependencies = [
  "unicode-xid",
 ]
@@ -762,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "280145fa82527ae65b5a0ba6d9678b10fbf8a5f9e7a0d26432f093da3c9de63d"
+checksum = "feca68aba4ec26b10b525879a1a29cf82631cff9a006a128eb132b17726bf46a"
 
 [[package]]
 name = "rayon"
@@ -943,9 +943,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "surf_n_term"
-version = "0.1.6"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9bb5c8597fa61d0798ce64dbae05ff12231655d64fa07899152cc454c3f2fc9"
+checksum = "544d9d84e6d9ecb4ae656d9fb2da134316a66dbd21c6cb2b74fb958e969202bb"
 dependencies = [
  "flate2",
  "fnv",
@@ -955,18 +955,20 @@ dependencies = [
  "nix 0.18.0",
  "png",
  "rasterize",
+ "serde",
  "signal-hook",
 ]
 
 [[package]]
 name = "sweep"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "argh",
  "criterion",
  "crossbeam-channel",
  "futures",
+ "lazy_static",
  "nix 0.20.2",
  "rayon",
  "serde",
@@ -980,9 +982,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.80"
+version = "1.0.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d010a1623fbd906d51d650a9916aaefc05ffa0e4053ff7fe601167f3e715d194"
+checksum = "f2afee18b8beb5a596ecb4a2dce128c719b4ba399d34126b9e4396e3f9860966"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1019,9 +1021,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.12.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2c2416fdedca8443ae44b4527de1ea633af61d8f7169ffa6e72c5b53d24efcc"
+checksum = "588b2d10a336da58d877567cd8fb8a14b463e2104910f8132cd054b4b96e29ee"
 dependencies = [
  "autocfg",
  "bytes",
@@ -1039,9 +1041,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2dd85aeaba7b68df939bd357c6afb36c87951be9e80bf9c859f2fc3e9fca0fd"
+checksum = "114383b041aa6212c579467afa0075fbbdd0718de036100bc0ba7961d8cb9095"
 dependencies = [
  "proc-macro2",
  "quote",

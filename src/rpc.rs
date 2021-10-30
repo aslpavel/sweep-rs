@@ -92,9 +92,10 @@ impl RpcParams {
                 data: format!("missing required keyword argument: {}", name),
             })
             .and_then(|param| {
+                let name: &str = name.as_ref();
                 serde_json::from_value(param).map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
-                    data: err.to_string(),
+                    data: format!("[arg_name={}] {}", name, err),
                 })
             })
     }
@@ -105,7 +106,7 @@ impl RpcParams {
             RpcParams::List(args) if index < args.len() => {
                 serde_json::from_value(args[index].take()).map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
-                    data: err.to_string(),
+                    data: format!("[arg_index={}] {}", index, err),
                 })
             }
             _ => Err(RpcError {
@@ -133,6 +134,22 @@ impl RpcParams {
                 ),
             }),
         }
+    }
+
+    /// Take optional attribute by the name or the index and deserialize it
+    pub fn take_opt<V: DeserializeOwned>(
+        &mut self,
+        index: usize,
+        name: impl AsRef<str>,
+    ) -> Result<Option<V>, RpcError> {
+        let result = match self {
+            RpcParams::List(attrs) if attrs.len() > index => Some(self.take_by_index(index)?),
+            RpcParams::Map(attrs) if attrs.contains_key(name.as_ref()) => {
+                Some(self.take_by_name(name)?)
+            }
+            _ => None,
+        };
+        Ok(result)
     }
 
     /// View parameters as a keywords map
@@ -779,11 +796,22 @@ impl RpcPeer {
             params = %params,
             id = ?id,
         );
-        self.submit_message(RpcRequest { method, params, id })?;
-        rx.instrument(span).await.map_err(|_| RpcError {
+        self.submit_message(RpcRequest {
+            method: method.clone(),
+            params,
+            id: id.clone(),
+        })?;
+        let result = rx.instrument(span).await.map_err(|_| RpcError {
             kind: RpcErrorKind::PeerDisconnected,
             data: "one shot channeld was destroyed".to_owned(),
-        })?
+        })?;
+        tracing::debug!(
+            method = %method,
+            result = ?result,
+            id = ?id,
+            "outgoing result",
+        );
+        result
     }
 
     /// Start serving rpc requests
@@ -849,9 +877,19 @@ impl RpcPeer {
                             id = ?request.id,
                         );
                         let result = handler(request.params).instrument(span).await;
+                        tracing::debug!(
+                            method = %request.method,
+                            result = ?result,
+                            id = ?request.id,
+                            "incoming result",
+                        );
                         if request.id != RpcId::Null {
+                            let method = request.method;
                             let response = RpcResponse {
-                                result,
+                                result: result.map_err(|error| RpcError {
+                                    kind: error.kind,
+                                    data: format!("[{}] {}", method, error.data),
+                                }),
                                 id: request.id,
                             };
                             let _ = peer.submit_message(response);

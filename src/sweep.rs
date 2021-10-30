@@ -23,9 +23,10 @@ use std::{
 };
 use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    Blend, Cell, Color, DecMode, Face, FaceAttrs, Key, KeyMap, KeyMod, KeyName, Position, Surface,
-    SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
-    TerminalSurfaceExt, TerminalWaker, TerminalWritable, TerminalWriter,
+    BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
+    KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
+    TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
+    TerminalWritable, TerminalWriter,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -34,15 +35,43 @@ use tokio::{
 
 pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
+lazy_static::lazy_static! {
+    pub static ref KEYBOARD_ICON: Glyph = Glyph::new(
+        r#"
+        M4,5A2,2 0 0,0 2,7V17A2,2 0 0,0 4,19H20A2,2 0 0,0 22,17V7A2,2 0 0,0 20,5
+        H4M4,7H20V17H4V7M5,8V10H7V8H5M8,8V10H10V8H8M11,8V10H13V8H11M14,8V10H16V8
+        H14M17,8V10H19V8H17M5,11V13H7V11H5M8,11V13H10V11H8M11,11V13H13V11H11
+        M14,11V13H16V11H14M17,11V13H19V11H17M8,14V16H16V14H8Z
+        "#.parse().expect("failed to parse keyboard icon"),
+        FillRule::NonZero,
+        Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
+        Size::new(1, 3),
+    );
+
+    pub static ref BROOM_ICON: Glyph = Glyph::new(
+        r#"
+        M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44
+        L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57
+        C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15
+        C10.34,20.81 7.94,19.58 5.93,17.57Z
+        "#.parse().expect("failed to parse broom icon"),
+        FillRule::NonZero,
+        Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
+        Size::new(1, 3),
+    );
+}
+
 pub struct SweepOptions {
     pub altscreen: bool,
     pub height: usize,
     pub keep_order: bool,
     pub prompt: String,
+    pub prompt_icon: Option<Glyph>,
     pub scorers: VecDeque<ScorerBuilder>,
     pub theme: Theme,
     pub title: String,
     pub tty_path: String,
+    pub border: usize,
 }
 
 impl Default for SweepOptions {
@@ -53,12 +82,14 @@ impl Default for SweepOptions {
         Self {
             height: 11,
             prompt: "INPUT".to_string(),
+            prompt_icon: Some(BROOM_ICON.clone()),
             theme: Theme::light(),
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
             title: "sweep".to_string(),
             scorers,
             altscreen: false,
+            border: 1,
         }
     }
 }
@@ -83,7 +114,7 @@ where
 enum SweepRequest<H> {
     NiddleSet(String),
     NiddleGet(oneshot::Sender<String>),
-    PromptSet(String),
+    PromptSet(Option<String>, Option<Glyph>),
     Bind(Vec<Key>, String),
     Terminate,
     Current(oneshot::Sender<Option<H>>),
@@ -184,8 +215,8 @@ where
     }
 
     /// Set prompt
-    pub fn prompt_set(&self, prompt: String) {
-        self.send_request(SweepRequest::PromptSet(prompt))
+    pub fn prompt_set(&self, prompt: Option<String>, icon: Option<Glyph>) {
+        self.send_request(SweepRequest::PromptSet(prompt, icon))
     }
 
     /// Bind specified chord to the tag
@@ -339,8 +370,9 @@ impl Sweep<Candidate> {
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let prompt: String = params.take(0, "prompt")?;
-                    sweep.prompt_set(prompt);
+                    let prompt: Option<String> = params.take_opt(0, "prompt")?;
+                    let icon: Option<Glyph> = params.take_opt(1, "icon")?;
+                    sweep.prompt_set(prompt, icon);
                     Ok(Value::Null)
                 }
             }
@@ -376,8 +408,12 @@ impl Sweep<Candidate> {
                         SweepEvent::Bind(tag) if tag == SCORER_NEXT_TAG => {
                             sweep.scorer_by_name(None).await?;
                         }
-                        SweepEvent::Bind(tag) => peer.notify_with_value("bind", json!({"tag": tag}))?,
-                        SweepEvent::Select(Some(item)) => peer.notify("select", json!({"item": item}))?,
+                        SweepEvent::Bind(tag) => {
+                            peer.notify_with_value("bind", json!({ "tag": tag }))?
+                        }
+                        SweepEvent::Select(Some(item)) => {
+                            peer.notify("select", json!({ "item": item }))?
+                        }
                         SweepEvent::Select(None) => {}
                     }
                 }
@@ -407,6 +443,8 @@ enum SweepAction {
 struct SweepState<H> {
     // sweep prompt
     prompt: String,
+    // prompt icon
+    prompt_icon: Option<Glyph>,
     // current state of the key chrod
     key_map_state: Vec<Key>,
     // user action executed on backspace when input is empty
@@ -443,7 +481,7 @@ impl<H> SweepState<H>
 where
     H: Haystack,
 {
-    fn new(prompt: String, ranker: Ranker<H>, theme: Theme) -> Self {
+    fn new(prompt: String, prompt_icon: Option<Glyph>, ranker: Ranker<H>, theme: Theme) -> Self {
         // faces
         let stats_face = Face::new(
             Some(theme.accent.best_contrast(theme.bg, theme.fg)),
@@ -533,6 +571,7 @@ where
 
         Self {
             prompt,
+            prompt_icon,
             key_map_state: Vec::new(),
             key_empty_backspace: None,
             key_map,
@@ -547,17 +586,31 @@ where
         }
     }
 
-    fn render(&mut self, mut view: impl SurfaceMut<Item = Cell>) -> Result<(), Error> {
+    fn render(
+        &mut self,
+        mut view: impl SurfaceMut<Item = Cell>,
+        term_caps: &TerminalCaps,
+    ) -> Result<(), Error> {
         self.ranker.niddle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
 
-        // label
-        let mut label_view = view.view_mut(0, ..);
+        // prompt
+        let icon_offset = match &self.prompt_icon {
+            Some(icon) if term_caps.glyphs => {
+                view.set(0, 0, Cell::new_glyph(self.label_face, icon.clone()));
+                icon.size().width
+            }
+            _ => {
+                view.set(0, 0, Cell::new(self.label_face, None));
+                1
+            }
+        };
+        let mut label_view = view.view_mut(0, icon_offset..);
         let mut label = label_view.writer().face(self.label_face);
-        write!(&mut label, " {} ", self.prompt)?;
+        write!(&mut label, "{} ", self.prompt)?;
         let mut label = label.face(self.separator_face);
         write!(&mut label, " ")?;
-        let input_start = label.position().1 as i32;
+        let input_start = (icon_offset + label.position().1) as i32;
 
         // stats
         let stats_str = format!(
@@ -699,7 +752,12 @@ where
             .collect();
         let ranker = Ranker::new(fuzzy_scorer(), false, move || term_waker.wake().is_ok());
         ranker.haystack_extend(candidates);
-        SweepState::new("BINDINGS".to_owned(), ranker, self.theme.clone())
+        SweepState::new(
+            "BINDINGS".to_owned(),
+            Some(KEYBOARD_ICON.clone()),
+            ranker,
+            self.theme.clone(),
+        )
     }
 }
 
@@ -748,7 +806,12 @@ where
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
-    let mut state = SweepState::new(options.prompt.clone(), ranker, options.theme.clone());
+    let mut state = SweepState::new(
+        options.prompt.clone(),
+        options.prompt_icon.clone(),
+        ranker,
+        options.theme.clone(),
+    );
     let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
     let mut state_help: Option<SweepState<Candidate>> = None;
 
@@ -788,8 +851,11 @@ where
                                 state.key_map.register(chord.as_ref(), action);
                             }
                         },
-                        PromptSet(new_prompt) => {
-                            state.prompt = new_prompt;
+                        PromptSet(new_prompt, new_icon) => {
+                            if let Some(new_prompt) = new_prompt {
+                                state.prompt = new_prompt;
+                            }
+                            state.prompt_icon = new_icon;
                         }
                         Current(resolve) => {
                             let current = state
@@ -873,10 +939,19 @@ where
         }
 
         // render
-        let view = view.view_owned((row_offset as i32)..(row_offset + height) as i32, 1..-1);
+        let view = if options.border > 0 && options.border < view.width() / 2 {
+            let border = options.border as i32;
+            view.view_owned(
+                (row_offset as i32)..(row_offset + height) as i32,
+                border..-border,
+            )
+        } else {
+            view.view_owned((row_offset as i32)..(row_offset + height) as i32, ..)
+        };
+        let term_caps = term.capabilities();
         match state_help.as_mut() {
-            Some(state) => state.render(view)?,
-            None => state.render(view)?,
+            Some(state) => state.render(view, term_caps)?,
+            None => state.render(view, term_caps)?,
         }
 
         Ok(TerminalAction::Wait)
@@ -986,5 +1061,16 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
                 face_inactive,
                 face_highlight: self.theme.cursor,
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_icons_parsing() {
+        let _ = BROOM_ICON.clone();
+        let _ = KEYBOARD_ICON.clone();
     }
 }
