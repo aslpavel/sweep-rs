@@ -22,6 +22,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
+    encoder::ColorDepth,
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
     KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
@@ -593,10 +594,11 @@ where
     ) -> Result<(), Error> {
         self.ranker.niddle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
+        let basic = term_caps.depth == ColorDepth::Gray;
 
         // prompt
         let icon_offset = match &self.prompt_icon {
-            Some(icon) if term_caps.glyphs => {
+            Some(icon) if term_caps.glyphs && !basic => {
                 view.set(0, 0, Cell::new_glyph(self.label_face, icon.clone()));
                 icon.size().width
             }
@@ -609,7 +611,11 @@ where
         let mut label = label_view.writer().face(self.label_face);
         write!(&mut label, "{} ", self.prompt)?;
         let mut label = label.face(self.separator_face);
-        write!(&mut label, " ")?;
+        if basic {
+            write!(&mut label, " ")?;
+        } else {
+            write!(&mut label, " ")?;
+        }
         let input_start = (icon_offset + label.position().1) as i32;
 
         // stats
@@ -623,7 +629,11 @@ where
         let input_stop = -(stats_str.chars().count() as i32 + 1);
         let mut stats_view = view.view_mut(0, input_stop..);
         let mut stats = stats_view.writer().face(self.separator_face);
-        write!(&mut stats, "")?;
+        if basic {
+            write!(&mut stats, " ")?;
+        } else {
+            write!(&mut stats, "")?;
+        }
         let mut stats = stats.face(self.stats_face);
         stats.write_all(stats_str.as_ref())?;
 
