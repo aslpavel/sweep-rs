@@ -465,9 +465,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.105"
+version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "869d572136620d55835903746bcb5cdc54cb2851fd0aeec53220b4bb65ef3013"
+checksum = "a60553f9a9e039a333b4e9b20573b9e9b9c0bb3a11e201ccc48ef4283456d673"
 
 [[package]]
 name = "lock_api"
@@ -762,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feca68aba4ec26b10b525879a1a29cf82631cff9a006a128eb132b17726bf46a"
+checksum = "26a9e5ba69c1710f12c10ff15a0051405a7f8c9c8cc58860b102f14d2acb2d2e"
 
 [[package]]
 name = "rayon"
@@ -943,9 +943,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "surf_n_term"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8199c67af48e15d4fe6980eeca9eea9ff633d71505aea4cdd42ad4898cb2319b"
+checksum = "cca4d230363e983c653af69d37b74bdc71b0f9417ccc9647e622d6e9ff3135ae"
 dependencies = [
  "flate2",
  "fnv",
@@ -957,11 +957,12 @@ dependencies = [
  "rasterize",
  "serde",
  "signal-hook",
+ "tracing",
 ]
 
 [[package]]
 name = "sweep"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "argh",
