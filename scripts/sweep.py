@@ -586,6 +586,7 @@ class RpcPeer:
         except (CancelledError, ConnectionResetError):
             pass
         finally:
+            writer.close()
             self.terminate()
 
     def __aiter__(self) -> AsyncIterator[RpcRequest]:
@@ -662,12 +663,12 @@ class RpcPeer:
         """Write subitted messages to the output stream"""
         while not self._is_terminated:
             if not self._write_queue:
+                await writer.drain()
                 await self._write_notify
                 continue
             data = self._write_queue.popleft().serialize()
             writer.write(f"{len(data)}\n".encode())
             writer.write(data)
-            await writer.drain()
         raise CancelledError()
 
     async def _reader(self, reader: StreamReader) -> None:
@@ -730,7 +731,7 @@ class Event(Generic[E]):
             future.set_result(event)
 
     def cancel(self) -> None:
-        """Canel all waiting futures"""
+        """Cacnel all waiting futures"""
         futures = self._futures.copy()
         self._futures.clear()
         for future in futures:
