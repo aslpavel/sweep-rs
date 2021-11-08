@@ -12,6 +12,9 @@ Sweep is a tool used to interactively search through a list of entries. It is in
 
 ### Usage
 #### Basic usage
+<details>
+  <summary><code>$ sweep --help</code></summary>
+  
 ```
 Usage: sweep [--height <height>] [-p <prompt>] [--query <query>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--debug] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--version]
 
@@ -38,8 +41,13 @@ Options:
   --version         show sweep version and quit
   --help            display usage information
 ```
+  
+</details>
+  
 #### Key bindings
-Current key bindings can be viewed by pressing `ctrc+h` and by default look like this:
+Current key bindings can be viewed by pressing `ctrc+h`.
+<details>
+  <summary>default look like this</summary>
 
 | Name                 | Key Bindings      |
 |----------------------|-------------------|
@@ -61,8 +69,13 @@ Current key bindings can be viewed by pressing `ctrc+h` and by default look like
 |input.page.next       | "pagedown"        |
 |input.page.prev       | "pageup"          |
 
+</details>
+  
 #### Bash history integration
-Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. Add this to your `~/.bashrc`
+Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. 
+<details>
+  <summary>Add this to your <code>~/.bashrc</code></summary>
+
 ```bash
 __sweep_platform=$(python3 -c 'import sys; print(sys.platform)')
 
@@ -111,6 +124,9 @@ __sweep_path_prev__="$(pwd)"
 
 PROMPT_COMMAND="__sweep_path_add__; $PROMPT_COMMAND"
 ```
+
+</details>
+
 This result in the following key binding in your bash session
 * `ctrl+r` history lookup
 * `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
@@ -119,6 +135,9 @@ This result in the following key binding in your bash session
 
 #### Sway run command integration
 There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates seprate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
+<details>
+  <summary>Add this to your sway config</summary>
+  
 ```
 set $run_menu j4-dmenu-desktop --display-binary --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --wrapper "swaymsg -t command exec --"
 for_window [app_id="kitty" title="sweep-menu"] {
@@ -128,6 +147,9 @@ for_window [app_id="kitty" title="sweep-menu"] {
 }
 $mod+d exec $run_menu
 ```
+
+</details>
+
 And here is how it looks
 ![sway](resources/sway.png)
 
