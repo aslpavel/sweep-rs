@@ -461,6 +461,11 @@ class ReadLine:
 async def main() -> None:
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=inspect.getdoc(main))
+    parser.add_argument(
+        "--history-file",
+        default=PATH_HISTORY_FILE,
+        help="path history file",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     parser_add = subparsers.add_parser("add", help="add/update path in the history")
     parser_add.add_argument("path", nargs="?", help="target path")
@@ -484,7 +489,7 @@ async def main() -> None:
     )
     opts = parser.parse_args()
 
-    path_history = PathHistoryStore()
+    path_history = PathHistoryStore(opts.history_file)
 
     if opts.command == "add":
         path = opts.path or os.getcwd()
