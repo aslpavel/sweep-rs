@@ -282,12 +282,18 @@ KEY_ALL = {
 
 
 class PathSelector:
+    __slots__ = ["sweep", "history", "path", "path_cache"]
+    sweep: Sweep[PathItem]
+    history: PathHistoryStore
+    path: Optional[Path]
+    path_cache: FileNode
+
     def __init__(self, sweep: Sweep[PathItem], history: PathHistoryStore) -> None:
         self.sweep = sweep
         self.history = history
         # None - history mode
         # Path - path mode
-        self.path: Optional[Path] = None
+        self.path = None
         self.path_cache = FileNode(Path("/"))
 
     async def show_history(self, reset_niddle: bool = True) -> None:
