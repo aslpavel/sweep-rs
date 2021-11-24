@@ -1,5 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use sweep::{Candidate, FuzzyScorer, Haystack, KMPPattern, Positions, Scorer, Score, SubstrScorer};
+use mimalloc::MiMalloc;
+use sweep::{Candidate, FuzzyScorer, Haystack, KMPPattern, Positions, Score, Scorer, SubstrScorer};
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 const CANDIDATE: &str = "./benchmark/target/release/.fingerprint/semver-parser-a5e84da67081840e/test/lib-semver_parser-a5e84da67081840e.json";
 
