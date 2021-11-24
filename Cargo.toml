@@ -25,7 +25,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = "^0.1"
 tracing-futures = "^0.2"
 lazy_static = "^1.1"
-surf_n_term = "^0.3.6"
+surf_n_term = "^0.3.8"
 # surf_n_term = { path = "../surf-n-term" }
 
 # binary dependencies (TODO: use workspace)
