@@ -275,6 +275,7 @@ KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
 KEY_ALL = {
     KEY_LIST: "ctrl+i",  # Tab
+    KEY_LIST: "tab",
     KEY_PARENT: "backspace",
     KEY_HISTORY: "alt+.",
     KEY_OPEN: "ctrl+o",

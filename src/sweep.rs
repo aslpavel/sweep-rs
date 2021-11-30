@@ -562,6 +562,13 @@ where
             }],
             SweepAction::Select,
         );
+        key_map.register(
+            &[Key {
+                name: KeyName::Enter,
+                mode: KeyMod::EMPTY,
+            }],
+            SweepAction::Select,
+        );
 
         // widgets
         let input = Input::new();
