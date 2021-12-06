@@ -2,6 +2,7 @@
 """Asynchronous JSON-RPC implementation to communicate with sweep command
 """
 # pyright: strict
+from __future__ import annotations
 import asyncio
 import inspect
 import json
@@ -118,7 +119,7 @@ class Sweep(Generic[I]):
     _args: List[str]
     _proc: Optional[Process]
     _io_sock: Optional[socket.socket]
-    _peer: "RpcPeer"
+    _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socketpair
 
     def __init__(
@@ -174,7 +175,7 @@ class Sweep(Generic[I]):
         self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
 
-    async def __aenter__(self) -> "Sweep[I]":
+    async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
             raise RuntimeError("sweep process is already running")
 
@@ -331,7 +332,7 @@ RpcId = Union[int, str, None]
 
 class RpcRequest(NamedTuple):
     method: str
-    params: "RpcParams"
+    params: RpcParams
     id: RpcId
 
     def serialize(self) -> bytes:
@@ -346,7 +347,7 @@ class RpcRequest(NamedTuple):
         return json.dumps(request).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcRequest"]:
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcRequest]:
         method = obj.get("method")
         if not isinstance(method, str):
             return None
@@ -370,7 +371,7 @@ class RpcResult(NamedTuple):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcResult"]:
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcResult]:
         if "result" not in obj:
             return None
         return RpcResult(obj.get("result"), obj.get("id"))
@@ -409,7 +410,7 @@ class RpcError(Exception):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional["RpcError"]:
+    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcError]:
         error: Optional[Dict[str, Any]] = obj.get("error")
         if not isinstance(error, dict):
             return None
@@ -422,7 +423,7 @@ class RpcError(Exception):
         return RpcError(code, message, error.get("data"), obj.get("id"))
 
     @classmethod
-    def current(cls, *, data: Optional[str] = None, id: RpcId = None) -> "RpcError":
+    def current(cls, *, data: Optional[str] = None, id: RpcId = None) -> RpcError:
         """Create internal error from current exception"""
         etype, error, _ = sys.exc_info()
         if etype is None:
@@ -436,31 +437,31 @@ class RpcError(Exception):
         return cls.internal_error(data=data, id=id)
 
     @classmethod
-    def parse_error(cls, *, data: Optional[str] = None, id: RpcId = None) -> "RpcError":
+    def parse_error(cls, *, data: Optional[str] = None, id: RpcId = None) -> RpcError:
         return RpcError(-32700, "Parse error", data, id)
 
     @classmethod
     def invalid_request(
         cls, *, data: Optional[str] = None, id: RpcId = None
-    ) -> "RpcError":
+    ) -> RpcError:
         return RpcError(-32600, "Invalid request", data, id)
 
     @classmethod
     def method_not_found(
         cls, *, data: Optional[str] = None, id: RpcId = None
-    ) -> "RpcError":
+    ) -> RpcError:
         return RpcError(-32601, "Method not found", data, id)
 
     @classmethod
     def invalid_params(
         cls, *, data: Optional[str] = None, id: RpcId = None
-    ) -> "RpcError":
+    ) -> RpcError:
         return RpcError(-32602, "Invalid params", data, id)
 
     @classmethod
     def internal_error(
         cls, *, data: Optional[str] = None, id: RpcId = None
-    ) -> "RpcError":
+    ) -> RpcError:
         return RpcError(-32603, "Internal error", data, id)
 
 
@@ -483,13 +484,13 @@ class RpcPeer:
     ]
 
     _handlers: Dict[str, RpcHandler]  # registred handlers
-    _requests: Dict[RpcId, "Future[Any]"]  # unanswerd requests
+    _requests: Dict[RpcId, Future[Any]]  # unanswerd requests
     _requests_next_id: int  # index used for next request
     _write_queue: Deque[RpcMessage]  # messages to be send to the other peer
-    _write_notify: "Event[None]"  # event used to wake up writer
+    _write_notify: Event[None]  # event used to wake up writer
     _is_terminated: bool  # whether peer was terminated
-    _serve_task: Optional["Future[Any]"]  # running serve task
-    _events: "Event[RpcRequest]"  # received events (requests with id = None)
+    _serve_task: Optional[Future[Any]]  # running serve task
+    _events: Event[RpcRequest]  # received events (requests with id = None)
 
     def __init__(self) -> None:
         self._handlers = {}
@@ -502,11 +503,15 @@ class RpcPeer:
         self._events = Event()
 
     @property
-    def events(self) -> "Event[RpcRequest]":
+    def events(self) -> Event[RpcRequest]:
         """Received events (requests with id = None)"""
         if self._is_terminated:
             raise RuntimeError("peer has already been terminated")
         return self._events
+
+    @property
+    def is_terminated(self) -> bool:
+        return self._is_terminated
 
     def register(self, method: str, handler: RpcHandler) -> RpcHandler:
         """Register handler for the provided method name"""
@@ -586,18 +591,11 @@ class RpcPeer:
         except (CancelledError, ConnectionResetError):
             pass
         finally:
-            writer.close()
             self.terminate()
 
     def __aiter__(self) -> AsyncIterator[RpcRequest]:
         """Asynchronus iterator of events (requests with id = None)"""
-        return self
-
-    async def __anext__(self) -> RpcRequest:
-        if self._is_terminated is None:
-            raise StopAsyncIteration
-        event = await self._events
-        return event
+        return RpcPeerIter(self)
 
     def _submit_message(self, message: RpcMessage) -> None:
         """Sumbit message for sending to the other peer"""
@@ -609,6 +607,7 @@ class RpcPeer:
         if isinstance(message, RpcRequest):
             if message.id is None:
                 self._events(message)
+                return None
             handler = self._handlers.get(message.method)
             if handler is not None:
                 rpc_handler = asyncio.create_task(
@@ -621,13 +620,13 @@ class RpcPeer:
                 )
                 self._submit_message(error)
         else:
-            future = self._requests.get(message.id)
+            future = self._requests.pop(message.id, None)
             if isinstance(message, RpcError):
                 if message.id is None:
                     raise message
-                if future is not None:
+                if future is not None and not future.done():
                     future.set_exception(message)
-            elif future is not None:
+            elif future is not None and not future.done():
                 future.set_result(message.result)
 
     async def _handle_request(self, request: RpcRequest, handler: RpcHandler) -> None:
@@ -663,12 +662,16 @@ class RpcPeer:
         """Write subitted messages to the output stream"""
         while not self._is_terminated:
             if not self._write_queue:
-                await writer.drain()
+                # NOTE: we should never yield before waiting for notify
+                #       and chehcking queue for emptiness. Otherwise we might block
+                #       on non-empty write queue.
                 await self._write_notify
                 continue
-            data = self._write_queue.popleft().serialize()
-            writer.write(f"{len(data)}\n".encode())
-            writer.write(data)
+            while self._write_queue:
+                data = self._write_queue.popleft().serialize()
+                writer.write(f"{len(data)}\n".encode())
+                writer.write(data)
+            await writer.drain()
         raise CancelledError()
 
     async def _reader(self, reader: StreamReader) -> None:
@@ -702,6 +705,32 @@ class RpcPeer:
         raise CancelledError()
 
 
+class RpcPeerIter:
+    __slots__ = ["peer", "events"]
+
+    peer: RpcPeer
+    events: Deque[RpcRequest]
+
+    def __init__(self, peer: RpcPeer) -> None:
+        self.peer = peer
+        self.events = deque()
+        self.peer.events.on(self._handler)
+
+    def _handler(self, event: RpcRequest) -> bool:
+        self.events.append(event)
+        return True
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> RpcRequest:
+        if self.peer.is_terminated:
+            raise StopAsyncIteration
+        while not self.events:
+            await self.peer.events
+        return self.events.popleft()
+
+
 # ------------------------------------------------------------------------------
 # Event
 # ------------------------------------------------------------------------------
@@ -723,11 +752,14 @@ class Event(Generic[E]):
             try:
                 if handler(event):
                     self._handlers.add(handler)
-            except Exception:
+            except Exception as error:
+                print(f"handler {handler} failed with error: {error}", file=sys.stderr)
                 pass
         futures = self._futures.copy()
         self._futures.clear()
         for future in futures:
+            if future.done():
+                continue
             future.set_result(event)
 
     def cancel(self) -> None:

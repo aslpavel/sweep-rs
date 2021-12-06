@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Simple tool to maintain and navigate visited path history
 """
+from __future__ import annotations
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -85,7 +86,7 @@ class PathHistory:
     mtime: Optional[int]
     entries: Dict[Path, PathHistoryEntry]
 
-    def __iter__(self) -> Iterator["PathHistoryEntry"]:
+    def __iter__(self) -> Iterator[PathHistoryEntry]:
         return iter(self.entries.values())
 
 
@@ -189,7 +190,7 @@ class FileNode:
 
     path: Path
     is_dir: bool
-    _children: Optional[Dict[str, "FileNode"]]
+    _children: Optional[Dict[str, FileNode]]
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -197,7 +198,7 @@ class FileNode:
         self._children = None if self.is_dir else {}
 
     @property
-    def children(self) -> Dict[str, "FileNode"]:
+    def children(self) -> Dict[str, FileNode]:
         if self._children is not None:
             return self._children
         self._children = {}
@@ -210,10 +211,10 @@ class FileNode:
             pass
         return self._children
 
-    def get(self, name: str) -> Optional["FileNode"]:
+    def get(self, name: str) -> Optional[FileNode]:
         return self.children.get(name)
 
-    def find(self, path: Path) -> Optional["FileNode"]:
+    def find(self, path: Path) -> Optional[FileNode]:
         node = self
         for name in path.parts:
             node_next = node.get(name)
@@ -273,21 +274,21 @@ KEY_LIST = "path.search_in_directory"
 KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
 KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
-KEY_ALL = {
-    KEY_LIST: "ctrl+i",  # Tab
-    KEY_LIST: "tab",
-    KEY_PARENT: "backspace",
-    KEY_HISTORY: "alt+.",
-    KEY_OPEN: "ctrl+o",
+KEY_ALL: Dict[str, List[str]] = {
+    KEY_LIST: ["ctrl+i", "tab"],
+    KEY_PARENT: ["backspace"],
+    KEY_HISTORY: ["alt+."],
+    KEY_OPEN: ["ctrl+o"],
 }
 
 
 class PathSelector:
-    __slots__ = ["sweep", "history", "path", "path_cache"]
+    __slots__ = ["sweep", "history", "path", "path_cache", "show_path_task"]
     sweep: Sweep[PathItem]
     history: PathHistoryStore
     path: Optional[Path]
     path_cache: FileNode
+    show_path_task: Optional[asyncio.Task[None]]
 
     def __init__(self, sweep: Sweep[PathItem], history: PathHistoryStore) -> None:
         self.sweep = sweep
@@ -296,6 +297,7 @@ class PathSelector:
         # Path - path mode
         self.path = None
         self.path_cache = FileNode(Path("/"))
+        self.show_path_task = None
 
     async def show_history(self, reset_niddle: bool = True) -> None:
         """Show history"""
@@ -335,21 +337,28 @@ class PathSelector:
         """Show current path"""
         if self.path is None:
             return
+        if self.show_path_task is not None:
+            self.show_path_task.cancel()
         if reset_niddle:
             await self.sweep.query_set("")
         await self.sweep.prompt_set(str(collapse_path(self.path)), SEARCH_ICON)
         node = self.path_cache.find(self.path.relative_to("/"))
         if node is not None:
             await self.sweep.items_clear()
-            await self.sweep.items_extend(node.candidates())
+            # extending items without blocking
+            loop = asyncio.get_running_loop()
+            self.show_path_task = loop.create_task(
+                self.sweep.items_extend(node.candidates())
+            )
 
     async def run(self, path: Optional[Path] = None) -> Optional[Path]:
         """Run path selelector
 
         If path is provided it will start in path mode otherwise in history mode
         """
-        for name, key in KEY_ALL.items():
-            await self.sweep.bind(key, name)
+        for name, keys in KEY_ALL.items():
+            for key in keys:
+                await self.sweep.bind(key, name)
 
         if path and path.is_dir():
             self.path = path

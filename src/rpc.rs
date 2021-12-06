@@ -791,7 +791,7 @@ impl RpcPeer {
         let method = method.into();
         let params = params.into();
         let span = tracing::debug_span!(
-            "outging request",
+            "outgoing request",
             method = %method,
             params = %params,
             id = ?id,
