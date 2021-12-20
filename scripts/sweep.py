@@ -517,7 +517,6 @@ class RpcPeer:
         """Register handler for the provided method name"""
         if self._is_terminated:
             raise RuntimeError("peer has already been terminated")
-
         self._handlers[method] = handler
         return handler
 
@@ -569,11 +568,11 @@ class RpcPeer:
         requests = self._requests.copy()
         self._requests.clear()
         for request in requests.values():
-            request.cancel("rpc peer has terminated")
+            request.cancel()
         self._events.cancel()
         # cancel serve future
         if self._serve_task is not None:
-            self._serve_task.cancel("rpc peer has terminated")
+            self._serve_task.cancel()
 
     async def serve(self, reader: StreamReader, writer: StreamWriter) -> None:
         """Start serving rpc peer over provided streams"""
@@ -607,7 +606,6 @@ class RpcPeer:
         if isinstance(message, RpcRequest):
             if message.id is None:
                 self._events(message)
-                return None
             handler = self._handlers.get(message.method)
             if handler is not None:
                 rpc_handler = asyncio.create_task(
@@ -753,7 +751,9 @@ class Event(Generic[E]):
                 if handler(event):
                     self._handlers.add(handler)
             except Exception as error:
-                print(f"handler {handler} failed with error: {error}", file=sys.stderr)
+                sys.stderr.write(
+                    f"handler {handler} failed with error: {repr(error)}\n"
+                )
                 pass
         futures = self._futures.copy()
         self._futures.clear()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Interactively choose entry from bash history
 """
+from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import argparse

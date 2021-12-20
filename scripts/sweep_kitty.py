@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run sweep inside a newly create kitty window
 """
+from __future__ import annotations
 from pathlib import Path
 import argparse
 import asyncio
