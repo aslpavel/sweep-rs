@@ -611,7 +611,7 @@ class RpcPeer:
                 rpc_handler = asyncio.create_task(
                     self._handle_request(message, handler)
                 )
-                rpc_handler.set_name("rpc handler for {message.method}")
+                rpc_handler.set_name(f"rpc handler for {message.method}")
             elif message.id is not None:
                 error = RpcError.method_not_found(
                     id=message.id, data=str(message.method)
