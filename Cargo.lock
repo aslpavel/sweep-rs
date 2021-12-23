@@ -962,9 +962,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "surf_n_term"
-version = "0.3.10"
+version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8de9e4b01ef91e52a4d6dbbceabab30d00d5395a78aa162dd9e761ff52b1460"
+checksum = "ae35171b11eead67da3c5522798e7081044022235117bf6d5e85a4c51f14cd7b"
 dependencies = [
  "flate2",
  "fnv",
@@ -1003,9 +1003,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.82"
+version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8daf5dd0bb60cbd4137b1b587d2fc0ae729bc07cf01cd70b36a1ed5ade3b9d59"
+checksum = "23a1dfb999630e338648c83e91c59a4e9fb7620f520c3194b6b89e276f2f1959"
 dependencies = [
  "proc-macro2",
  "quote",
