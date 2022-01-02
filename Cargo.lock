@@ -962,9 +962,9 @@ checksum = "1ecab6c735a6bb4139c0caafd0cc3635748bbb3acf4550e8138122099251f309"
 
 [[package]]
 name = "surf_n_term"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae35171b11eead67da3c5522798e7081044022235117bf6d5e85a4c51f14cd7b"
+checksum = "478e7a1070b4eae2bb115482f56e9631640ee6b01b6004b6021b40ec05af6e98"
 dependencies = [
  "flate2",
  "fnv",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "anyhow",
  "argh",
