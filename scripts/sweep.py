@@ -4,6 +4,7 @@
 # pyright: strict
 from __future__ import annotations
 import asyncio
+from asyncio.tasks import Task
 import inspect
 import json
 import os
@@ -184,8 +185,7 @@ class Sweep(Generic[I]):
         else:
             self._io_sock = await self._proc_pair_socket()
         reader, writer = await asyncio.open_unix_connection(sock=self._io_sock)
-        peer = asyncio.create_task(self._peer.serve(reader, writer))
-        peer.set_name("sweep rpc peer")
+        create_task(self._peer.serve(reader, writer), "sweep-rpc-peer")
 
         return self
 
@@ -320,7 +320,7 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
             os.unlink(path)
             server.close()
 
-    return asyncio.create_task(accept())
+    return create_task(accept(), "unix-server-once")
 
 
 # ------------------------------------------------------------------------------
@@ -608,10 +608,10 @@ class RpcPeer:
                 self._events(message)
             handler = self._handlers.get(message.method)
             if handler is not None:
-                rpc_handler = asyncio.create_task(
-                    self._handle_request(message, handler)
+                create_task(
+                    self._handle_request(message, handler),
+                    f"rpc-handler-{message.method}",
                 )
-                rpc_handler.set_name(f"rpc handler for {message.method}")
             elif message.id is not None:
                 error = RpcError.method_not_found(
                     id=message.id, data=str(message.method)
@@ -727,6 +727,16 @@ class RpcPeerIter:
         while not self.events:
             await self.peer.events
         return self.events.popleft()
+
+
+V = TypeVar("V")
+
+
+def create_task(coro: Awaitable[V], name: str) -> Task[V]:
+    task = asyncio.create_task(coro)
+    if sys.version_info >= (3, 8):
+        task.set_name(name)
+    return task
 
 
 # ------------------------------------------------------------------------------
