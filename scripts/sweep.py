@@ -218,9 +218,9 @@ class Sweep(Generic[I]):
         return await io_sock_accept
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
+        await self.terminate()
         if isinstance(ev, CancelledError):
             return True
-        await self.terminate()
         return False
 
     def __aiter__(self) -> AsyncIterator[SweepEvent[I]]:
