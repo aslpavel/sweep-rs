@@ -3,13 +3,7 @@ use anyhow::Error;
 use futures::Stream;
 use serde::{de, ser::SerializeMap, Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fmt,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{borrow::Cow, collections::HashMap, fmt, str::FromStr, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,7 +36,7 @@ impl Candidate {
             inner: Arc::new(CandidateInner {
                 fields,
                 chars,
-                extra: extra.unwrap_or_else(HashMap::new),
+                extra: extra.unwrap_or_default(),
             }),
         }
     }

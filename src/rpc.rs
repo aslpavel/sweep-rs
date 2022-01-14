@@ -92,7 +92,6 @@ impl RpcParams {
                 data: format!("missing required keyword argument: {}", name),
             })
             .and_then(|param| {
-                let name: &str = name.as_ref();
                 serde_json::from_value(param).map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
                     data: format!("[arg_name={}] {}", name, err),
