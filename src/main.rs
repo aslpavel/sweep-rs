@@ -51,7 +51,7 @@ async fn main() -> Result<(), Error> {
         None => {
             // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
             // from asyncio python interface, sweep subprocess is created with
-            // socketpair as its {stdin|stdout}, but `isatty` when used on socket
+            // `socketpair` as its {stdin|stdout}, but `isatty` when used on socket
             // under MacOS causes "Operation not supported on socket" error.
             #[cfg(not(target_os = "macos"))]
             {

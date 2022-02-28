@@ -9,10 +9,10 @@ const CANDIDATE: &str = "./benchmark/target/release/.fingerprint/semver-parser-a
 
 pub fn scorer_benchmark(c: &mut Criterion) {
     let haystack = Candidate::from_string(CANDIDATE.to_owned(), ' ', None);
-    let niddle: Vec<_> = "test".chars().collect();
-    let fuzzy = FuzzyScorer::new(niddle.clone());
-    let substr = SubstrScorer::new(niddle.clone());
-    let kmp = KMPPattern::new(niddle);
+    let needle: Vec<_> = "test".chars().collect();
+    let fuzzy = FuzzyScorer::new(needle.clone());
+    let substr = SubstrScorer::new(needle.clone());
+    let kmp = KMPPattern::new(needle);
 
     let mut group = c.benchmark_group("scorer");
     group.throughput(Throughput::Elements(1 as u64));

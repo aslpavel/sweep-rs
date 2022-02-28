@@ -23,6 +23,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Coroutine,
     Deque,
     Dict,
     Generator,
@@ -62,7 +63,7 @@ class SweepSelect(Generic[I]):
 
 
 class SweepIcon(NamedTuple):
-    """Rasterizable SVG icon"""
+    """SVG icon"""
 
     path: str
     view_box: Optional[Tuple[float, float, float, float]] = None
@@ -89,7 +90,7 @@ async def sweep(
     prompt_icon: Optional[SweepIcon] = None,
     **options: Any,
 ) -> Optional[I]:
-    """Convinience wrapper around `Sweep`
+    """Convenience wrapper around `Sweep`
 
     Useful when you only need to select one candidate from a list of items
     """
@@ -483,8 +484,8 @@ class RpcPeer:
         "_events",
     ]
 
-    _handlers: Dict[str, RpcHandler]  # registred handlers
-    _requests: Dict[RpcId, Future[Any]]  # unanswerd requests
+    _handlers: Dict[str, RpcHandler]  # registered handlers
+    _requests: Dict[RpcId, Future[Any]]  # unanswered requests
     _requests_next_id: int  # index used for next request
     _write_queue: Deque[RpcMessage]  # messages to be send to the other peer
     _write_notify: Event[None]  # event used to wake up writer
@@ -557,14 +558,14 @@ class RpcPeer:
         return await future
 
     def __getattr__(self, method: str) -> Callable[..., Any]:
-        """Conviniet way to call remote methods"""
+        """Convenient way to call remote methods"""
         return partial(self.call, method)
 
     def terminate(self) -> None:
         if self._is_terminated:
             return
         self._is_terminated = True
-        # cancel reqeusts and events
+        # cancel requests and events
         requests = self._requests.copy()
         self._requests.clear()
         for request in requests.values():
@@ -593,7 +594,7 @@ class RpcPeer:
             self.terminate()
 
     def __aiter__(self) -> AsyncIterator[RpcRequest]:
-        """Asynchronus iterator of events (requests with id = None)"""
+        """Asynchronous iterator of events (requests with id = None)"""
         return RpcPeerIter(self)
 
     def _submit_message(self, message: RpcMessage) -> None:
@@ -602,7 +603,7 @@ class RpcPeer:
         self._write_notify(None)
 
     def _handle_message(self, message: RpcMessage) -> None:
-        """Handle incomming messages"""
+        """Handle incoming messages"""
         if isinstance(message, RpcRequest):
             if message.id is None:
                 self._events(message)
@@ -657,11 +658,11 @@ class RpcPeer:
             self._submit_message(response)
 
     async def _writer(self, writer: StreamWriter) -> None:
-        """Write subitted messages to the output stream"""
+        """Write submitted messages to the output stream"""
         while not self._is_terminated:
             if not self._write_queue:
                 # NOTE: we should never yield before waiting for notify
-                #       and chehcking queue for emptiness. Otherwise we might block
+                #       and checking queue for emptiness. Otherwise we might block
                 #       on non-empty write queue.
                 await self._write_notify
                 continue
@@ -673,7 +674,7 @@ class RpcPeer:
         raise CancelledError()
 
     async def _reader(self, reader: StreamReader) -> None:
-        """Read and handle incomming messages"""
+        """Read and handle incoming messages"""
         while not self._is_terminated:
             # read json
             size_data = await reader.readline()
@@ -732,7 +733,7 @@ class RpcPeerIter:
 V = TypeVar("V")
 
 
-def create_task(coro: Awaitable[V], name: str) -> Task[V]:
+def create_task(coro: Coroutine[Any, Any, V], name: str) -> Task[V]:
     task = asyncio.create_task(coro)
     if sys.version_info >= (3, 8):
         task.set_name(name)
@@ -773,7 +774,7 @@ class Event(Generic[E]):
             future.set_result(event)
 
     def cancel(self) -> None:
-        """Cacnel all waiting futures"""
+        """Cancel all waiting futures"""
         futures = self._futures.copy()
         self._futures.clear()
         for future in futures:

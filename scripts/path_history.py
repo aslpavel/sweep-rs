@@ -299,7 +299,7 @@ class PathSelector:
         self.path_cache = FileNode(Path("/"))
         self.show_path_task = None
 
-    async def show_history(self, reset_niddle: bool = True) -> None:
+    async def show_history(self, reset_needle: bool = True) -> None:
         """Show history"""
         # load history items
         history = self.history.load()
@@ -328,18 +328,18 @@ class PathSelector:
 
         # update sweep
         await self.sweep.prompt_set("PATH HISTORY", HISTORY_ICON)
-        if reset_niddle:
+        if reset_needle:
             await self.sweep.query_set("")
         await self.sweep.items_clear()
         await self.sweep.items_extend(candidates)
 
-    async def show_path(self, reset_niddle: bool = True) -> None:
+    async def show_path(self, reset_needle: bool = True) -> None:
         """Show current path"""
         if self.path is None:
             return
         if self.show_path_task is not None:
             self.show_path_task.cancel()
-        if reset_niddle:
+        if reset_needle:
             await self.sweep.query_set("")
         await self.sweep.prompt_set(str(collapse_path(self.path)), SEARCH_ICON)
         node = self.path_cache.find(self.path.relative_to("/"))
@@ -362,9 +362,9 @@ class PathSelector:
 
         if path and path.is_dir():
             self.path = path
-            await self.show_path(reset_niddle=False)
+            await self.show_path(reset_needle=False)
         else:
-            await self.show_history(reset_niddle=False)
+            await self.show_history(reset_needle=False)
 
         async for event in self.sweep:
             if isinstance(event, SweepSelect) and event.item is not None:
@@ -376,16 +376,16 @@ class PathSelector:
             elif isinstance(event, SweepBind):
                 # list directory under cursor
                 if event.tag == KEY_LIST:
-                    niddle = (await self.sweep.query_get()).strip()
+                    needle = (await self.sweep.query_get()).strip()
                     entry = await self.sweep.items_current()
                     if (
-                        niddle.startswith("/")
-                        or niddle.startswith("~")
+                        needle.startswith("/")
+                        or needle.startswith("~")
                         or entry is None
                     ):
-                        self.path, niddle = get_path_and_query(niddle)
-                        await self.sweep.query_set(niddle)
-                        await self.show_path(reset_niddle=False)
+                        self.path, needle = get_path_and_query(needle)
+                        await self.sweep.query_set(needle)
+                        await self.show_path(reset_needle=False)
                     else:
                         path = Path(entry["path"])
                         if self.path is None:

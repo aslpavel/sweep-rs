@@ -113,8 +113,8 @@ where
 
 #[derive(Debug)]
 enum SweepRequest<H> {
-    NiddleSet(String),
-    NiddleGet(oneshot::Sender<String>),
+    NeedleSet(String),
+    NeedleGet(oneshot::Sender<String>),
     PromptSet(Option<String>, Option<Glyph>),
     Bind(Vec<Key>, String),
     Terminate,
@@ -188,15 +188,15 @@ where
         self.ranker.haystack_reverse()
     }
 
-    /// Set niddle to the spcified string
-    pub fn query_set(&self, niddle: impl AsRef<str>) {
-        self.send_request(SweepRequest::NiddleSet(niddle.as_ref().to_string()))
+    /// Set needle to the specified string
+    pub fn query_set(&self, needle: impl AsRef<str>) {
+        self.send_request(SweepRequest::NeedleSet(needle.as_ref().to_string()))
     }
 
-    /// Get current niddle value
+    /// Get current needle value
     pub async fn query_get(&self) -> Result<String, Error> {
         let (send, recv) = oneshot::channel();
-        self.send_request(SweepRequest::NiddleGet(send));
+        self.send_request(SweepRequest::NeedleGet(send));
         Ok(recv.await?)
     }
 
@@ -205,7 +205,7 @@ where
         self.ranker.scorer_set(scorer)
     }
 
-    /// Swith to next scorer
+    /// Switch to next scorer
     pub async fn scorer_by_name(&self, name: Option<String>) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::ScorerByName(name.clone(), send));
@@ -446,7 +446,7 @@ struct SweepState<H> {
     prompt: String,
     // prompt icon
     prompt_icon: Option<Glyph>,
-    // current state of the key chrod
+    // current state of the key chord
     key_map_state: Vec<Key>,
     // user action executed on backspace when input is empty
     key_empty_backspace: Option<String>,
@@ -599,7 +599,7 @@ where
         mut view: impl SurfaceMut<Item = Cell>,
         term_caps: &TerminalCaps,
     ) -> Result<(), Error> {
-        self.ranker.niddle_set(self.input.get().collect());
+        self.ranker.needle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
         let basic = term_caps.depth == ColorDepth::Gray;
 
@@ -848,8 +848,8 @@ where
                         PeerSet(peer) => {
                             state_peer.replace(peer);
                         }
-                        NiddleSet(niddle) => state.input.set(niddle.as_ref()),
-                        NiddleGet(resolve) => {
+                        NeedleSet(needle) => state.input.set(needle.as_ref()),
+                        NeedleGet(resolve) => {
                             mem::drop(resolve.send(state.input.get().collect()));
                         }
                         Terminate => return Ok(TerminalAction::Quit(())),

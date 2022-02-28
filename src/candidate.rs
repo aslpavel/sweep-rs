@@ -13,7 +13,7 @@ struct CandidateInner {
     // searchable characters
     chars: Vec<char>,
     // extra fields extracted from candidate object during parsing, this
-    // can be useful when candidate some additional data assocaited with it
+    // can be useful when candidate some additional data associated with it
     extra: HashMap<String, Value>,
 }
 
@@ -190,7 +190,7 @@ impl<'de> Deserialize<'de> for Candidate {
 
 /// Split string into chunks separated by `sep` char.
 ///
-/// Separated a glued to the begining of the chunk. Adjacent separators are treated as
+/// Separated a glued to the beginning of the chunk. Adjacent separators are treated as
 /// one separator.
 pub fn split_inclusive(sep: char, string: &str) -> impl Iterator<Item = &'_ str> {
     SplitInclusive {

@@ -8,7 +8,7 @@ use std::{
 
 /// Rank slice of items
 ///
-/// Each item from heystack is converted to `Haystack` item with provided
+/// Each item from haystack is converted to `Haystack` item with provided
 /// `focus` function, and then resulting vector is scored and sorted based
 /// on score.
 pub fn rank<S, H, F, FR>(
@@ -43,7 +43,7 @@ where
 /// TODO:
 ///   - we should probably path whole ranker result here?
 ///   - haystack probably should include index of item if we want keep order to work properly
-pub fn runk_mut<S, H>(scorer: S, haystack: &mut [ScoreResult<H>])
+pub fn rank_mut<S, H>(scorer: S, haystack: &mut [ScoreResult<H>])
 where
     S: Scorer + Clone,
     H: Haystack,
@@ -56,22 +56,22 @@ where
 }
 */
 
-/// Funciton to create scorer with the given niddle
+/// Function to create scorer with the given needle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
 
-/// Create case-insensetive fuzzy scorer builder
+/// Create case-insensitive fuzzy scorer builder
 pub fn fuzzy_scorer() -> ScorerBuilder {
-    Arc::new(|niddle: &str| {
-        let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-        Arc::new(FuzzyScorer::new(niddle))
+    Arc::new(|needle: &str| {
+        let needle: Vec<_> = needle.chars().flat_map(char::to_lowercase).collect();
+        Arc::new(FuzzyScorer::new(needle))
     })
 }
 
-/// Create case-insensetive substr scorer builder
+/// Create case-insensitive substring scorer builder
 pub fn substr_scorer() -> ScorerBuilder {
-    Arc::new(|niddle: &str| {
-        let niddle: Vec<_> = niddle.chars().flat_map(char::to_lowercase).collect();
-        Arc::new(SubstrScorer::new(niddle))
+    Arc::new(|needle: &str| {
+        let needle: Vec<_> = needle.chars().flat_map(char::to_lowercase).collect();
+        Arc::new(SubstrScorer::new(needle))
     })
 }
 
@@ -79,13 +79,13 @@ enum RankerCmd<H> {
     HaystackClear,
     HaystackReverse,
     HaystackAppend(Vec<H>),
-    Niddle(String),
+    Needle(String),
     Scorer(ScorerBuilder),
 }
 
 /// Ranker result
 pub struct RankerResult<H> {
-    /// Scored and sorted heystack items
+    /// Scored and sorted haystack items
     pub result: Vec<ScoreResult<H>>,
     /// Scorer used during ranking
     pub scorer: Arc<dyn Scorer>,
@@ -93,7 +93,7 @@ pub struct RankerResult<H> {
     pub duration: Duration,
     /// Full size of the haystack
     pub haystack_size: usize,
-    /// Value used to distinguish differnt runs of the ranker
+    /// Value used to distinguish different runs of the ranker
     pub generation: usize,
 }
 
@@ -128,7 +128,7 @@ where
         N: FnMut() -> bool + Send + 'static,
     {
         let result: Arc<Mutex<Arc<RankerResult<H>>>> = Default::default();
-        let mut niddle = String::new();
+        let mut needle = String::new();
         let mut haystack = Vec::new();
         let mut generation = 0usize;
         let (sender, receiver) = unbounded();
@@ -146,8 +146,8 @@ where
                         };
                         let mut haystack_new = Vec::new();
                         let mut haystack_reverse = false;
-                        let mut niddle_updated = false; // niddle was updated
-                        let mut niddle_prefix = true; // previous niddle is a prefix of the new one
+                        let mut needle_updated = false; // needle was updated
+                        let mut needle_prefix = true; // previous needle is a prefix of the new one
                         let mut scorer_updated = false;
                         for cmd in Some(cmd).into_iter().chain(receiver.try_iter()) {
                             match cmd {
@@ -159,11 +159,11 @@ where
                                     haystack_new.clear();
                                     scorer_updated = true;
                                 }
-                                RankerCmd::Niddle(niddle_new) if niddle_new != niddle => {
-                                    niddle_updated = true;
-                                    niddle_prefix =
-                                        niddle_prefix && niddle_new.starts_with(&niddle);
-                                    niddle = niddle_new;
+                                RankerCmd::Needle(needle_new) if needle_new != needle => {
+                                    needle_updated = true;
+                                    needle_prefix =
+                                        needle_prefix && needle_new.starts_with(&needle);
+                                    needle = needle_new;
                                 }
                                 RankerCmd::Scorer(scorer_new) => {
                                     scorer_builder = scorer_new;
@@ -185,13 +185,13 @@ where
                         let start = Instant::now();
                         let result_new = if scorer_updated {
                             // re-rank all data
-                            scorer = scorer_builder(niddle.as_ref());
+                            scorer = scorer_builder(needle.as_ref());
                             rank(&scorer, keep_order, haystack.as_ref(), Clone::clone)
-                        } else if !niddle_updated && haystack_new.is_empty() {
+                        } else if !needle_updated && haystack_new.is_empty() {
                             continue;
-                        } else if niddle_updated {
-                            scorer = scorer_builder(niddle.as_ref());
-                            if niddle_prefix && haystack_new.is_empty() {
+                        } else if needle_updated {
+                            scorer = scorer_builder(needle.as_ref());
+                            if needle_prefix && haystack_new.is_empty() {
                                 // incremental ranking
                                 let result_old = result.with(|result| Arc::clone(result));
                                 rank(&scorer, keep_order, result_old.result.as_ref(), |r| {
@@ -264,10 +264,10 @@ where
     }
 
     /// Set new needle
-    pub fn niddle_set(&self, niddle: String) {
+    pub fn needle_set(&self, needle: String) {
         self.sender
-            .send(RankerCmd::Niddle(niddle))
-            .expect("failed to send niddle");
+            .send(RankerCmd::Needle(needle))
+            .expect("failed to send needle");
     }
 
     /// Set new scorer

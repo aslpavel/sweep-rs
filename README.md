@@ -2,19 +2,19 @@
 Sweep is a tool used to interactively search through a list of entries. It is inspired by [fzf](https://github.com/junegunn/fzf).
 ![screenshot](resources/sweep.png)
 
-### Feautres
+### Features
   - Fast
   - Beautiful
-  - Easily custmizable color palette by specifiying only three main colors from which all other colors are drived.
-  - JSON-RPC proctol can be used to communicate with sweep process.
-  - Includes asyncio [pyton bingins](scripts/sweep.py)
+  - Easily customizable color palette by specifying only three main colors from which all other colors are derived.
+  - JSON-RPC protocol can be used to communicate with sweep process.
+  - Includes asyncio [python binding](scripts/sweep.py)
   - Configurable key bindings
 
 ### Usage
 #### Basic usage
 <details>
   <summary><code>$ sweep --help</code></summary>
-  
+
 ```
 Usage: sweep [--height <height>] [-p <prompt>] [--query <query>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--debug] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--version]
 
@@ -41,11 +41,11 @@ Options:
   --version         show sweep version and quit
   --help            display usage information
 ```
-  
+
 </details>
-  
+
 #### Key bindings
-Current key bindings can be viewed by pressing `ctrc+h`.
+Current key bindings can be viewed by pressing `ctrl+h`.
 <details>
   <summary>default look like this</summary>
 
@@ -70,9 +70,9 @@ Current key bindings can be viewed by pressing `ctrc+h`.
 |input.page.prev       | "pageup"          |
 
 </details>
-  
+
 #### Bash history integration
-Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`. 
+Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`.
 <details>
   <summary>Add this to your <code>~/.bashrc</code></summary>
 
@@ -134,10 +134,10 @@ This result in the following key binding in your bash session
 
 
 #### Sway run command integration
-There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates seprate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
+There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates separate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
 <details>
   <summary>Add this to your sway config</summary>
-  
+
 ```
 set $run_menu j4-dmenu-desktop --display-binary --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --wrapper "swaymsg -t command exec --"
 for_window [app_id="kitty" title="sweep-menu"] {
@@ -188,8 +188,8 @@ Item = String | {entry: [Field], ...}
 Icon = {
     path?: String,                    // d attribute of SVG path (default: empty path)
     view_box?: [float; 4],            // minx, miny, width, height (default: bounding box of path)
-    fill_rule?: "nonzero" | "evenodd" // same as SVG fill-rule (defualt: "nonzero")
-    size?: [float; 2],                // height, width in terminal cells (defualt: [1, 1])
+    fill_rule?: "nonzero" | "evenodd" // same as SVG fill-rule (default: "nonzero")
+    size?: [float; 2],                // height, width in terminal cells (default: [1, 1])
 }
 ```
 - **Methods**
@@ -200,11 +200,11 @@ items_current() -> Item?                 // Get currently selected item if any
 query_set(query: String)                 // Set query string used to filter items
 query_get() -> String                    // Get query string used to filter items
 terminate()                              // Gracefully terminate sweep process
-prompt_set(prompt: String, icon?: Icon)  // Set prompt string (lable string before search input)
-bind(key: String, tag: String)           // Assign new key binding. `key` is a space separted list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
+prompt_set(prompt: String, icon?: Icon)  // Set prompt string (label string before search input)
+bind(key: String, tag: String)           // Assign new key binding. `key` is a space separated list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
 ```
-- **Events** (encoded as method calls comming from the sweep process)
+- **Events** (encoded as method calls coming from the sweep process)
 ```
 select(item: Item)  // Entry was selected by pressing `Enter` ("sweep.select" action)
-bind(tag: String)   // Key binding was pressed, with previously registred key binding
+bind(tag: String)   // Key binding was pressed, with previously registered key binding
 ```

@@ -114,11 +114,11 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
     }
 }
 
-/// Heystack
+/// Haystack
 ///
-/// Item that can scored against the niddle by the scorer.
+/// Item that can scored against the needle by the scorer.
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
-    /// Slice containing all searchable lowercased characters. Characters from
+    /// Slice containing all searchable lowercase characters. Characters from
     /// the inactive fields will not be present in this slice.
     fn chars(&self) -> &[char];
 
@@ -178,7 +178,7 @@ impl Haystack for StringHaystack {
 
 /// Scorer
 ///
-/// Scorer is used to score haystack against the niddle stored inside the scorer
+/// Scorer is used to score haystack against the needle stored inside the scorer
 pub trait Scorer: Send + Sync + Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
@@ -186,7 +186,7 @@ pub trait Scorer: Send + Sync + Debug {
     /// Actual scorer non generic implementation
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool;
 
-    /// Generic implementation over anyting that implements `Haystack` trati.
+    /// Generic implementation over anything that implements `Haystack` trait.
     fn score<H>(&self, haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
@@ -203,7 +203,7 @@ pub trait Scorer: Send + Sync + Debug {
     }
 }
 
-/// Matched positions in heystack
+/// Matched positions in haystack
 pub type Positions = Vec<usize>;
 
 /// Result of the scoring
@@ -305,8 +305,8 @@ pub struct SubstrScorer {
 }
 
 impl SubstrScorer {
-    pub fn new(niddle: Vec<char>) -> Self {
-        let words = niddle
+    pub fn new(needle: Vec<char>) -> Self {
+        let words = needle
             .split(|c| *c == ' ')
             .filter_map(|word| {
                 if word.is_empty() {
@@ -363,54 +363,54 @@ impl Scorer for SubstrScorer {
 /// Knuth-Morris-Pratt pattern
 #[derive(Debug, Clone)]
 pub struct KMPPattern<T> {
-    niddle: Vec<T>,
+    needle: Vec<T>,
     table: Vec<usize>,
 }
 
 impl<T: PartialEq> KMPPattern<T> {
-    pub fn new(niddle: Vec<T>) -> Self {
-        if niddle.is_empty() {
+    pub fn new(needle: Vec<T>) -> Self {
+        if needle.is_empty() {
             return Self {
-                niddle,
+                needle,
                 table: Vec::new(),
             };
         }
-        let mut table = vec![0; niddle.len()];
+        let mut table = vec![0; needle.len()];
         let mut i = 0;
-        for j in 1..niddle.len() {
-            while i > 0 && niddle[i] != niddle[j] {
+        for j in 1..needle.len() {
+            while i > 0 && needle[i] != needle[j] {
                 i = table[i - 1];
             }
-            if niddle[i] == niddle[j] {
+            if needle[i] == needle[j] {
                 i += 1;
             }
             table[j] = i;
         }
-        Self { niddle, table }
+        Self { needle, table }
     }
 
     pub fn len(&self) -> usize {
-        self.niddle.len()
+        self.needle.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.niddle.is_empty()
+        self.needle.is_empty()
     }
 
     /// Search for the match in the haystack, return start of the match on success
     pub fn search(&self, haystack: impl AsRef<[T]>) -> Option<usize> {
-        if self.niddle.is_empty() {
+        if self.needle.is_empty() {
             return None;
         }
         let mut n_index = 0;
         for (h_index, h) in haystack.as_ref().iter().enumerate() {
-            while n_index > 0 && self.niddle[n_index] != *h {
+            while n_index > 0 && self.needle[n_index] != *h {
                 n_index = self.table[n_index - 1];
             }
-            if self.niddle[n_index] == *h {
+            if self.needle[n_index] == *h {
                 n_index += 1;
             }
-            if n_index == self.niddle.len() {
+            if n_index == self.needle.len() {
                 return Some(h_index + 1 - n_index);
             }
         }
@@ -418,12 +418,12 @@ impl<T: PartialEq> KMPPattern<T> {
     }
 }
 
-/// Fuzzy scorrer
+/// Fuzzy scorer
 ///
-/// This will match any haystack item as long as the niddle is a sub-sequence of the heystack.
+/// This will match any haystack item as long as the needle is a sub-sequence of the haystack.
 #[derive(Clone, Debug)]
 pub struct FuzzyScorer {
-    niddle: Vec<char>,
+    needle: Vec<char>,
 }
 
 thread_local! {
@@ -431,8 +431,8 @@ thread_local! {
 }
 
 impl FuzzyScorer {
-    pub fn new(niddle: Vec<char>) -> Self {
-        Self { niddle }
+    pub fn new(needle: Vec<char>) -> Self {
+        Self { needle }
     }
 
     fn bonus(haystack: &[char], bonus: &mut [f32]) {
@@ -460,8 +460,8 @@ impl FuzzyScorer {
         }
     }
 
-    fn subseq(niddle: &[char], haystack: &[char]) -> bool {
-        let mut n_iter = niddle.iter();
+    fn subseq(needle: &[char], haystack: &[char]) -> bool {
+        let mut n_iter = needle.iter();
         let mut n = if let Some(n) = n_iter.next() {
             n
         } else {
@@ -479,16 +479,16 @@ impl FuzzyScorer {
         false
     }
 
-    // This function is only called when we know that niddle is a sub-string of
+    // This function is only called when we know that needle is a sub-string of
     // the haystack string.
     fn score_impl(
-        niddle: &[char],
+        needle: &[char],
         haystack: &[char],
         score: &mut Score,
         positions: &mut Positions,
     ) -> bool {
         positions.clear();
-        let n_len = niddle.len();
+        let n_len = needle.len();
         let h_len = haystack.len();
 
         if n_len == 0 || n_len == h_len {
@@ -499,7 +499,7 @@ impl FuzzyScorer {
         }
 
         // find scores
-        // use thread local storage for all data needed for calulating score and positions
+        // use thread local storage for all data needed for calculating score and positions
         let mut data = DATA_CELL.with(|data_cell| data_cell.take());
         data.clear();
         data.resize(n_len * h_len * 2 + h_len, 0.0);
@@ -507,9 +507,9 @@ impl FuzzyScorer {
         let (bonus_score, matrix_data) = data.split_at_mut(h_len);
         let (d_data, m_data) = matrix_data.split_at_mut(n_len * h_len);
         Self::bonus(haystack, bonus_score);
-        let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with niddle[..i]
-        let mut m = ScoreMatrix::new(h_len, m_data); // best score for niddle[..i]
-        for (i, n_char) in niddle.iter().enumerate() {
+        let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with needle[..i]
+        let mut m = ScoreMatrix::new(h_len, m_data); // best score for needle[..i]
+        for (i, n_char) in needle.iter().enumerate() {
             let mut prev_score = f32::NEG_INFINITY;
             let gap_score = if i == n_len - 1 {
                 SCORE_GAP_TRAILING
@@ -569,8 +569,8 @@ impl Scorer for FuzzyScorer {
     }
 
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
-        Self::subseq(self.niddle.as_ref(), haystack)
-            && Self::score_impl(self.niddle.as_ref(), haystack, score, positions)
+        Self::subseq(self.needle.as_ref(), haystack)
+            && Self::score_impl(self.needle.as_ref(), haystack, score, positions)
     }
 }
 
@@ -629,8 +629,8 @@ mod tests {
 
     #[test]
     fn test_fuzzy_scorer() {
-        let niddle: Vec<_> = "one".chars().collect();
-        let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(niddle));
+        let needle: Vec<_> = "one".chars().collect();
+        let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
         let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
         assert_eq!(result.positions, vec![1, 2, 4]);
@@ -641,15 +641,15 @@ mod tests {
 
     #[test]
     fn test_substr_scorer() {
-        let niddle: Vec<_> = "one  ababc".chars().collect();
-        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
+        let needle: Vec<_> = "one  ababc".chars().collect();
+        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
         let score = scorer
             .score(StringHaystack::new(" one babababcd "))
             .unwrap();
         assert_eq!(score.positions, vec![1, 2, 3, 8, 9, 10, 11, 12]);
 
-        let niddle: Vec<_> = "o".chars().collect();
-        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(niddle));
+        let needle: Vec<_> = "o".chars().collect();
+        let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
         let score = scorer.score(StringHaystack::new("one")).unwrap();
         assert_eq!(score.positions, vec![0]);
     }

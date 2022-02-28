@@ -1,4 +1,4 @@
-//! Basic asynchronus [JSON-RPC](https://www.jsonrpc.org/specification) implementation
+//! Basic asynchronous [JSON-RPC](https://www.jsonrpc.org/specification) implementation
 use crate::LockExt;
 use futures::{
     future::{self, BoxFuture},
@@ -838,7 +838,7 @@ impl RpcPeer {
         .boxed()
     }
 
-    /// Sumbit message to be send to the other peer
+    /// Submit message to be send to the other peer
     fn submit_message(&self, message: impl Into<RpcMessage>) -> Result<(), RpcError> {
         // not that we use unbound queue
         let message = message.into();
@@ -850,7 +850,7 @@ impl RpcPeer {
             })
     }
 
-    /// Handle incomming rpc message
+    /// Handle incoming rpc message
     async fn handle_message(&self, message: RpcMessage) -> Result<(), RpcError> {
         match message {
             RpcMessage::Response(response) => {
