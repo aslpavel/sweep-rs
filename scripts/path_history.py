@@ -91,7 +91,7 @@ class PathHistory:
 
 
 class PathHistoryStore:
-    """Access and modify fpath history"""
+    """Access and modify path history"""
 
     def __init__(self, history_path: str = PATH_HISTORY_FILE):
         self.history_path = Path(history_path).expanduser().resolve()
@@ -162,7 +162,7 @@ class PathHistoryStore:
             self.update(update_add)
 
     def cleanup(self) -> None:
-        """Remove paths from the history which no longre exist"""
+        """Remove paths from the history which no longer exist"""
 
         def update_cleanup(_: int, history: PathHistory) -> bool:
             updated = False
@@ -352,7 +352,7 @@ class PathSelector:
             )
 
     async def run(self, path: Optional[Path] = None) -> Optional[Path]:
-        """Run path selelector
+        """Run path selector
 
         If path is provided it will start in path mode otherwise in history mode
         """
@@ -408,7 +408,7 @@ class PathSelector:
                     self.path = None
                     await self.show_history()
 
-                # return directory associted with current entry
+                # return directory associated with current entry
                 elif event.tag == KEY_OPEN:
                     entry = await self.sweep.items_current()
                     if entry is None:
@@ -438,7 +438,7 @@ def get_path_and_query(input: str) -> Tuple[Path, str]:
 
 
 class ReadLine:
-    """Extract reqdline info from bash READLINE_{LINE|POINT}"""
+    """Extract required info from bash READLINE_{LINE|POINT}"""
 
     readline: str
     readpoint: int
