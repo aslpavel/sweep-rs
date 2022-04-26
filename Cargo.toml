@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2021"
 name = "sweep"
-version = "0.7.7"
+version = "0.7.8"
 
 [lib]
 name = "sweep"
@@ -20,7 +20,7 @@ lto="fat"
 anyhow = "^1.0"
 crossbeam-channel = "^0.5"
 futures = "^0.3"
-nix = "^0.23"
+nix = "^0.24"
 rayon = "^1.5"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
@@ -29,7 +29,7 @@ tracing = "^0.1"
 tracing-futures = "^0.2"
 lazy_static = "^1.1"
 mimalloc = { version = "^0.1", default-features = false }
-surf_n_term = "^0.3.13"
+surf_n_term = "^0.3.14"
 # surf_n_term = { path = "../surf-n-term" }
 
 

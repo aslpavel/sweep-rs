@@ -788,6 +788,8 @@ fn sweep_ui_worker<H>(
 where
     H: Haystack,
 {
+    tracing::debug!(?options.theme);
+
     // initialize terminal
     term.execute(TerminalCommand::DecModeSet {
         enable: false,
