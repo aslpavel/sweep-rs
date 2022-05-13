@@ -12,6 +12,7 @@ import inspect
 import io
 import os
 import re
+import shlex
 import sys
 import time
 from typing import (
@@ -408,19 +409,18 @@ class PathSelector:
                     self.path = None
                     await self.show_history()
 
-                # return directory associated with current entry
+                # return current directory
                 elif event.tag == KEY_OPEN:
+                    if self.path:
+                        # open current directory
+                        return self.path
+                    # history mode
                     entry = await self.sweep.items_current()
                     if entry is None:
                         continue
                     path = Path(entry["path"])
-                    if self.path is None:
+                    if path.is_dir():
                         return path
-                    else:
-                        path = self.path / path
-                        if path.is_dir():
-                            return path
-                        return path.parent
         return None
 
 
@@ -539,7 +539,7 @@ async def main() -> None:
 
         result = None
         async with Sweep[PathItem](
-            sweep=[opts.sweep],
+            sweep=shlex.split(opts.sweep),
             theme=opts.theme,
             title="path history",
             tty=opts.tty,
