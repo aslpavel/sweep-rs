@@ -52,6 +52,9 @@ class SweepBind(NamedTuple):
 
     tag: str
 
+    def __repr__(self):
+        return f'SweepBind("{self.tag}"'
+
 
 class SweepSelect(Generic[I]):
     """Event generated on item select"""
@@ -60,6 +63,9 @@ class SweepSelect(Generic[I]):
 
     def __init__(self, item: Optional[I]):
         self.item = item
+
+    def __repr__(self) -> str:
+        return f"SweepSelect('{self.item}')"
 
 
 class SweepIcon(NamedTuple):
@@ -107,9 +113,9 @@ class Sweep(Generic[I]):
     """RPC wrapper around sweep process
 
     DEBUGGING:
-        - Load this file as python module.
+        - Load this file as python module from `python -masyncio`.
         - Open other terminal window and execute `$ tty` command, then run something that
-          will not steal characters for sweep process like `$ sleep 1000`.
+          will not steal characters for sweep process like `$ sleep 100000`.
         - Instantiate Sweep class with the tty device path of the other terminal.
         - Now you can call all the methods of the Sweep class in an interractive mode.
         - set RUST_LOG=debug

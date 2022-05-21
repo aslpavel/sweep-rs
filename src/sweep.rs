@@ -26,8 +26,8 @@ use surf_n_term::{
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
     KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
-    TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
-    TerminalWritable, TerminalWriter,
+    TerminalCaps, TerminalCommand, TerminalDisplay, TerminalEvent, TerminalSurface,
+    TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -1013,9 +1013,10 @@ struct ScoreResultThemed<H> {
     show_glyphs: bool,
 }
 
-impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
-    fn fmt(&self, writer: &mut TerminalWriter<'_>) -> std::io::Result<()> {
+impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
+    fn display(&self, surf: &mut TerminalSurface<'_>) -> Result<(), surf_n_term::Error> {
         let mut index = 0;
+        let mut writer = surf.writer();
         for field in self.result.haystack.fields() {
             let face_field = field.face.unwrap_or_default();
             if !field.active {
@@ -1044,7 +1045,8 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
         Ok(())
     }
 
-    fn height_hint(&self, width: usize) -> Option<usize> {
+    fn size_hint(&self, size: Size) -> Option<Size> {
+        let width = size.width;
         let mut length = 0;
         for field in self.result.haystack.fields() {
             for c in field.text.chars() {
@@ -1054,8 +1056,11 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
                 }
             }
         }
-        let result = length / width + (if length % width != 0 { 1 } else { 0 });
-        Some(result)
+        let height = length / width + (if length % width != 0 { 1 } else { 0 });
+        Some(Size {
+            width: size.width,
+            height,
+        })
     }
 }
 
