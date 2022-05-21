@@ -25,7 +25,7 @@ use surf_n_term::{
     encoder::ColorDepth,
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
-    KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
+    KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
     TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
     TerminalWritable, TerminalWriter,
 };
@@ -43,7 +43,7 @@ lazy_static::lazy_static! {
         H4M4,7H20V17H4V7M5,8V10H7V8H5M8,8V10H10V8H8M11,8V10H13V8H11M14,8V10H16V8
         H14M17,8V10H19V8H17M5,11V13H7V11H5M8,11V13H10V11H8M11,11V13H13V11H11
         M14,11V13H16V11H14M17,11V13H19V11H17M8,14V16H16V14H8Z
-        "#.parse().expect("failed to parse keyboard icon"),
+        "#.parse::<Path>().expect("failed to parse keyboard icon"),
         FillRule::NonZero,
         Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
         Size::new(1, 3),
@@ -55,7 +55,7 @@ lazy_static::lazy_static! {
         L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57
         C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15
         C10.34,20.81 7.94,19.58 5.93,17.57Z
-        "#.parse().expect("failed to parse broom icon"),
+        "#.parse::<Path>().expect("failed to parse broom icon"),
         FillRule::NonZero,
         Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
         Size::new(1, 3),
@@ -575,6 +575,7 @@ where
         let list = List::new(RankerResultThemed::new(
             theme.clone(),
             Arc::new(RankerResult::<H>::default()),
+            false,
         ));
 
         Self {
@@ -650,9 +651,11 @@ where
 
         // list
         if self.list.items().generation() != ranker_result.generation {
-            let old_result = self
-                .list
-                .items_set(RankerResultThemed::new(self.theme.clone(), ranker_result));
+            let old_result = self.list.items_set(RankerResultThemed::new(
+                self.theme.clone(),
+                ranker_result,
+                term_caps.glyphs,
+            ));
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
         }
@@ -753,14 +756,20 @@ where
                         Field {
                             text: format!("{0:<1$}", name, name_len).into(),
                             active: true,
+                            glyph: None,
+                            face: None,
                         },
                         Field {
                             text: " │ ".to_owned().into(),
                             active: false,
+                            glyph: None,
+                            face: None,
                         },
                         Field {
                             text: chrod.into(),
                             active: true,
+                            glyph: None,
+                            face: None,
                         },
                     ],
                     Some(extra),
@@ -1001,22 +1010,32 @@ struct ScoreResultThemed<H> {
     face_default: Face,
     face_inactive: Face,
     face_highlight: Face,
+    show_glyphs: bool,
 }
 
 impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
     fn fmt(&self, writer: &mut TerminalWriter<'_>) -> std::io::Result<()> {
         let mut index = 0;
         for field in self.result.haystack.fields() {
+            let face_field = field.face.unwrap_or_default();
             if !field.active {
-                writer.face_set(self.face_inactive);
-                writer.write_all(field.text.as_bytes())?;
+                let face = self.face_inactive.overlay(&face_field);
+                writer.face_set(face);
+                match field.glyph {
+                    Some(glyph) if self.show_glyphs => {
+                        writer.put(Cell::new_glyph(face, glyph));
+                    }
+                    _ => writer.write_all(field.text.as_bytes())?,
+                }
                 writer.face_set(self.face_default);
             } else {
+                let face_highlight = self.face_highlight.overlay(&face_field);
+                let face_default = self.face_default.overlay(&face_field);
                 for c in field.text.chars() {
                     if self.result.positions.contains(&index) {
-                        writer.put_char(c, self.face_highlight);
+                        writer.put_char(c, face_highlight);
                     } else {
-                        writer.put_char(c, self.face_default);
+                        writer.put_char(c, face_default);
                     }
                     index += 1;
                 }
@@ -1035,20 +1054,23 @@ impl<H: Haystack> TerminalWritable for ScoreResultThemed<H> {
                 }
             }
         }
-        Some(length / width + (if length % width != 0 { 1 } else { 0 }))
+        let result = length / width + (if length % width != 0 { 1 } else { 0 });
+        Some(result)
     }
 }
 
 struct RankerResultThemed<H> {
     theme: Theme,
     ranker_result: Arc<RankerResult<H>>,
+    show_glyphs: bool,
 }
 
 impl<H> RankerResultThemed<H> {
-    fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>) -> Self {
+    fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>, show_glyphs: bool) -> Self {
         Self {
             theme,
             ranker_result,
+            show_glyphs,
         }
     }
 
@@ -1079,6 +1101,7 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
                 face_default,
                 face_inactive,
                 face_highlight: self.theme.cursor,
+                show_glyphs: self.show_glyphs,
             })
     }
 }

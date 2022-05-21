@@ -356,6 +356,7 @@ impl FromStr for FieldSelector {
 mod tests {
     use super::*;
     use serde_json::json;
+    use surf_n_term::{Glyph, Path};
 
     #[test]
     fn test_select() -> Result<(), Error> {
@@ -397,17 +398,35 @@ mod tests {
     #[test]
     fn test_serde_candidate() -> Result<(), Error> {
         let mut extra = HashMap::new();
-        extra.insert("extra".to_owned(), 127.into());
+        extra.insert("extra".to_owned(), Value::from(127i32));
+        let glyph = Glyph::new(
+            Path::empty(),
+            surf_n_term::FillRule::EvenOdd,
+            None,
+            surf_n_term::Size {
+                height: 1,
+                width: 2,
+            },
+        );
         let candidate = Candidate::new(
             vec![
                 "one".into(),
                 Field {
                     text: "two".into(),
                     active: false,
+                    glyph: None,
+                    face: None,
                 },
                 Field {
                     text: "three".into(),
                     active: false,
+                    glyph: None,
+                    face: None,
+                },
+                Field {
+                    glyph: Some(glyph.clone()),
+                    active: false,
+                    ..Field::default()
                 },
             ],
             Some(extra),
@@ -416,9 +435,10 @@ mod tests {
             "entry": [
                 "one",
                 ["two", false],
-                {"text": "three", "active": false}
+                {"text": "three", "active": false},
+                {"text": "", "active": false, "glyph": glyph}
             ],
-            "extra": 127
+            "extra": 127i32
         });
         let candidate_string = serde_json::to_string(&candidate)?;
         let value_string = serde_json::to_string(&value)?;

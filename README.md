@@ -183,7 +183,9 @@ And here is how it looks
 #### Methods and Types
 - **Type**
 ```
-Field = String | (String, bool) | {text: String, active: bool}
+Field = String
+  | (String, bool)
+  | {text: String, active: bool, glyph?: Icon, face?: Face}
 Item = String | {entry: [Field], ...}
 Icon = {
     path?: String,                    // d attribute of SVG path (default: empty path)

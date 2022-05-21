@@ -7,11 +7,27 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
+use surf_n_term::{Face, Glyph};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Field<'a> {
     pub text: Cow<'a, str>,
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<Glyph>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face: Option<Face>,
+}
+
+impl<'a> Default for Field<'a> {
+    fn default() -> Self {
+        Self {
+            text: Cow::Borrowed(""),
+            active: true,
+            glyph: None,
+            face: None,
+        }
+    }
 }
 
 impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
@@ -19,6 +35,8 @@ impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
         Self {
             text: text.into(),
             active: true,
+            glyph: None,
+            face: None,
         }
     }
 }
@@ -28,13 +46,20 @@ impl From<String> for Field<'static> {
         Self {
             text: text.into(),
             active: true,
+            glyph: None,
+            face: None,
         }
     }
 }
 
 impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
     fn from(text: Cow<'b, str>) -> Self {
-        Self { text, active: true }
+        Self {
+            text,
+            active: true,
+            glyph: None,
+            face: None,
+        }
     }
 }
 
@@ -61,6 +86,8 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                 Ok(Field {
                     text: v.to_owned().into(),
                     active: true,
+                    glyph: None,
+                    face: None,
                 })
             }
 
@@ -71,6 +98,8 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                 Ok(Field {
                     text: v.into(),
                     active: true,
+                    glyph: None,
+                    face: None,
                 })
             }
 
@@ -83,6 +112,8 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                         .next_element()?
                         .ok_or_else(|| de::Error::missing_field("text"))?,
                     active: seq.next_element()?.unwrap_or(true),
+                    glyph: None,
+                    face: None,
                 })
             }
 
@@ -91,22 +122,35 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                 A: de::MapAccess<'de>,
             {
                 let mut text = None;
-                let mut active = true;
+                let mut active = None;
+                let mut glyph = None;
+                let mut face = None;
                 while let Some(name) = map.next_key::<Cow<'de, str>>()? {
                     match name.as_ref() {
                         "text" => {
                             text.replace(map.next_value()?);
                         }
                         "active" => {
-                            active = map.next_value()?;
+                            active.replace(map.next_value()?);
+                        }
+                        "glyph" => {
+                            glyph.replace(map.next_value()?);
+                        }
+                        "face" => {
+                            face.replace(map.next_value()?);
                         }
                         _ => {
                             map.next_value::<de::IgnoredAny>()?;
                         }
                     }
                 }
-                let text = text.ok_or_else(|| de::Error::missing_field("active"))?;
-                Ok(Field { text, active })
+                let text = text.unwrap_or_else(|| Cow::Borrowed::<'static>(""));
+                Ok(Field {
+                    text,
+                    active: active.unwrap_or(glyph.is_none()),
+                    glyph,
+                    face,
+                })
             }
         }
 
@@ -123,9 +167,6 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     fn chars(&self) -> &[char];
 
     /// Fields
-    ///
-    /// Iterator over fields, only Ok items should be scored, and Err items
-    /// should be ignored during scoring.
     fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_>;
 }
 
@@ -172,6 +213,8 @@ impl Haystack for StringHaystack {
         Box::new(std::iter::once(Field {
             text: self.string.as_str().into(),
             active: true,
+            glyph: None,
+            face: None,
         }))
     }
 }
@@ -659,6 +702,8 @@ mod tests {
         let mut field = Field {
             text: "field text π".into(),
             active: true,
+            glyph: None,
+            face: None,
         };
 
         let expected = "{\"text\":\"field text π\",\"active\":true}";
