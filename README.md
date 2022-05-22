@@ -174,6 +174,9 @@ And here is how it looks
 ### Demo time!
 ![demo](resources/demo.gif)
 
+You can also run `./scripts/demo.py` to see different formatting and icon usage
+![demo icons](resources/demo.png)
+
 ### [JSON-RPC](https://www.jsonrpc.org/specification)
 #### Wire protocol
 ```
@@ -185,7 +188,7 @@ And here is how it looks
 ```
 Field = String
   | (String, bool)
-  | {text: String, active: bool, glyph?: Icon, face?: Face}
+  | {text: String, active: bool, glyph?: Icon, face?: Face, ref?: int}
 Item = String | {entry: [Field], ...}
 Icon = {
     path?: String,                    // d attribute of SVG path (default: empty path)
@@ -196,6 +199,7 @@ Icon = {
 ```
 - **Methods**
 ```
+field_register(field: Field) -> int      // Register field that can be used as the base for the other field
 items_extend(items: [Item])              // Extend list of searchable items
 items_clear()                            // Clear list of searchable items
 items_current() -> Item?                 // Get currently selected item if any

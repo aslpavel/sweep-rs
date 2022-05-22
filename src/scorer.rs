@@ -1,22 +1,65 @@
+use crate::LockExt;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::Ordering,
+    collections::HashMap,
     fmt::{self, Debug},
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 use surf_n_term::{Face, Glyph};
 
+/// Previously registered field that is used as base of the field
+///
+/// Mainly used avoid constant sending of glyphs (icons)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FieldRef(pub(crate) usize);
+
+pub(crate) type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
+
+/// Single theme-able part of the haystack
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Field<'a> {
+    /// Text content on the field
     pub text: Cow<'a, str>,
+    /// Flag indicating if the should be used as part of search
     pub active: bool,
+    /// Render glyph (if glyphs are disabled text is shown)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glyph: Option<Glyph>,
+    /// Face used to override default one
     #[serde(skip_serializing_if = "Option::is_none")]
     pub face: Option<Face>,
+    /// Base field value
+    #[serde(skip_serializing_if = "Option::is_none", rename = "ref")]
+    pub field_ref: Option<FieldRef>,
+}
+
+impl<'a> Field<'a> {
+    pub(crate) fn resolve(self, refs: &FieldRefs) -> Self {
+        let field_ref = match self.field_ref {
+            Some(field_ref) => field_ref,
+            None => return self,
+        };
+        let base = match refs.with(|refs| refs.get(&field_ref).cloned()) {
+            Some(base) => base,
+            None => return self,
+        };
+        Self {
+            text: if self.text.is_empty() {
+                base.text
+            } else {
+                self.text
+            },
+            active: self.active,
+            glyph: self.glyph.or(base.glyph),
+            face: self.face.or(base.face),
+            field_ref: None,
+        }
+    }
 }
 
 impl<'a> Default for Field<'a> {
@@ -26,6 +69,7 @@ impl<'a> Default for Field<'a> {
             active: true,
             glyph: None,
             face: None,
+            field_ref: None,
         }
     }
 }
@@ -37,6 +81,7 @@ impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
             active: true,
             glyph: None,
             face: None,
+            field_ref: None,
         }
     }
 }
@@ -48,6 +93,7 @@ impl From<String> for Field<'static> {
             active: true,
             glyph: None,
             face: None,
+            field_ref: None,
         }
     }
 }
@@ -59,6 +105,7 @@ impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
             active: true,
             glyph: None,
             face: None,
+            field_ref: None,
         }
     }
 }
@@ -85,9 +132,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
             {
                 Ok(Field {
                     text: v.to_owned().into(),
-                    active: true,
-                    glyph: None,
-                    face: None,
+                    ..Field::default()
                 })
             }
 
@@ -97,9 +142,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
             {
                 Ok(Field {
                     text: v.into(),
-                    active: true,
-                    glyph: None,
-                    face: None,
+                    ..Field::default()
                 })
             }
 
@@ -112,8 +155,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                         .next_element()?
                         .ok_or_else(|| de::Error::missing_field("text"))?,
                     active: seq.next_element()?.unwrap_or(true),
-                    glyph: None,
-                    face: None,
+                    ..Field::default()
                 })
             }
 
@@ -125,6 +167,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                 let mut active = None;
                 let mut glyph = None;
                 let mut face = None;
+                let mut reference = None;
                 while let Some(name) = map.next_key::<Cow<'de, str>>()? {
                     match name.as_ref() {
                         "text" => {
@@ -139,17 +182,22 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                         "face" => {
                             face.replace(map.next_value()?);
                         }
+                        "ref" => {
+                            reference.replace(map.next_value()?);
+                        }
                         _ => {
                             map.next_value::<de::IgnoredAny>()?;
                         }
                     }
                 }
                 let text = text.unwrap_or_else(|| Cow::Borrowed::<'static>(""));
+                let text_not_empty = !text.is_empty();
                 Ok(Field {
                     text,
-                    active: active.unwrap_or(glyph.is_none()),
+                    active: active.unwrap_or(glyph.is_none() && text_not_empty),
                     glyph,
                     face,
+                    field_ref: reference,
                 })
             }
         }
@@ -212,9 +260,7 @@ impl Haystack for StringHaystack {
     fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_> {
         Box::new(std::iter::once(Field {
             text: self.string.as_str().into(),
-            active: true,
-            glyph: None,
-            face: None,
+            ..Field::default()
         }))
     }
 }
@@ -701,9 +747,7 @@ mod tests {
     fn test_serde_field() -> Result<(), Error> {
         let mut field = Field {
             text: "field text π".into(),
-            active: true,
-            glyph: None,
-            face: None,
+            ..Field::default()
         };
 
         let expected = "{\"text\":\"field text π\",\"active\":true}";

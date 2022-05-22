@@ -27,8 +27,7 @@ impl Candidate {
         let chars = fields
             .iter()
             .filter_map(|f| {
-                f.active
-                    .then(|| f.text.chars().flat_map(char::to_lowercase))
+                (f.active && f.glyph.is_none()).then(|| f.text.chars().flat_map(char::to_lowercase))
             })
             .flatten()
             .collect();
@@ -414,14 +413,12 @@ mod tests {
                 Field {
                     text: "two".into(),
                     active: false,
-                    glyph: None,
-                    face: None,
+                    ..Field::default()
                 },
                 Field {
                     text: "three".into(),
                     active: false,
-                    glyph: None,
-                    face: None,
+                    ..Field::default()
                 },
                 Field {
                     glyph: Some(glyph.clone()),

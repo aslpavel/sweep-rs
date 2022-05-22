@@ -226,7 +226,7 @@ where
                             haystack_size: haystack.len(),
                             generation,
                         };
-                        result.with(|result| std::mem::replace(result, Arc::new(result_new)));
+                        result.with_mut(|result| std::mem::replace(result, Arc::new(result_new)));
 
                         if !notify() {
                             return;

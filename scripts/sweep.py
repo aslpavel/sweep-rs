@@ -252,6 +252,9 @@ class Sweep(Generic[I]):
         if proc is not None:
             await proc.wait()
 
+    async def field_register(self, field: Any) -> int:
+        return await self._peer.field_register(field)
+
     async def items_extend(self, items: Iterable[I]) -> None:
         """Extend list of searchable items"""
         time_start = time.monotonic()

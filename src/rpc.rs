@@ -702,7 +702,7 @@ impl RpcPeer {
     }
 
     /// Register callback for the provided method name
-    pub fn regesiter<H, HP, HF, HV>(
+    pub fn register<H, HP, HF, HV>(
         &self,
         method: impl Into<String>,
         callback: H,
@@ -730,7 +730,7 @@ impl RpcPeer {
         handler: RpcHandler,
     ) -> Option<RpcHandler> {
         self.inner
-            .with(move |inner| inner.handlers.insert(method.into(), handler))
+            .with_mut(move |inner| inner.handlers.insert(method.into(), handler))
     }
 
     /// Send event to the other peer
@@ -781,7 +781,7 @@ impl RpcPeer {
         params: impl Into<Value>,
     ) -> Result<Value, RpcError> {
         let (tx, rx) = oneshot::channel();
-        let id = self.inner.with(|inner| {
+        let id = self.inner.with_mut(|inner| {
             let id = RpcId::Int(inner.requests_next_id);
             inner.requests_next_id += 1;
             inner.requests.insert(id.clone(), tx);
@@ -825,7 +825,7 @@ impl RpcPeer {
         async move {
             let write_receiver = peer
                 .inner
-                .with(|inner| inner.write_receiver.take())
+                .with_mut(|inner| inner.write_receiver.take())
                 .ok_or_else(|| RpcError::from(RpcErrorKind::ServeError))?;
 
             let writer = rpc_writer(write, write_receiver);
@@ -858,7 +858,10 @@ impl RpcPeer {
                     // propagate errors with no id
                     return response.result.map(|_| ());
                 }
-                if let Some(future) = self.inner.with(|inner| inner.requests.remove(&response.id)) {
+                if let Some(future) = self
+                    .inner
+                    .with_mut(|inner| inner.requests.remove(&response.id))
+                {
                     let _ = future.send(response.result);
                 }
             }
@@ -1102,12 +1105,12 @@ mod tests {
         let a = RpcPeer::new();
         let (tx, mut rx) = mpsc::unbounded_channel();
         a.regesiter_handler("name", Arc::new(|_params| async { Ok("a".into()) }.boxed()));
-        a.regesiter("add", |mut params: RpcParams| async move {
+        a.register("add", |mut params: RpcParams| async move {
             let a: i64 = params.take_by_name("a")?;
             let b: i64 = params.take_by_name("b")?;
             Ok(a + b)
         });
-        a.regesiter("send", move |params: Value| {
+        a.register("send", move |params: Value| {
             let tx = tx.clone();
             async move {
                 tx.send(params.clone()).unwrap();
@@ -1119,11 +1122,11 @@ mod tests {
             a: String,
             b: String,
         }
-        a.regesiter("concat", |mut params: ConcatParams| async move {
+        a.register("concat", |mut params: ConcatParams| async move {
             params.a.extend(params.b.chars());
             Ok(params.a)
         });
-        a.regesiter("index_or_name", |mut params: RpcParams| async move {
+        a.register("index_or_name", |mut params: RpcParams| async move {
             let value: String = params.take(0, "value")?;
             Ok(value)
         });

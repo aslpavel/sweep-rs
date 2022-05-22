@@ -1,7 +1,9 @@
+use crate::scorer::FieldRefs;
 use crate::{
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
-    substr_scorer, Candidate, Field, Haystack, Ranker, RankerResult, ScoreResult, ScorerBuilder,
+    substr_scorer, Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult,
+    ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -161,6 +163,15 @@ where
         self.waker.wake().expect("failed to wake terminal");
     }
 
+    /// Register new field as reference
+    pub fn field_register(&self, field: Field<'static>) -> FieldRef {
+        self.refs.with_mut(move |refs| {
+            let ref_id = FieldRef(refs.len());
+            refs.insert(ref_id, field);
+            ref_id
+        })
+    }
+
     /// Extend list of searchable items
     pub fn items_extend<HS>(&self, items: HS)
     where
@@ -242,6 +253,7 @@ pub struct SweepInner<H: Haystack> {
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
     events: Receiver<SweepEvent<H>>,
+    refs: FieldRefs,
 }
 
 impl<H: Haystack> SweepInner<H> {
@@ -259,9 +271,11 @@ impl<H: Haystack> SweepInner<H> {
             let waker = waker.clone();
             move || waker.wake().is_ok()
         });
+        let refs: FieldRefs = Default::default();
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             let ranker = ranker.clone();
-            move || sweep_ui_worker(options, term, ranker, requests_recv, events_send)
+            let refs = refs.clone();
+            move || sweep_ui_worker(options, term, ranker, requests_recv, events_send, refs)
         })?;
         Ok(SweepInner {
             ranker,
@@ -269,6 +283,7 @@ impl<H: Haystack> SweepInner<H> {
             ui_worker: Some(worker),
             requests: requests_send,
             events: events_recv,
+            refs,
         })
     }
 }
@@ -296,8 +311,21 @@ impl Sweep<Candidate> {
     {
         let peer = RpcPeer::new();
 
+        // register field
+        peer.register("field_register", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let field: Field = params.take(0, "field")?;
+                    let field_ref = sweep.field_register(field);
+                    Ok(field_ref.0)
+                }
+            }
+        });
+
         // items extend
-        peer.regesiter("items_extend", {
+        peer.register("items_extend", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
@@ -310,7 +338,7 @@ impl Sweep<Candidate> {
         });
 
         // items clear
-        peer.regesiter("items_clear", {
+        peer.register("items_clear", {
             let sweep = self.clone();
             move |_params: Value| {
                 sweep.items_clear();
@@ -319,7 +347,7 @@ impl Sweep<Candidate> {
         });
 
         // items current
-        peer.regesiter("items_current", {
+        peer.register("items_current", {
             let sweep = self.clone();
             move |_params: Value| {
                 let sweep = sweep.clone();
@@ -335,7 +363,7 @@ impl Sweep<Candidate> {
         });
 
         // query set
-        peer.regesiter("query_set", {
+        peer.register("query_set", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
@@ -348,7 +376,7 @@ impl Sweep<Candidate> {
         });
 
         // query get
-        peer.regesiter("query_get", {
+        peer.register("query_get", {
             let sweep = self.clone();
             move |_params: Value| {
                 let sweep = sweep.clone();
@@ -357,7 +385,7 @@ impl Sweep<Candidate> {
         });
 
         // terminate
-        peer.regesiter("terminate", {
+        peer.register("terminate", {
             let sweep = self.clone();
             move |_params: Value| {
                 sweep.send_request(SweepRequest::Terminate);
@@ -366,7 +394,7 @@ impl Sweep<Candidate> {
         });
 
         // prompt set
-        peer.regesiter("prompt_set", {
+        peer.register("prompt_set", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
@@ -380,7 +408,7 @@ impl Sweep<Candidate> {
         });
 
         // key binding
-        peer.regesiter("bind", {
+        peer.register("bind", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
@@ -576,6 +604,7 @@ where
             theme.clone(),
             Arc::new(RankerResult::<H>::default()),
             false,
+            Default::default(),
         ));
 
         Self {
@@ -599,6 +628,7 @@ where
         &mut self,
         mut view: impl SurfaceMut<Item = Cell>,
         term_caps: &TerminalCaps,
+        refs: FieldRefs,
     ) -> Result<(), Error> {
         self.ranker.needle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
@@ -655,6 +685,7 @@ where
                 self.theme.clone(),
                 ranker_result,
                 term_caps.glyphs,
+                refs,
             ));
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
@@ -755,21 +786,16 @@ where
                     vec![
                         Field {
                             text: format!("{0:<1$}", name, name_len).into(),
-                            active: true,
-                            glyph: None,
-                            face: None,
+                            ..Field::default()
                         },
                         Field {
                             text: " │ ".to_owned().into(),
                             active: false,
-                            glyph: None,
-                            face: None,
+                            ..Field::default()
                         },
                         Field {
                             text: chrod.into(),
-                            active: true,
-                            glyph: None,
-                            face: None,
+                            ..Field::default()
                         },
                     ],
                     Some(extra),
@@ -793,6 +819,7 @@ fn sweep_ui_worker<H>(
     ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
     events: Sender<SweepEvent<H>>,
+    refs: FieldRefs,
 ) -> Result<(), Error>
 where
     H: Haystack,
@@ -978,8 +1005,8 @@ where
         };
         let term_caps = term.capabilities();
         match state_help.as_mut() {
-            Some(state) => state.render(view, term_caps)?,
-            None => state.render(view, term_caps)?,
+            Some(state) => state.render(view, term_caps, refs.clone())?,
+            None => state.render(view, term_caps, refs.clone())?,
         }
 
         Ok(TerminalAction::Wait)
@@ -1004,13 +1031,13 @@ where
     Ok(())
 }
 
-#[derive(Debug)]
 struct ScoreResultThemed<H> {
     result: ScoreResult<H>,
     face_default: Face,
     face_inactive: Face,
     face_highlight: Face,
     show_glyphs: bool,
+    refs: FieldRefs,
 }
 
 impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
@@ -1018,8 +1045,9 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
         let mut index = 0;
         let mut writer = surf.writer();
         for field in self.result.haystack.fields() {
+            let field = field.resolve(&self.refs);
             let face_field = field.face.unwrap_or_default();
-            if !field.active {
+            if !field.active || !field.glyph.is_none() {
                 let face = self.face_inactive.overlay(&face_field);
                 writer.face_set(face);
                 match field.glyph {
@@ -1068,14 +1096,21 @@ struct RankerResultThemed<H> {
     theme: Theme,
     ranker_result: Arc<RankerResult<H>>,
     show_glyphs: bool,
+    refs: FieldRefs,
 }
 
 impl<H> RankerResultThemed<H> {
-    fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>, show_glyphs: bool) -> Self {
+    fn new(
+        theme: Theme,
+        ranker_result: Arc<RankerResult<H>>,
+        show_glyphs: bool,
+        refs: FieldRefs,
+    ) -> Self {
         Self {
             theme,
             ranker_result,
             show_glyphs,
+            refs,
         }
     }
 
@@ -1107,6 +1142,7 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
                 face_inactive,
                 face_highlight: self.theme.cursor,
                 show_glyphs: self.show_glyphs,
+                refs: self.refs.clone(),
             })
     }
 }
