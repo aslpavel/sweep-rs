@@ -799,6 +799,8 @@ where
                         },
                     ],
                     Some(extra),
+                    Vec::new(),
+                    0,
                 )
             })
             .collect();
@@ -1042,8 +1044,17 @@ struct ScoreResultThemed<H> {
 
 impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
     fn display(&self, surf: &mut TerminalSurface<'_>) -> Result<(), surf_n_term::Error> {
+        // right fields offset
+        let offset = self.result.haystack.fields_right_offset();
+
+        // render left side
         let mut index = 0;
-        let mut writer = surf.writer();
+        let mut left_view = if offset != 0 {
+            surf.view_mut(.., ..-(offset as i32))
+        } else {
+            surf.view_mut(.., ..)
+        };
+        let mut writer = left_view.writer();
         for field in self.result.haystack.fields() {
             let field = field.resolve(&self.refs);
             let face_field = field.face.unwrap_or_default();
@@ -1070,11 +1081,35 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
                 }
             }
         }
+        // render right side
+        if surf.width() <= offset || offset == 0 {
+            return Ok(());
+        }
+        let mut right_view = surf.view_mut(.., -(offset as i32)..);
+        let mut writer = right_view.writer();
+        for field in self.result.haystack.fields_right() {
+            let field = field.resolve(&self.refs);
+            let face = self.face_inactive.overlay(&field.face.unwrap_or_default());
+            writer.face_set(face);
+            match field.glyph {
+                Some(glyph) if self.show_glyphs => {
+                    writer.put(Cell::new_glyph(face, glyph));
+                }
+                _ => writer.write_all(field.text.as_bytes())?,
+            }
+            writer.face_set(self.face_default);
+        }
+
         Ok(())
     }
 
     fn size_hint(&self, size: Size) -> Option<Size> {
-        let width = size.width;
+        let offset = self.result.haystack.fields_right_offset();
+        let width = if size.width > offset {
+            size.width - offset
+        } else {
+            size.width
+        };
         let mut length = 0;
         for field in self.result.haystack.fields() {
             for c in field.text.chars() {

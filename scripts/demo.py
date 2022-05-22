@@ -69,6 +69,14 @@ async def main():
                 "face": "bg=#076678,fg=#ebdbb2",
             }
         )
+        ref_cocktail = await sweep.field_register(
+            {
+                "text": "[C]",
+                "glyph": ICON_COCKTAIL.to_json(),
+                "face": "fg=#427b58",
+            }
+        )
+        await sweep.bind("ctrl+q", "ctrl+q was pressed")
 
         # keep more readable formatting
         # fmt: off
@@ -101,11 +109,21 @@ async def main():
             ]}]
         )
 
+        # glyph icon used from reference
         await sweep.items_extend(
             [{"entry": [
                 "reference icon usage -> ",
                 {"ref": ref_backpack},
             ]}]
+        )
+
+        # right text
+        await sweep.items_extend(
+            [{
+                "fields": ["right text ->"],
+                "right": [{"ref": ref_cocktail}, "cocktail"],
+                "offset": 12,
+            }]
         )
         # fmt: on
 

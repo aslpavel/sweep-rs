@@ -19,6 +19,7 @@ use surf_n_term::{Face, Glyph};
 pub struct FieldRef(pub(crate) usize);
 
 pub(crate) type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
+pub type Fields<'a> = Box<dyn Iterator<Item = Field<'a>> + 'a>;
 
 /// Single theme-able part of the haystack
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -39,6 +40,7 @@ pub struct Field<'a> {
 }
 
 impl<'a> Field<'a> {
+    /// resolve reference in the field
     pub(crate) fn resolve(self, refs: &FieldRefs) -> Self {
         let field_ref = match self.field_ref {
             Some(field_ref) => field_ref,
@@ -58,6 +60,19 @@ impl<'a> Field<'a> {
             glyph: self.glyph.or(base.glyph),
             face: self.face.or(base.face),
             field_ref: None,
+        }
+    }
+
+    pub fn borrow(&'a self) -> Field<'a> {
+        Self {
+            text: match &self.text {
+                Cow::Borrowed(text) => Cow::Borrowed(text),
+                Cow::Owned(text) => Cow::Borrowed(&text),
+            },
+            active: self.active,
+            glyph: self.glyph.clone(),
+            face: self.face,
+            field_ref: self.field_ref,
         }
     }
 }
@@ -214,8 +229,14 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// the inactive fields will not be present in this slice.
     fn chars(&self) -> &[char];
 
-    /// Fields
-    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_>;
+    /// Fields (aligned to the left) only used for rendering
+    fn fields(&self) -> Fields<'_>;
+
+    /// Fields aligned to the right only used for rendering
+    fn fields_right(&self) -> Fields<'_>;
+
+    /// How much space is allocated to the fields on the right
+    fn fields_right_offset(&self) -> usize;
 }
 
 #[derive(Clone)]
@@ -257,11 +278,19 @@ impl Haystack for StringHaystack {
         self.chars.as_slice()
     }
 
-    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_> {
+    fn fields(&self) -> Fields<'_> {
         Box::new(std::iter::once(Field {
             text: self.string.as_str().into(),
             ..Field::default()
         }))
+    }
+
+    fn fields_right(&self) -> Fields<'_> {
+        Box::new(std::iter::empty())
+    }
+
+    fn fields_right_offset(&self) -> usize {
+        0
     }
 }
 

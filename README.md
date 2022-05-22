@@ -9,6 +9,7 @@ Sweep is a tool used to interactively search through a list of entries. It is in
   - JSON-RPC protocol can be used to communicate with sweep process.
   - Includes asyncio [python binding](scripts/sweep.py)
   - Configurable key bindings
+  - Support for rendering custom icons/glyphs from SVG path (requires kitty-image or sixel)
 
 ### Usage
 #### Basic usage
@@ -174,7 +175,8 @@ And here is how it looks
 ### Demo time!
 ![demo](resources/demo.gif)
 
-You can also run `./scripts/demo.py` to see different formatting and icon usage
+You can also run `./scripts/demo.py` to see different formatting and icon usage.
+Note that to render icons terminal needs to support support kitty-image or sixel.
 ![demo icons](resources/demo.png)
 
 ### [JSON-RPC](https://www.jsonrpc.org/specification)
@@ -189,7 +191,7 @@ You can also run `./scripts/demo.py` to see different formatting and icon usage
 Field = String
   | (String, bool)
   | {text: String, active: bool, glyph?: Icon, face?: Face, ref?: int}
-Item = String | {entry: [Field], ...}
+Item = String | {entry: [Field], right?: [Field], offset?: int, ...}
 Icon = {
     path?: String,                    // d attribute of SVG path (default: empty path)
     view_box?: [float; 4],            // minx, miny, width, height (default: bounding box of path)

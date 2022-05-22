@@ -1,4 +1,4 @@
-use crate::{Field, Haystack};
+use crate::{Field, Fields, Haystack};
 use anyhow::Error;
 use futures::Stream;
 use serde::{de, ser::SerializeMap, Deserialize, Serialize};
@@ -10,6 +10,10 @@ use tokio::io::{AsyncBufReadExt, AsyncRead};
 struct CandidateInner {
     // haystack fields
     fields: Vec<Field<'static>>,
+    // right aligned fields
+    fields_right: Vec<Field<'static>>,
+    // right aligned fields offset
+    fields_right_offset: usize,
     // searchable characters
     chars: Vec<char>,
     // extra fields extracted from candidate object during parsing, this
@@ -23,7 +27,12 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub fn new(fields: Vec<Field<'static>>, extra: Option<HashMap<String, Value>>) -> Self {
+    pub fn new(
+        fields: Vec<Field<'static>>,
+        extra: Option<HashMap<String, Value>>,
+        fields_right: Vec<Field<'static>>,
+        fields_right_offset: usize,
+    ) -> Self {
         let chars = fields
             .iter()
             .filter_map(|f| {
@@ -35,6 +44,8 @@ impl Candidate {
             inner: Arc::new(CandidateInner {
                 fields,
                 chars,
+                fields_right,
+                fields_right_offset,
                 extra: extra.unwrap_or_default(),
             }),
         }
@@ -62,7 +73,7 @@ impl Candidate {
                 fields
             }
         };
-        Self::new(fields, None)
+        Self::new(fields, None, Vec::new(), 0)
     }
 
     /// Read batched stream of candidates from `AsyncRead`
@@ -128,7 +139,9 @@ impl Serialize for Candidate {
             self.to_string().serialize(serializer)
         } else {
             let mut map = serializer.serialize_map(Some(1 + inner.extra.len()))?;
-            map.serialize_entry("entry", &inner.fields)?;
+            map.serialize_entry("fields", &inner.fields)?;
+            map.serialize_entry("right", &inner.fields_right)?;
+            map.serialize_entry("offset", &inner.fields_right_offset)?;
             for (key, value) in inner.extra.iter() {
                 map.serialize_entry(key, value)?;
             }
@@ -156,7 +169,7 @@ impl<'de> Deserialize<'de> for Candidate {
                 E: de::Error,
             {
                 let fields = vec![Field::from(v.to_owned())];
-                Ok(Candidate::new(fields, None))
+                Ok(Candidate::new(fields, None, Vec::new(), 0))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -164,21 +177,32 @@ impl<'de> Deserialize<'de> for Candidate {
                 A: de::MapAccess<'de>,
             {
                 let mut fields = None;
+                let mut fields_right = None;
+                let mut fields_right_offset = 0;
                 let mut extra = HashMap::new();
                 while let Some(name) = map.next_key::<Cow<'de, str>>()? {
                     match name.as_ref() {
-                        "entry" => {
+                        "entry" | "fields" => {
                             fields.replace(map.next_value()?);
+                        }
+                        "right" => {
+                            fields_right.replace(map.next_value()?);
+                        }
+                        "right_offset" | "offset" => {
+                            fields_right_offset = map.next_value()?;
                         }
                         _ => {
                             extra.insert(name.into_owned(), map.next_value()?);
                         }
                     }
                 }
-                let fields = fields.ok_or_else(|| de::Error::missing_field("entry"))?;
+                let fields = fields.ok_or_else(|| de::Error::missing_field("entry or fields"))?;
+                let fields_right = fields_right.unwrap_or_else(Vec::new);
                 Ok(Candidate::new(
                     fields,
                     (!extra.is_empty()).then(move || extra),
+                    fields_right,
+                    fields_right_offset,
                 ))
             }
         }
@@ -243,8 +267,16 @@ impl Haystack for Candidate {
         &self.inner.chars
     }
 
-    fn fields(&self) -> Box<dyn Iterator<Item = Field<'_>> + '_> {
-        Box::new(self.inner.fields.iter().map(Clone::clone))
+    fn fields(&self) -> Fields<'_> {
+        Box::new(self.inner.fields.iter().map(Field::borrow))
+    }
+
+    fn fields_right(&self) -> Fields<'_> {
+        Box::new(self.inner.fields_right.iter().map(Field::borrow))
+    }
+
+    fn fields_right_offset(&self) -> usize {
+        self.inner.fields_right_offset
     }
 }
 
@@ -355,7 +387,7 @@ impl FromStr for FieldSelector {
 mod tests {
     use super::*;
     use serde_json::json;
-    use surf_n_term::{Glyph, Path};
+    use surf_n_term::{Face, Glyph, Path};
 
     #[test]
     fn test_select() -> Result<(), Error> {
@@ -407,6 +439,7 @@ mod tests {
                 width: 2,
             },
         );
+        let face: Face = "bg=#00ff00".parse()?;
         let candidate = Candidate::new(
             vec![
                 "one".into(),
@@ -427,23 +460,35 @@ mod tests {
                 },
             ],
             Some(extra),
+            vec![Field {
+                face: Some(face),
+                active: false,
+                ..Field::default()
+            }],
+            7,
         );
         let value = json!({
-            "entry": [
+            "fields": [
                 "one",
                 ["two", false],
                 {"text": "three", "active": false},
                 {"text": "", "active": false, "glyph": glyph}
             ],
+            "right": [{"face": "bg=#00ff00"}],
+            "offset": 7usize,
             "extra": 127i32
         });
         let candidate_string = serde_json::to_string(&candidate)?;
         let value_string = serde_json::to_string(&value)?;
+        println!("=== mark ===: 1");
         assert_eq!(candidate, serde_json::from_str(candidate_string.as_str())?);
+        println!("=== mark ===: 2");
+        println!("{}", value_string);
         assert_eq!(candidate, serde_json::from_str(value_string.as_str())?);
+        println!("=== mark ===: 3");
         assert_eq!(candidate, serde_json::from_value(value)?);
 
-        let candidate = Candidate::new(vec!["four".into()], None);
+        let candidate = Candidate::new(vec!["four".into()], None, Vec::new(), 0);
         assert_eq!(candidate, serde_json::from_str("\"four\"")?);
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 

@@ -53,7 +53,7 @@ class SweepBind(NamedTuple):
     tag: str
 
     def __repr__(self):
-        return f'SweepBind("{self.tag}"'
+        return f'SweepBind("{self.tag}")'
 
 
 class SweepSelect(Generic[I]):
@@ -65,7 +65,7 @@ class SweepSelect(Generic[I]):
         self.item = item
 
     def __repr__(self) -> str:
-        return f"SweepSelect('{self.item}')"
+        return f'SweepSelect("{self.item}")'
 
 
 class SweepIcon(NamedTuple):
