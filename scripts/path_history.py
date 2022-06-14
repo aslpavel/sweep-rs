@@ -13,9 +13,11 @@ import io
 import os
 import re
 import shlex
+import signal
 import sys
 import time
 from typing import (
+    Any,
     Callable,
     Deque,
     Dict,
@@ -170,15 +172,37 @@ class PathHistoryStore:
             for entry in list(history):
                 exists = False
                 try:
-                    exists = entry.path.exists()
+                    with Timeout(0.05):
+                        exists = entry.path.exists()
+                except TimeoutError:
+                    exists = True
                 except PermissionError:
-                    pass
+                    exists = False
                 if not exists:
                     history.entries.pop(entry.path)
                     updated = True
             return updated
 
         self.update(update_cleanup)
+
+
+class Timeout:
+    def __init__(self, seconds: float):
+        self._seconds: float = seconds
+        self._handler_prev: Optional[Any] = signal.SIG_DFL
+
+    def _handler(self, _sig: int, _handler: Any) -> None:
+        raise TimeoutError()
+
+    def __enter__(self):
+        self._handler_prev = signal.signal(signal.SIGALRM, self._handler)
+        signal.setitimer(signal.ITIMER_REAL, self._seconds)
+        return self
+
+    def __exit__(self, *_: Any) -> bool:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, self._handler_prev)
+        return False
 
 
 class PathItem(TypedDict):
@@ -204,11 +228,12 @@ class FileNode:
             return self._children
         self._children = {}
         try:
-            for path in self.path.iterdir():
-                if DEFAULT_IGNORE.match(path.name):
-                    continue
-                self._children[path.name] = FileNode(path)
-        except (PermissionError, FileNotFoundError):
+            with Timeout(0.5):
+                for path in self.path.iterdir():
+                    if DEFAULT_IGNORE.match(path.name):
+                        continue
+                    self._children[path.name] = FileNode(path)
+        except (PermissionError, FileNotFoundError, TimeoutError):
             pass
         return self._children
 
