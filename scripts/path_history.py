@@ -486,6 +486,7 @@ async def main() -> None:
     parser_add = subparsers.add_parser("add", help="add/update path in the history")
     parser_add.add_argument("path", nargs="?", help="target path")
     subparsers.add_parser("list", help="list all entries in the history")
+    subparsers.add_parser("cleanup", help="cleanup history by checking they exist")
     parser_select = subparsers.add_parser(
         "select", help="interactively select path from the history or its subpaths"
     )
@@ -511,8 +512,10 @@ async def main() -> None:
         path = opts.path or os.getcwd()
         path_history.add(Path(path))
 
-    elif opts.command == "list":
+    elif opts.command == "cleanup":
         path_history.cleanup()
+
+    elif opts.command == "list":
         items: List[Tuple[int, int, Path]] = []
         for entry in path_history.load():
             items.append((entry.count, entry.atime, entry.path))
@@ -522,8 +525,6 @@ async def main() -> None:
             print("{:<5} {} {}".format(count, date, path))
 
     elif opts.command == "select":
-        path_history.cleanup()
-
         readline: Optional[ReadLine]
         if opts.readline:
             readline = ReadLine(

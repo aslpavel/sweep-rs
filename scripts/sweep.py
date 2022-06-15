@@ -48,7 +48,7 @@ I = TypeVar("I")  # sweep item
 
 
 class SweepBind(NamedTuple):
-    """Event genereted on bound key press"""
+    """Event generated on bound key press"""
 
     tag: str
 
@@ -117,7 +117,7 @@ class Sweep(Generic[I]):
         - Open other terminal window and execute `$ tty` command, then run something that
           will not steal characters for sweep process like `$ sleep 100000`.
         - Instantiate Sweep class with the tty device path of the other terminal.
-        - Now you can call all the methods of the Sweep class in an interractive mode.
+        - Now you can call all the methods of the Sweep class in an interactive mode.
         - set RUST_LOG=debug
         - specify log file
     """
@@ -128,7 +128,7 @@ class Sweep(Generic[I]):
     _proc: Optional[Process]
     _io_sock: Optional[socket.socket]
     _peer: RpcPeer
-    _tmp_socket: bool  # create tmp socket instead of communicating via socketpair
+    _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
 
     def __init__(
         self,
@@ -305,7 +305,7 @@ class Sweep(Generic[I]):
             await self._peer.prompt_set(**attrs)
 
     async def bind(self, key: str, tag: str) -> None:
-        """Assing new key binding"""
+        """Assign new key binding"""
         await self._peer.bind(key=key, tag=tag)
 
 
@@ -607,7 +607,7 @@ class RpcPeer:
         return RpcPeerIter(self)
 
     def _submit_message(self, message: RpcMessage) -> None:
-        """Sumbit message for sending to the other peer"""
+        """Submit message for sending to the other peer"""
         self._write_queue.append(message)
         self._write_notify(None)
 
