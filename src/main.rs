@@ -13,8 +13,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use surf_n_term::widgets::Theme;
-use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
+use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme, SCORER_NEXT_TAG};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
 

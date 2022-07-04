@@ -55,7 +55,8 @@ ICON_BACKPACK = SweepIcon(
 
 
 async def main():
-    os.environ["RUST_LOG"] = "debug"
+    os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
+
     async with Sweep[Any](
         tty="/dev/tty",  # use different tty obtained with tty call "/dev/pts/0",
         sweep=["cargo", "run", "--"],

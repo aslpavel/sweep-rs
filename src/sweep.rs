@@ -1,9 +1,11 @@
-use crate::scorer::FieldRefs;
 use crate::{
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
-    substr_scorer, Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult,
-    ScoreResult, ScorerBuilder,
+    scorer::FieldRefs,
+    substr_scorer,
+    widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
+    Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult, ScoreResult,
+    ScorerBuilder, TerminalDisplay,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -24,11 +26,9 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    encoder::ColorDepth,
-    widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
-    KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
-    TerminalCaps, TerminalCommand, TerminalDisplay, TerminalEvent, TerminalSurface,
+    encoder::ColorDepth, BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key,
+    KeyMap, KeyMod, KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal,
+    TerminalAction, TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurface,
     TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
@@ -654,7 +654,7 @@ where
         } else {
             write!(&mut label, " ")?;
         }
-        let input_start = (icon_offset + label.position().1) as i32;
+        let input_start = (icon_offset + label.position().col) as i32;
 
         // stats
         let stats_str = format!(
@@ -849,7 +849,7 @@ where
     let height = options.height;
     term.execute(TerminalCommand::CursorGet)?;
     while let Some(event) = term.poll(None)? {
-        if let TerminalEvent::CursorPosition { row, .. } = event {
+        if let TerminalEvent::CursorPosition(Position { row, .. }) = event {
             row_offset = row;
             break;
         }

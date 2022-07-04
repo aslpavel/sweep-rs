@@ -13,6 +13,8 @@ pub use candidate::{Candidate, FieldSelector};
 mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
 pub mod rpc;
+mod widgets;
+pub use widgets::{TerminalDisplay, Theme};
 
 trait LockExt {
     type Value;
