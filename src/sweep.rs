@@ -26,10 +26,12 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    encoder::ColorDepth, BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key,
-    KeyMap, KeyMod, KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal,
-    TerminalAction, TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurface,
-    TerminalSurfaceExt, TerminalWaker,
+    encoder::ColorDepth,
+    view::{BoxConstraint, Layout, Tree, View, ViewContext},
+    BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
+    KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
+    TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurface, TerminalSurfaceExt,
+    TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -600,12 +602,15 @@ where
 
         // widgets
         let input = Input::new();
-        let list = List::new(RankerResultThemed::new(
+        let list = List::new(
+            RankerResultThemed::new(
+                theme.clone(),
+                Arc::new(RankerResult::<H>::default()),
+                false,
+                Default::default(),
+            ),
             theme.clone(),
-            Arc::new(RankerResult::<H>::default()),
-            false,
-            Default::default(),
-        ));
+        );
 
         Self {
             prompt,
@@ -690,7 +695,7 @@ where
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
         }
-        self.list.render(&self.theme, view.view_mut(1.., ..))?;
+        self.list.render(view.view_mut(1.., ..))?;
 
         Ok(())
     }
@@ -1124,6 +1129,26 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
             width: size.width,
             height,
         })
+    }
+}
+
+impl<H: Haystack> View for ScoreResultThemed<H> {
+    fn render<'a>(
+        &self,
+        _ctx: &ViewContext,
+        surf: &'a mut TerminalSurface<'a>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), surf_n_term::Error> {
+        self.display(&mut layout.apply_to(surf))
+    }
+
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        Tree::leaf(
+            Layout::new().with_size(
+                self.size_hint(ct.max())
+                    .expect("ScoreResultThemed::size_hint is None"),
+            ),
+        )
     }
 }
 

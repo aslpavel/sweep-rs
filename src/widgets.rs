@@ -1,7 +1,12 @@
-use std::{cmp::max, io::Write, str::FromStr};
+use std::{cell::Cell as StdCell, cmp::max, io::Write, str::FromStr};
 use surf_n_term::{
-    common::clamp, Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Size, Surface,
-    SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    common::clamp,
+    view::{
+        Align, Axis, BoxConstraint, Container, Dynamic, Flex, IntoView, ScrollBar, Text, View,
+        ViewContext,
+    },
+    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Size, Surface, SurfaceMut,
+    TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
 
 #[derive(Clone, Debug)]
@@ -439,7 +444,7 @@ impl ListAction {
 }
 
 pub trait ListItems {
-    type Item: TerminalDisplay;
+    type Item: IntoView;
 
     /// Number of items in the list
     fn len(&self) -> usize;
@@ -455,16 +460,20 @@ pub trait ListItems {
 
 pub struct List<T> {
     items: T,
-    offset: usize,
+    theme: Theme,
+    /// visible offset
+    offset: StdCell<usize>,
+    /// current cursor position
     cursor: usize,
     height_hint: usize,
 }
 
 impl<T: ListItems> List<T> {
-    pub fn new(items: T) -> Self {
+    pub fn new(items: T, theme: Theme) -> Self {
         Self {
             items,
-            offset: 0,
+            theme,
+            offset: StdCell::new(0),
             cursor: 0,
             height_hint: 1,
         }
@@ -475,7 +484,7 @@ impl<T: ListItems> List<T> {
     }
 
     pub fn items_set(&mut self, items: T) -> T {
-        self.offset = 0;
+        self.offset = StdCell::new(0);
         self.cursor = 0;
         std::mem::replace(&mut self.items, items)
     }
@@ -528,27 +537,38 @@ impl<T: ListItems> List<T> {
         }
     }
 
-    pub fn render(
-        &mut self,
-        theme: &Theme,
-        mut surf: impl SurfaceMut<Item = Cell>,
-    ) -> Result<(), Error> {
-        surf.erase(theme.list_default);
+    fn offset(&self) -> usize {
+        self.offset.get()
+    }
+
+    fn offset_fix(&self, height: usize) -> usize {
+        if self.offset() > self.cursor {
+            self.offset.replace(self.cursor);
+        } else if height > 0 && self.offset() + height - 1 < self.cursor {
+            self.offset.replace(self.cursor - height + 1);
+        }
+        self.offset.get()
+    }
+
+    pub fn render(&mut self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error>
+    where
+        T::Item: TerminalDisplay,
+    {
         if surf.height() < 1 || surf.width() < 5 {
             return Ok(());
         }
-        if self.offset > self.cursor {
-            self.offset = self.cursor;
-        } else if self.offset + surf.height() - 1 < self.cursor {
-            self.offset = self.cursor - surf.height() + 1;
-        }
+        self.offset_fix(surf.height());
+
+        let theme = &self.theme;
+        surf.erase(theme.list_default);
 
         // items
         let size = Size {
             width: surf.width() - 4, // exclude left border and scroll bar
             height: surf.height(),
         };
-        let items: Vec<_> = (self.offset..self.offset + surf.height())
+        let offset = self.offset();
+        let items: Vec<_> = (offset..offset + surf.height())
             .filter_map(|index| {
                 let item = self.items.get(index)?;
                 let item_size = match item.size_hint(size) {
@@ -582,7 +602,7 @@ impl<T: ListItems> List<T> {
             cursor_found = cursor_found || *index == self.cursor;
         }
         self.height_hint = items.len();
-        self.offset += first;
+        self.offset.replace(self.offset() + first);
         // render items
         let mut row: usize = 0;
         for (index, item_size, item) in items[first..].iter() {
@@ -633,6 +653,135 @@ impl<T: ListItems> List<T> {
                 sb_writer.put_char(' ', theme.scrollbar_on);
             }
         }
+
+        Ok(())
+    }
+}
+
+impl<'a, T> IntoView for &'a List<T>
+where
+    T: ListItems,
+    T::Item: 'static,
+{
+    type View = Box<dyn View + 'a>;
+
+    fn into_view(self) -> Self::View {
+        let build = |_ctx: &ViewContext, ct: BoxConstraint| {
+            let offset = self.offset_fix(ct.max().height);
+
+            // items
+            let mut items = Flex::column();
+            let mut items_len = 0;
+            for index in offset..offset + ct.max().height {
+                if let Some(item) = self.items().get(index) {
+                    // color and cursor for selected item
+                    let (color, cursor) = if index == self.cursor {
+                        let color = self.theme.list_selected.bg.unwrap_or_default();
+                        let cursor = Text::new(" ● ")
+                            .with_face(self.theme.list_selected.with_fg(Some(self.theme.accent)));
+                        (color, cursor)
+                    } else {
+                        let color = self.theme.list_default.bg.unwrap_or_default();
+                        (color, Text::new("   "))
+                    };
+
+                    // create item
+                    let item = Container::new(
+                        Flex::row()
+                            .add_child(cursor)
+                            .add_flex_child(1.0, Container::new(item).with_horizontal(Align::Fill)),
+                    )
+                    .with_color(color);
+
+                    // extend list
+                    items = items.add_child(item);
+                    items_len += 1;
+                }
+            }
+
+            // scroll bar
+            let scroll_bar_face = Face::default()
+                .with_fg(self.theme.scrollbar_on.bg)
+                .with_bg(self.theme.scrollbar_off.bg);
+            let scroll_bar = ScrollBar::new(
+                Axis::Vertical,
+                scroll_bar_face,
+                self.items.len(),
+                offset,
+                items_len,
+            );
+
+            let view = Container::new(Flex::row().add_flex_child(1.0, items).add_child(scroll_bar))
+                .with_color(self.theme.bg);
+            view
+        };
+        Dynamic::new(build).boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fmt::Display;
+
+    struct VecItems<T>(Vec<T>);
+
+    impl<T> ListItems for VecItems<T>
+    where
+        T: IntoView + Clone,
+    {
+        type Item = T;
+
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        fn get(&self, index: usize) -> Option<Self::Item> {
+            self.0.get(index).cloned()
+        }
+    }
+
+    #[test]
+    fn test_list() -> Result<(), Error> {
+        let theme = Theme::light();
+        let item_face = Face::default().with_fg(theme.list_default.fg);
+        let with_theme = |value: &dyn Display| Text::new(value.to_string()).with_face(item_face);
+
+        let items = VecItems((0..60).map(|v| with_theme(&v as &dyn Display)).collect());
+        let mut list = List::new(items, theme);
+
+        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+
+        list.apply(ListAction::ItemNext);
+        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+
+        (0..20).for_each(|_| list.apply(ListAction::ItemNext));
+        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+
+        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+
+        let items = VecItems(
+            [
+                "1. other entry",
+                "2. this is the third entry",
+                "3. first multi line\n - first\n - second\n - thrid",
+            ]
+            .iter()
+            .map(|v| with_theme(v))
+            .collect(),
+        );
+        list.items_set(items);
+        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+
+        (0..20).for_each(|_| list.apply(ListAction::ItemNext));
+        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        println!(
+            "{:#?}",
+            list.into_view().layout(
+                &ViewContext::dummy(),
+                BoxConstraint::tight(Size::new(5, 50))
+            )
+        );
 
         Ok(())
     }
