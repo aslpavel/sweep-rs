@@ -765,6 +765,7 @@ mod tests {
                 "1. other entry",
                 "2. this is the third entry",
                 "3. first multi line\n - first\n - second\n - thrid",
+                "4. fourth entry",
             ]
             .iter()
             .map(|v| with_theme(v))
@@ -773,15 +774,8 @@ mod tests {
         list.items_set(items);
         println!("{:?}", list.into_view().debug(Size::new(5, 50)));
 
-        (0..20).for_each(|_| list.apply(ListAction::ItemNext));
+        (0..3).for_each(|_| list.apply(ListAction::ItemNext));
         println!("{:?}", list.into_view().debug(Size::new(5, 50)));
-        println!(
-            "{:#?}",
-            list.into_view().layout(
-                &ViewContext::dummy(),
-                BoxConstraint::tight(Size::new(5, 50))
-            )
-        );
 
         Ok(())
     }
