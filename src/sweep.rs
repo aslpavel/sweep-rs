@@ -27,7 +27,7 @@ use std::{
 };
 use surf_n_term::{
     encoder::ColorDepth,
-    view::{BoxConstraint, Layout, Tree, View, ViewContext},
+    view::{BoxConstraint, IntoView, Layout, Tree, View, ViewContext},
     BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
     KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
     TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurface, TerminalSurfaceExt,
@@ -634,6 +634,7 @@ where
         mut view: impl SurfaceMut<Item = Cell>,
         term_caps: &TerminalCaps,
         refs: FieldRefs,
+        ctx: &ViewContext,
     ) -> Result<(), Error> {
         self.ranker.needle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
@@ -695,7 +696,11 @@ where
             // dropping old result might add noticeable delay for large lists
             rayon::spawn(move || std::mem::drop(old_result));
         }
-        self.list.render(view.view_mut(1.., ..))?;
+        // self.list.render(view.view_mut(1.., ..))?;
+        let mut list_surf = view.view_mut(1u32.., ..);
+        let list_view = self.list.into_view();
+        let list_layout = list_view.layout(ctx, BoxConstraint::tight(list_surf.size()));
+        list_view.render(ctx, &mut list_surf, &list_layout)?;
 
         Ok(())
     }
@@ -1011,9 +1016,10 @@ where
             view.view_owned((row_offset as i32)..(row_offset + height) as i32, ..)
         };
         let term_caps = term.capabilities();
+        let ctx = ViewContext::new(term)?;
         match state_help.as_mut() {
-            Some(state) => state.render(view, term_caps, refs.clone())?,
-            None => state.render(view, term_caps, refs.clone())?,
+            Some(state) => state.render(view, term_caps, refs.clone(), &ctx)?,
+            None => state.render(view, term_caps, refs.clone(), &ctx)?,
         }
 
         Ok(TerminalAction::Wait)
