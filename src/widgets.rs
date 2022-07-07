@@ -1,12 +1,9 @@
-use std::{cell::Cell as StdCell, cmp::max, io::Write, str::FromStr};
+use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, io::Write, str::FromStr};
 use surf_n_term::{
     common::clamp,
-    view::{
-        Align, Axis, BoxConstraint, Container, Dynamic, Flex, IntoView, ScrollBar, Text, View,
-        ViewContext,
-    },
-    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Size, Surface, SurfaceMut,
-    TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    view::{Axis, BoxConstraint, IntoView, Layout, ScrollBar, Tree, View, ViewContext},
+    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, Surface,
+    SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
 
 #[derive(Clone, Debug)]
@@ -658,64 +655,149 @@ impl<T: ListItems> List<T> {
     }
 }
 
+pub struct ListView<'a, T> {
+    list: &'a List<T>,
+}
+
+struct ListViewData {
+    view: Box<dyn View>,
+    pointed: bool,
+}
+
+impl<'a, T> View for ListView<'a, T>
+where
+    T: ListItems,
+    T::Item: 'static,
+{
+    fn render<'b>(
+        &self,
+        ctx: &ViewContext,
+        surf: &'b mut TerminalSurface<'b>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), Error> {
+        if layout.size().is_empty() {
+            return Ok(());
+        }
+        let mut surf = layout.apply_to(surf);
+
+        // render items and scroll-bar (last layout in the list)
+        surf.erase(self.list.theme.list_default);
+        for item_layout in layout.children.iter() {
+            let row = item_layout.pos().row;
+            let height = item_layout.size().height;
+            let item_data = item_layout
+                .data::<ListViewData>()
+                .ok_or(Error::InvalidLayout)?;
+
+            // render cursor
+            if item_data.pointed {
+                let mut surf = surf.view_mut(row..row + height, ..-1);
+                surf.erase(self.list.theme.list_selected);
+                let cursor_face = Face::default().with_fg(Some(self.list.theme.accent));
+                write!(surf.writer().face_set(cursor_face), " ● ")?;
+            }
+
+            item_data
+                .view
+                .render(ctx, &mut surf.as_mut(), item_layout)?;
+        }
+
+        Ok(())
+    }
+
+    fn layout(&self, ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        let height = ct.max().height;
+        let width = ct.max().width;
+        if height < 1 || width < 5 {
+            return Tree::leaf(Layout::new());
+        }
+
+        // offset if it is too far from the cursor
+        let offset = self.list.offset_fix(ct.max().height);
+        let child_ct = BoxConstraint::new(Size::new(0, width - 4), Size::new(height, width - 4));
+        let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
+        let mut children_height = 0;
+        let mut children_removed = 0;
+        for index in offset..offset + height {
+            let item = match self.list.items().get(index) {
+                None => break,
+                Some(item) => item,
+            };
+
+            // create view and calculate layout
+            let pointed = index == self.list.cursor;
+            let view = item.into_view().boxed();
+            let mut layout = view.layout(ctx, child_ct);
+
+            // insert layout
+            children_height += layout.size().height;
+            layout.set_data(ListViewData { view, pointed });
+            layouts.push_back(layout);
+
+            if children_height > height {
+                if index > self.list.cursor {
+                    break; // all height is occupied, cursor is rendered
+                }
+                // we have not reached cursor yet, removing items from the top
+                // until we can fit new child
+                while children_height > height && !layouts.is_empty() {
+                    match layouts.pop_front() {
+                        Some(layout) => {
+                            children_height -= layout.size().height;
+                            children_removed += 1;
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        // fix offset
+        self.list.offset.set(offset + children_removed);
+
+        // compute offsets
+        let mut offset = 0;
+        for layout in layouts.iter_mut() {
+            layout.set_pos(Position::new(offset, 3));
+            offset += layout.size().height;
+        }
+
+        // add scroll bar
+        let scroll_bar_face = Face::default()
+            .with_fg(self.list.theme.scrollbar_on.bg)
+            .with_bg(self.list.theme.scrollbar_off.bg);
+        let scroll_bar = ScrollBar::new(
+            Axis::Vertical,
+            scroll_bar_face,
+            self.list.items.len(),
+            self.list.cursor,
+            layouts.len(),
+        );
+        let mut scroll_bar_layout =
+            scroll_bar.layout(ctx, BoxConstraint::tight(Size::new(height, 1)));
+        scroll_bar_layout.set_pos(Position::new(0, width - 1));
+        scroll_bar_layout.set_data(ListViewData {
+            view: Box::new(scroll_bar),
+            pointed: false,
+        });
+        layouts.push_back(scroll_bar_layout);
+
+        Tree::new(
+            Layout::new().with_size(Size::new(height, width)),
+            layouts.into(),
+        )
+    }
+}
+
 impl<'a, T> IntoView for &'a List<T>
 where
     T: ListItems,
     T::Item: 'static,
 {
-    type View = Box<dyn View + 'a>;
+    type View = ListView<'a, T>;
 
     fn into_view(self) -> Self::View {
-        let build = |_ctx: &ViewContext, ct: BoxConstraint| {
-            let offset = self.offset_fix(ct.max().height);
-
-            // items
-            let mut items = Flex::column();
-            let mut items_len = 0;
-            for index in offset..offset + ct.max().height {
-                if let Some(item) = self.items().get(index) {
-                    // color and cursor for selected item
-                    let (color, cursor) = if index == self.cursor {
-                        let color = self.theme.list_selected.bg.unwrap_or_default();
-                        let cursor = Text::new(" ● ")
-                            .with_face(self.theme.list_selected.with_fg(Some(self.theme.accent)));
-                        (color, cursor)
-                    } else {
-                        let color = self.theme.list_default.bg.unwrap_or_default();
-                        (color, Text::new("   "))
-                    };
-
-                    // create item
-                    let item = Container::new(
-                        Flex::row()
-                            .add_child(cursor)
-                            .add_flex_child(1.0, Container::new(item).with_horizontal(Align::Fill)),
-                    )
-                    .with_color(color);
-
-                    // extend list
-                    items = items.add_child(item);
-                    items_len += 1;
-                }
-            }
-
-            // scroll bar
-            let scroll_bar_face = Face::default()
-                .with_fg(self.theme.scrollbar_on.bg)
-                .with_bg(self.theme.scrollbar_off.bg);
-            let scroll_bar = ScrollBar::new(
-                Axis::Vertical,
-                scroll_bar_face,
-                self.items.len(),
-                offset,
-                items_len,
-            );
-
-            let view = Container::new(Flex::row().add_flex_child(1.0, items).add_child(scroll_bar))
-                .with_color(self.theme.bg);
-            view
-        };
-        Dynamic::new(build).boxed()
+        ListView { list: self }
     }
 }
 
@@ -723,6 +805,7 @@ where
 mod tests {
     use super::*;
     use std::fmt::Display;
+    use surf_n_term::view::Text;
 
     struct VecItems<T>(Vec<T>);
 
@@ -774,7 +857,10 @@ mod tests {
         list.items_set(items);
         println!("{:?}", list.into_view().debug(Size::new(5, 50)));
 
-        (0..3).for_each(|_| list.apply(ListAction::ItemNext));
+        (0..2).for_each(|_| list.apply(ListAction::ItemNext));
+        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+
+        list.apply(ListAction::ItemNext);
         println!("{:?}", list.into_view().debug(Size::new(5, 50)));
 
         Ok(())
