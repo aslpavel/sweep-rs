@@ -899,8 +899,9 @@ dependencies = [
 
 [[package]]
 name = "surf_n_term"
-version = "0.5.1"
-source = "git+https://github.com/aslpavel/surf-n-term.git#ac04a3415642ceae0e1f0753e09547eafd511ed0"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89ae9947edef90d409d90d31b7949f555ed8533b6f34368f81e0aac18af17ac9"
 dependencies = [
  "flate2",
  "fnv",
@@ -917,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "argh",
