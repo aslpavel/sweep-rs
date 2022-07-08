@@ -232,21 +232,18 @@ pub struct Input {
     /// reversed string after cursor
     after: Vec<char>,
     /// visible offset
-    offset: usize,
-}
-
-impl Default for Input {
-    fn default() -> Self {
-        Self::new()
-    }
+    offset: StdCell<usize>,
+    /// theme
+    theme: Theme,
 }
 
 impl Input {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         Self {
             before: Default::default(),
             after: Default::default(),
-            offset: 0,
+            offset: StdCell::new(0),
+            theme,
         }
     }
 
@@ -343,33 +340,75 @@ impl Input {
         self.before.clear();
         self.after.clear();
         self.before.extend(text.chars());
-        self.offset = 0;
+        self.offset.set(0);
     }
 
-    pub fn render(
-        &mut self,
-        theme: &Theme,
-        mut surf: impl SurfaceMut<Item = Cell>,
-    ) -> Result<(), Error> {
-        surf.erase(theme.input);
+    fn offset(&self) -> usize {
+        self.offset.get()
+    }
+
+    fn fix_offset(&self, size: usize) -> usize {
+        if self.offset() > self.before.len() {
+            self.offset.set(self.before.len());
+        } else if self.offset() + size < self.before.len() + 1 {
+            self.offset.set(self.before.len() - size + 1);
+        }
+        self.offset()
+    }
+
+    pub fn render_old(&self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error> {
+        surf.erase(self.theme.input);
         let size = surf.width() * surf.height();
         if size < 2 {
             return Ok(());
-        } else if self.offset > self.before.len() {
-            self.offset = self.before.len();
-        } else if self.offset + size < self.before.len() + 1 {
-            self.offset = self.before.len() - size + 1;
         }
-        let mut writer = surf.writer().face(theme.input);
-        for c in self.before[self.offset..].iter() {
-            writer.put(Cell::new(theme.input, Some(*c)));
+        let offset = self.fix_offset(size);
+        let mut writer = surf.writer().face(self.theme.input);
+        for c in self.before[offset..].iter() {
+            writer.put(Cell::new(self.theme.input, Some(*c)));
         }
         let mut iter = self.after.iter().rev();
-        writer.put(Cell::new(theme.cursor, iter.next().copied()));
+        writer.put(Cell::new(self.theme.cursor, iter.next().copied()));
         for c in iter {
-            writer.put(Cell::new(theme.input, Some(*c)));
+            writer.put(Cell::new(self.theme.input, Some(*c)));
         }
         Ok(())
+    }
+}
+
+impl<'a> View for &'a Input {
+    fn render<'b>(
+        &self,
+        _ctx: &ViewContext,
+        surf: &'b mut TerminalSurface<'b>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), Error> {
+        if layout.size().is_empty() {
+            return Ok(());
+        }
+        let mut surf = layout.apply_to(surf);
+        surf.erase(self.theme.input);
+
+        let mut writer = surf.writer().face(self.theme.input);
+        for c in self.before[self.offset()..].iter() {
+            writer.put(Cell::new(self.theme.input, Some(*c)));
+        }
+        let mut iter = self.after.iter().rev();
+        writer.put(Cell::new(self.theme.cursor, iter.next().copied()));
+        for c in iter {
+            writer.put(Cell::new(self.theme.input, Some(*c)));
+        }
+
+        Ok(())
+    }
+
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        let size = ct.max().width * ct.max().height;
+        if size < 2 {
+            return Tree::leaf(Layout::new());
+        }
+        self.fix_offset(size);
+        Tree::leaf(Layout::new().with_size(ct.max()))
     }
 }
 
@@ -547,7 +586,7 @@ impl<T: ListItems> List<T> {
         self.offset.get()
     }
 
-    pub fn render(&mut self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error>
+    pub fn render_old(&mut self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error>
     where
         T::Item: TerminalDisplay,
     {
@@ -655,16 +694,12 @@ impl<T: ListItems> List<T> {
     }
 }
 
-pub struct ListView<'a, T> {
-    list: &'a List<T>,
-}
-
-struct ListViewData {
+struct ListItemView {
     view: Box<dyn View>,
     pointed: bool,
 }
 
-impl<'a, T> View for ListView<'a, T>
+impl<'a, T> View for &'a List<T>
 where
     T: ListItems,
     T::Item: 'static,
@@ -681,19 +716,19 @@ where
         let mut surf = layout.apply_to(surf);
 
         // render items and scroll-bar (last layout in the list)
-        surf.erase(self.list.theme.list_default);
+        surf.erase(self.theme.list_default);
         for item_layout in layout.children.iter() {
             let row = item_layout.pos().row;
             let height = item_layout.size().height;
             let item_data = item_layout
-                .data::<ListViewData>()
+                .data::<ListItemView>()
                 .ok_or(Error::InvalidLayout)?;
 
             // render cursor
             if item_data.pointed {
                 let mut surf = surf.view_mut(row..row + height, ..-1);
-                surf.erase(self.list.theme.list_selected);
-                let cursor_face = Face::default().with_fg(Some(self.list.theme.accent));
+                surf.erase(self.theme.list_selected);
+                let cursor_face = Face::default().with_fg(Some(self.theme.accent));
                 write!(surf.writer().face_set(cursor_face), " ● ")?;
             }
 
@@ -713,29 +748,29 @@ where
         }
 
         // offset if it is too far from the cursor
-        let offset = self.list.offset_fix(ct.max().height);
+        let offset = self.offset_fix(ct.max().height);
         let child_ct = BoxConstraint::new(Size::new(0, width - 4), Size::new(height, width - 4));
         let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
         let mut children_height = 0;
         let mut children_removed = 0;
         for index in offset..offset + height {
-            let item = match self.list.items().get(index) {
+            let item = match self.items().get(index) {
                 None => break,
                 Some(item) => item,
             };
 
             // create view and calculate layout
-            let pointed = index == self.list.cursor;
+            let pointed = index == self.cursor;
             let view = item.into_view().boxed();
             let mut layout = view.layout(ctx, child_ct);
 
             // insert layout
             children_height += layout.size().height;
-            layout.set_data(ListViewData { view, pointed });
+            layout.set_data(ListItemView { view, pointed });
             layouts.push_back(layout);
 
             if children_height > height {
-                if index > self.list.cursor {
+                if index > self.cursor {
                     break; // all height is occupied, cursor is rendered
                 }
                 // we have not reached cursor yet, removing items from the top
@@ -753,7 +788,7 @@ where
         }
 
         // fix offset
-        self.list.offset.set(offset + children_removed);
+        self.offset.set(offset + children_removed);
 
         // compute offsets
         let mut offset = 0;
@@ -764,19 +799,19 @@ where
 
         // add scroll bar
         let scroll_bar_face = Face::default()
-            .with_fg(self.list.theme.scrollbar_on.bg)
-            .with_bg(self.list.theme.scrollbar_off.bg);
+            .with_fg(self.theme.scrollbar_on.bg)
+            .with_bg(self.theme.scrollbar_off.bg);
         let scroll_bar = ScrollBar::new(
             Axis::Vertical,
             scroll_bar_face,
-            self.list.items.len(),
-            self.list.cursor,
+            self.items.len(),
+            self.cursor,
             layouts.len(),
         );
         let mut scroll_bar_layout =
             scroll_bar.layout(ctx, BoxConstraint::tight(Size::new(height, 1)));
         scroll_bar_layout.set_pos(Position::new(0, width - 1));
-        scroll_bar_layout.set_data(ListViewData {
+        scroll_bar_layout.set_data(ListItemView {
             view: Box::new(scroll_bar),
             pointed: false,
         });
@@ -786,18 +821,6 @@ where
             Layout::new().with_size(Size::new(height, width)),
             layouts.into(),
         )
-    }
-}
-
-impl<'a, T> IntoView for &'a List<T>
-where
-    T: ListItems,
-    T::Item: 'static,
-{
-    type View = ListView<'a, T>;
-
-    fn into_view(self) -> Self::View {
-        ListView { list: self }
     }
 }
 
