@@ -14,7 +14,7 @@ mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
 pub mod rpc;
 mod widgets;
-pub use widgets::{TerminalDisplay, Theme};
+pub use widgets::Theme;
 
 trait LockExt {
     type Value;

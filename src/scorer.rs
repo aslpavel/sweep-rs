@@ -67,7 +67,7 @@ impl<'a> Field<'a> {
         Self {
             text: match &self.text {
                 Cow::Borrowed(text) => Cow::Borrowed(text),
-                Cow::Owned(text) => Cow::Borrowed(&text),
+                Cow::Owned(text) => Cow::Borrowed(text),
             },
             active: self.active,
             glyph: self.glyph.clone(),
@@ -205,7 +205,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
                         }
                     }
                 }
-                let text = text.unwrap_or_else(|| Cow::Borrowed::<'static>(""));
+                let text = text.unwrap_or(Cow::Borrowed::<'static>(""));
                 let text_not_empty = !text.is_empty();
                 Ok(Field {
                     text,

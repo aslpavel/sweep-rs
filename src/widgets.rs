@@ -1,9 +1,9 @@
-use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, io::Write, str::FromStr};
+use std::{cell::Cell as StdCell, collections::VecDeque, io::Write, str::FromStr};
 use surf_n_term::{
     common::clamp,
     view::{Axis, BoxConstraint, IntoView, Layout, ScrollBar, Tree, View, ViewContext},
-    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, Surface,
-    SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, SurfaceMut,
+    TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
 
 #[derive(Clone, Debug)]
@@ -66,27 +66,6 @@ impl Theme {
             "#282828".parse().unwrap(),
             "#d3869b".parse().unwrap(),
         )
-    }
-}
-
-/// Anything that can be show on the terminal
-pub trait TerminalDisplay {
-    /// Display object by updating terminal surface
-    fn display(&self, surf: &mut TerminalSurface<'_>) -> Result<(), Error>;
-    /// Return the size of the displayed object given the surface size
-    fn size_hint(&self, surf_size: Size) -> Option<Size>;
-}
-
-impl<'a, T> TerminalDisplay for &'a T
-where
-    T: TerminalDisplay + ?Sized,
-{
-    fn display(&self, surf: &mut TerminalSurface<'_>) -> Result<(), Error> {
-        (*self).display(surf)
-    }
-
-    fn size_hint(&self, surf_size: Size) -> Option<Size> {
-        (*self).size_hint(surf_size)
     }
 }
 
@@ -355,25 +334,6 @@ impl Input {
         }
         self.offset()
     }
-
-    pub fn render_old(&self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error> {
-        surf.erase(self.theme.input);
-        let size = surf.width() * surf.height();
-        if size < 2 {
-            return Ok(());
-        }
-        let offset = self.fix_offset(size);
-        let mut writer = surf.writer().face(self.theme.input);
-        for c in self.before[offset..].iter() {
-            writer.put(Cell::new(self.theme.input, Some(*c)));
-        }
-        let mut iter = self.after.iter().rev();
-        writer.put(Cell::new(self.theme.cursor, iter.next().copied()));
-        for c in iter {
-            writer.put(Cell::new(self.theme.input, Some(*c)));
-        }
-        Ok(())
-    }
 }
 
 impl<'a> View for &'a Input {
@@ -584,113 +544,6 @@ impl<T: ListItems> List<T> {
             self.offset.replace(self.cursor - height + 1);
         }
         self.offset.get()
-    }
-
-    pub fn render_old(&mut self, mut surf: impl SurfaceMut<Item = Cell>) -> Result<(), Error>
-    where
-        T::Item: TerminalDisplay,
-    {
-        if surf.height() < 1 || surf.width() < 5 {
-            return Ok(());
-        }
-        self.offset_fix(surf.height());
-
-        let theme = &self.theme;
-        surf.erase(theme.list_default);
-
-        // items
-        let size = Size {
-            width: surf.width() - 4, // exclude left border and scroll bar
-            height: surf.height(),
-        };
-        let offset = self.offset();
-        let items: Vec<_> = (offset..offset + surf.height())
-            .filter_map(|index| {
-                let item = self.items.get(index)?;
-                let item_size = match item.size_hint(size) {
-                    Some(item_size) => Size {
-                        height: max(1, item_size.height),
-                        width: item_size.width,
-                    },
-                    None => Size {
-                        height: 1,
-                        width: size.width,
-                    },
-                };
-                Some((index, item_size, item))
-            })
-            .collect();
-        // make sure items will fit
-        let mut cursor_found = false;
-        let mut items_height = 0;
-        let mut first = 0;
-        for (index, size, _item) in items.iter() {
-            items_height += size.height;
-            if items_height > surf.height() {
-                if cursor_found {
-                    break;
-                }
-                while items_height > surf.height() {
-                    items_height -= items[first].1.height;
-                    first += 1;
-                }
-            }
-            cursor_found = cursor_found || *index == self.cursor;
-        }
-        self.height_hint = items.len();
-        self.offset.replace(self.offset() + first);
-        // render items
-        let mut row: usize = 0;
-        for (index, item_size, item) in items[first..].iter() {
-            let mut item_surf = surf.view_mut(row..row + item_size.height, ..-1);
-            row += item_size.height;
-            if item_surf.is_empty() {
-                break;
-            }
-            if *index == self.cursor {
-                item_surf.erase(theme.list_selected);
-                let mut writer = item_surf
-                    .writer()
-                    .face(theme.list_selected.with_fg(Some(theme.accent)));
-                writer.write_all(" ● ".as_ref())?;
-            } else {
-                let mut writer = item_surf.writer().face(theme.list_default);
-                writer.write_all("   ".as_ref())?;
-            };
-            let mut text_surf = item_surf.view_mut(.., 3..);
-            if *index == self.cursor {
-                text_surf.erase(theme.list_selected);
-                item.display(&mut text_surf)?;
-            } else {
-                text_surf.erase(theme.list_default);
-                item.display(&mut text_surf)?;
-            }
-        }
-
-        // scroll bar
-        let (sb_offset, sb_filled) = if self.items.len() != 0 {
-            let sb_filled = clamp(
-                surf.height() * items.len() / self.items.len(),
-                1,
-                surf.height(),
-            );
-            let sb_offset = (surf.height() - sb_filled) * (self.cursor + 1) / self.items.len();
-            (sb_offset, sb_filled + sb_offset)
-        } else {
-            (0, surf.height())
-        };
-        let range = 0..surf.height();
-        let mut sb = surf.view_mut(.., -1);
-        let mut sb_writer = sb.writer();
-        for i in range {
-            if i < sb_offset || i >= sb_filled {
-                sb_writer.put_char(' ', theme.scrollbar_off);
-            } else {
-                sb_writer.put_char(' ', theme.scrollbar_on);
-            }
-        }
-
-        Ok(())
     }
 }
 

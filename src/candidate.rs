@@ -197,7 +197,7 @@ impl<'de> Deserialize<'de> for Candidate {
                     }
                 }
                 let fields = fields.ok_or_else(|| de::Error::missing_field("entry or fields"))?;
-                let fields_right = fields_right.unwrap_or_else(Vec::new);
+                let fields_right = fields_right.unwrap_or_default();
                 Ok(Candidate::new(
                     fields,
                     (!extra.is_empty()).then(move || extra),

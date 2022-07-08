@@ -5,7 +5,7 @@ use crate::{
     substr_scorer,
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult, ScoreResult,
-    ScorerBuilder, TerminalDisplay,
+    ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -26,12 +26,10 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    encoder::ColorDepth,
     view::{BoxConstraint, Container, Flex, IntoView, Layout, Text, Tree, View, ViewContext},
     BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
     KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
-    TerminalCaps, TerminalCommand, TerminalEvent, TerminalSurface, TerminalSurfaceExt,
-    TerminalWaker,
+    TerminalCommand, TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -614,7 +612,6 @@ where
             RankerResultThemed::new(
                 theme.clone(),
                 Arc::new(RankerResult::<H>::default()),
-                false,
                 Default::default(),
             ),
             theme.clone(),
@@ -636,79 +633,6 @@ where
             ranker,
             refs,
         }
-    }
-
-    #[allow(unused)]
-    fn render_old(
-        &mut self,
-        mut view: impl SurfaceMut<Item = Cell>,
-        term_caps: &TerminalCaps,
-        refs: FieldRefs,
-    ) -> Result<(), Error> {
-        self.ranker.needle_set(self.input.get().collect());
-        let ranker_result = self.ranker.result();
-        let basic = term_caps.depth == ColorDepth::Gray;
-
-        // prompt
-        let icon_offset = match &self.prompt_icon {
-            Some(icon) if term_caps.glyphs && !basic => {
-                view.set(0, 0, Cell::new_glyph(self.label_face, icon.clone()));
-                icon.size().width
-            }
-            _ => {
-                view.set(0, 0, Cell::new(self.label_face, None));
-                1
-            }
-        };
-        let mut label_view = view.view_mut(0, icon_offset..);
-        let mut label = label_view.writer().face(self.label_face);
-        write!(&mut label, "{} ", self.prompt)?;
-        let mut label = label.face(self.separator_face);
-        if basic {
-            write!(&mut label, " ")?;
-        } else {
-            write!(&mut label, " ")?;
-        }
-        let input_start = (icon_offset + label.position().col) as i32;
-
-        // stats
-        let stats_str = format!(
-            " {}/{} {:.2?} [{}] ",
-            ranker_result.result.len(),
-            ranker_result.haystack_size,
-            ranker_result.duration,
-            ranker_result.scorer.name(),
-        );
-        let input_stop = -(stats_str.chars().count() as i32 + 1);
-        let mut stats_view = view.view_mut(0, input_stop..);
-        let mut stats = stats_view.writer().face(self.separator_face);
-        if basic {
-            write!(&mut stats, " ")?;
-        } else {
-            write!(&mut stats, "")?;
-        }
-        let mut stats = stats.face(self.stats_face);
-        stats.write_all(stats_str.as_ref())?;
-
-        // input
-        self.input
-            .render_old(view.view_mut(0, input_start..input_stop))?;
-
-        // list
-        if self.list.items().generation() != ranker_result.generation {
-            let old_result = self.list.items_set(RankerResultThemed::new(
-                self.theme.clone(),
-                ranker_result,
-                term_caps.glyphs,
-                refs,
-            ));
-            // dropping old result might add noticeable delay for large lists
-            rayon::spawn(move || std::mem::drop(old_result));
-        }
-        self.list.render_old(view.view_mut(1.., ..))?;
-        // view.view_mut(1.., ..).draw_view(ctx, &self.list)?;
-
-        Ok(())
     }
 
     fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
@@ -851,7 +775,6 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             let old_result = self.list.items_set(RankerResultThemed::new(
                 self.theme.clone(),
                 ranker_result,
-                true,
                 self.refs.clone(),
             ));
             // dropping old result might add noticeable delay for large lists
@@ -865,6 +788,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             None => prompt.push_text(" "),
         };
         prompt.push_text(self.prompt.as_str());
+        prompt.push_text(" ");
         prompt.push_text(Text::new(" ").with_face(self.separator_face));
 
         // stats
@@ -1104,9 +1028,7 @@ where
     term.poll(Some(Duration::new(0, 0)))?;
     std::mem::drop(term);
 
-    let _ = result?;
-
-    Ok(())
+    result
 }
 
 struct ScoreResultThemed<H> {
@@ -1114,13 +1036,19 @@ struct ScoreResultThemed<H> {
     face_default: Face,
     face_inactive: Face,
     face_highlight: Face,
-    show_glyphs: bool,
     refs: FieldRefs,
 }
 
-impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
-    fn display(&self, surf: &mut TerminalSurface<'_>) -> Result<(), surf_n_term::Error> {
-        // right fields offset
+impl<H: Haystack> View for ScoreResultThemed<H> {
+    fn render<'a>(
+        &self,
+        ctx: &ViewContext,
+        surf: &'a mut TerminalSurface<'a>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), surf_n_term::Error> {
+        let mut surf = layout.apply_to(surf);
+
+        // space reserved for right fields
         let offset = self.result.haystack.fields_right_offset();
 
         // render left side
@@ -1134,11 +1062,11 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
         for field in self.result.haystack.fields() {
             let field = field.resolve(&self.refs);
             let face_field = field.face.unwrap_or_default();
-            if !field.active || !field.glyph.is_none() {
+            if !field.active || field.glyph.is_some() {
                 let face = self.face_inactive.overlay(&face_field);
                 writer.face_set(face);
                 match field.glyph {
-                    Some(glyph) if self.show_glyphs => {
+                    Some(glyph) if ctx.has_glyphs() => {
                         writer.put(Cell::new_glyph(face, glyph));
                     }
                     _ => writer.write_all(field.text.as_bytes())?,
@@ -1168,7 +1096,7 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
             let face = self.face_inactive.overlay(&field.face.unwrap_or_default());
             writer.face_set(face);
             match field.glyph {
-                Some(glyph) if self.show_glyphs => {
+                Some(glyph) if ctx.has_glyphs() => {
                     writer.put(Cell::new_glyph(face, glyph));
                 }
                 _ => writer.write_all(field.text.as_bytes())?,
@@ -1179,7 +1107,8 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
         Ok(())
     }
 
-    fn size_hint(&self, size: Size) -> Option<Size> {
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        let size = ct.max();
         let offset = self.result.haystack.fields_right_offset();
         let width = if size.width > offset {
             size.width - offset
@@ -1196,51 +1125,21 @@ impl<H: Haystack> TerminalDisplay for ScoreResultThemed<H> {
             }
         }
         let height = length / width + (if length % width != 0 { 1 } else { 0 });
-        Some(Size {
-            width: size.width,
-            height,
-        })
-    }
-}
-
-impl<H: Haystack> View for ScoreResultThemed<H> {
-    fn render<'a>(
-        &self,
-        _ctx: &ViewContext,
-        surf: &'a mut TerminalSurface<'a>,
-        layout: &Tree<Layout>,
-    ) -> Result<(), surf_n_term::Error> {
-        self.display(&mut layout.apply_to(surf))
-    }
-
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        Tree::leaf(
-            Layout::new().with_size(
-                self.size_hint(ct.max())
-                    .expect("ScoreResultThemed::size_hint is None"),
-            ),
-        )
+        Tree::leaf(Layout::new().with_size(Size::new(height, size.width)))
     }
 }
 
 struct RankerResultThemed<H> {
     theme: Theme,
     ranker_result: Arc<RankerResult<H>>,
-    show_glyphs: bool,
     refs: FieldRefs,
 }
 
 impl<H> RankerResultThemed<H> {
-    fn new(
-        theme: Theme,
-        ranker_result: Arc<RankerResult<H>>,
-        show_glyphs: bool,
-        refs: FieldRefs,
-    ) -> Self {
+    fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>, refs: FieldRefs) -> Self {
         Self {
             theme,
             ranker_result,
-            show_glyphs,
             refs,
         }
     }
@@ -1272,7 +1171,6 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
                 face_default,
                 face_inactive,
                 face_highlight: self.theme.cursor,
-                show_glyphs: self.show_glyphs,
                 refs: self.refs.clone(),
             })
     }
