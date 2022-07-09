@@ -4,6 +4,13 @@ build = "build.rs"
 edition = "2021"
 name = "sweep"
 version = "0.9.0"
+include = [
+  "**/*.rs",
+  "src/icons.json",
+  "Cargo.toml",
+  "Cargo.lock",
+  "README.md",
+]
 
 [lib]
 name = "sweep"

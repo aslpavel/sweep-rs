@@ -27,9 +27,9 @@ use std::{
 };
 use surf_n_term::{
     view::{BoxConstraint, Container, Flex, IntoView, Layout, Text, Tree, View, ViewContext},
-    BBox, Blend, Cell, Color, DecMode, Face, FaceAttrs, FillRule, Glyph, Key, KeyMap, KeyMod,
-    KeyName, Path, Position, Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction,
-    TerminalCommand, TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
+    Blend, Cell, Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position,
+    Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand,
+    TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -39,29 +39,11 @@ use tokio::{
 pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 lazy_static::lazy_static! {
-    pub static ref KEYBOARD_ICON: Glyph = Glyph::new(
-        r#"
-        M4,5A2,2 0 0,0 2,7V17A2,2 0 0,0 4,19H20A2,2 0 0,0 22,17V7A2,2 0 0,0 20,5
-        H4M4,7H20V17H4V7M5,8V10H7V8H5M8,8V10H10V8H8M11,8V10H13V8H11M14,8V10H16V8
-        H14M17,8V10H19V8H17M5,11V13H7V11H5M8,11V13H10V11H8M11,11V13H13V11H11
-        M14,11V13H16V11H14M17,11V13H19V11H17M8,14V16H16V14H8Z
-        "#.parse::<Path>().expect("failed to parse keyboard icon"),
-        FillRule::NonZero,
-        Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
-        Size::new(1, 3),
-    );
-
-    pub static ref BROOM_ICON: Glyph = Glyph::new(
-        r#"
-        M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44
-        L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57
-        C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15
-        C10.34,20.81 7.94,19.58 5.93,17.57Z
-        "#.parse::<Path>().expect("failed to parse broom icon"),
-        FillRule::NonZero,
-        Some(BBox::new((0.0, 0.0), (24.0, 24.0))),
-        Size::new(1, 3),
-    );
+    pub static ref DEFAULT_ICON: &'static str = "broom";
+    pub static ref KEYBOARD_ICON: &'static str = "keyboard";
+    pub static ref ICONS: HashMap<String, Glyph> =
+        serde_json::from_str(include_str!("./icons.json"))
+            .expect("invalid icons.json file");
 }
 
 pub struct SweepOptions {
@@ -85,7 +67,7 @@ impl Default for SweepOptions {
         Self {
             height: 11,
             prompt: "INPUT".to_string(),
-            prompt_icon: Some(BROOM_ICON.clone()),
+            prompt_icon: ICONS.get(*DEFAULT_ICON).cloned(),
             theme: Theme::light(),
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
@@ -748,7 +730,7 @@ where
         ranker.haystack_extend(candidates);
         SweepState::new(
             "BINDINGS".to_owned(),
-            Some(KEYBOARD_ICON.clone()),
+            ICONS.get(*KEYBOARD_ICON).cloned(),
             ranker,
             self.theme.clone(),
             FieldRefs::default(),
@@ -763,13 +745,13 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // update state of the ranker and item list
         self.ranker.needle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
-        let stats_text = format!(
-            " {}/{} {:.2?} [{}] ",
+        let mut stats_text = Text::new(format!(
+            " {}/{} {:.2?} ",
             ranker_result.result.len(),
             ranker_result.haystack_size,
             ranker_result.duration,
-            ranker_result.scorer.name(),
-        );
+        ));
+        let scorer_name = ranker_result.scorer.name().to_string();
         if self.list.items().generation() != ranker_result.generation {
             // update list with new results
             let old_result = self.list.items_set(RankerResultThemed::new(
@@ -792,6 +774,12 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         prompt.push_text(Text::new(" ").with_face(self.separator_face));
 
         // stats
+        let scorer_repr = format!("[{scorer_name}]");
+        let scorer = match ICONS.get(&scorer_name) {
+            Some(glyph) => Text::new(scorer_repr).with_glyph(glyph.clone()),
+            None => Text::new(scorer_repr),
+        };
+        stats_text.push_text(scorer).push_text(" ");
         let stats = Text::new("")
             .with_face(self.stats_face)
             .add_text(Text::new("").with_face(self.separator_face))
@@ -1182,7 +1170,8 @@ mod tests {
 
     #[test]
     fn test_icons_parsing() {
-        let _ = BROOM_ICON.clone();
-        let _ = KEYBOARD_ICON.clone();
+        let _ = ICONS.len();
+        assert!(ICONS.contains_key(*DEFAULT_ICON));
+        assert!(ICONS.contains_key(*KEYBOARD_ICON));
     }
 }
