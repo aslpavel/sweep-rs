@@ -787,7 +787,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             Some(icon) => prompt.push_text(Text::glyph(icon.clone()).with_text(" ")),
             None => prompt.push_text(" "),
         };
-        prompt.push_text(self.prompt.as_str());
+        prompt.push_text(Text::new(self.prompt.as_str()).with_face(self.label_face));
         prompt.push_text(" ");
         prompt.push_text(Text::new(" ").with_face(self.separator_face));
 
