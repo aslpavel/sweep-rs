@@ -28,12 +28,12 @@ impl Theme {
         };
         let input = Face::new(Some(fg), Some(bg), FaceAttrs::EMPTY);
         let list_default = Face::new(
-            Some(bg.blend(fg.with_alpha(0.8), Blend::Over)),
+            Some(bg.blend(fg.with_alpha(0.9), Blend::Over)),
             Some(bg),
             FaceAttrs::EMPTY,
         );
         let list_selected = Face::new(
-            Some(bg.blend(fg.with_alpha(0.8), Blend::Over)),
+            Some(fg),
             Some(bg.blend(fg.with_alpha(0.1), Blend::Over)),
             FaceAttrs::EMPTY,
         );
@@ -687,38 +687,51 @@ mod tests {
 
     impl<T> ListItems for VecItems<T>
     where
-        T: IntoView + Clone,
+        T: Display + Clone,
     {
-        type Item = T;
+        type Item = Text<'static>;
 
         fn len(&self) -> usize {
             self.0.len()
         }
 
         fn get(&self, index: usize) -> Option<Self::Item> {
-            self.0.get(index).cloned()
+            let value = self.0.get(index)?;
+            Some(Text::new(value.to_string()))
         }
     }
 
     #[test]
-    fn test_list() -> Result<(), Error> {
-        let theme = Theme::light();
-        let item_face = Face::default().with_fg(theme.list_default.fg);
-        let with_theme = |value: &dyn Display| Text::new(value.to_string()).with_face(item_face);
+    fn test_list_basic() -> Result<(), Error> {
+        let mut theme = Theme::light();
+        theme.list_selected.bg = Some("#8ec07c".parse()?);
 
-        let items = VecItems((0..60).map(|v| with_theme(&v as &dyn Display)).collect());
-        let mut list = List::new(items, theme);
+        let items = VecItems((0..60).collect());
+        let mut list = List::new(items, theme.clone());
 
-        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        assert_eq!(list.offset(), 0);
 
         list.apply(ListAction::ItemNext);
-        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        assert_eq!(list.offset(), 0);
 
         (0..20).for_each(|_| list.apply(ListAction::ItemNext));
-        println!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        assert_eq!(list.offset(), 14);
 
-        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 17);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_multiline() -> Result<(), Error> {
+        let mut theme = Theme::light();
+        theme.list_selected.bg = Some("#8ec07c".parse()?);
+
+        println!("multi-line entry");
         let items = VecItems(
             [
                 "1. other entry",
@@ -726,18 +739,75 @@ mod tests {
                 "3. first multi line\n - first\n - second\n - thrid",
                 "4. fourth entry",
             ]
-            .iter()
-            .map(|v| with_theme(v))
+            .into_iter()
+            .collect(),
+        );
+        let mut list = List::new(items, theme);
+
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 0);
+
+        (0..2).for_each(|_| list.apply(ListAction::ItemNext));
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 1);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 2);
+
+        println!("tall multi-line entry");
+        let items = VecItems(
+            [
+                "first",
+                "too many line to be shown\n - 1\n - 2\n - 3\n - 4\n - 5\n - 6",
+                "last",
+            ]
+            .into_iter()
             .collect(),
         );
         list.items_set(items);
-        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
-
-        (0..2).for_each(|_| list.apply(ListAction::ItemNext));
-        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 0);
 
         list.apply(ListAction::ItemNext);
-        println!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 1);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        assert_eq!(list.offset(), 2);
+
+        println!("very long line");
+        let items = VecItems(
+            [
+                "first short",
+                "second",
+                "fist very very long line\nwhich is also multi line that should split",
+                "second very very long line that should be split into multiple lines and rendered correctly",
+                "last",
+            ]
+            .into_iter()
+            .collect(),
+        );
+        list.items_set(items);
+        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        assert_eq!(list.offset(), 0);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        assert_eq!(list.offset(), 0);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        assert_eq!(list.offset(), 2);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        assert_eq!(list.offset(), 3);
+
+        list.apply(ListAction::ItemNext);
+        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        assert_eq!(list.offset(), 4);
 
         Ok(())
     }
