@@ -64,7 +64,9 @@ async def main() -> None:
     for date, entry in history(opts.history_file):
         candidates.append(
             {
-                "entry": [[date.strftime("[%F %T] "), False], entry],
+                "fields": [entry],
+                "right": [date.strftime("%F %T")],
+                "offset": 20,
                 "item": entry,
             }
         )
