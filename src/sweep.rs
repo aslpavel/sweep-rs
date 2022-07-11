@@ -746,7 +746,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         self.ranker.needle_set(self.input.get().collect());
         let ranker_result = self.ranker.result();
         let mut stats_text = Text::new(format!(
-            " {}/{} {:.2?} ",
+            " {}/{} {:.2?}",
             ranker_result.result.len(),
             ranker_result.haystack_size,
             ranker_result.duration,
@@ -774,12 +774,12 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         prompt.push_text(Text::new(" ").with_face(self.separator_face));
 
         // stats
-        let scorer_repr = format!("[{scorer_name}]");
+        let scorer_repr = format!(" [{scorer_name}] ");
         let scorer = match ICONS.get(&scorer_name) {
             Some(glyph) => Text::new(scorer_repr).with_glyph(glyph.clone()),
             None => Text::new(scorer_repr),
         };
-        stats_text.push_text(scorer).push_text(" ");
+        stats_text.push_text(scorer);
         let stats = Text::new("")
             .with_face(self.stats_face)
             .add_text(Text::new("").with_face(self.separator_face))
