@@ -20,7 +20,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
     let args: Args = argh::from_env();
 
