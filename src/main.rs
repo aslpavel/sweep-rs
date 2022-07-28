@@ -115,8 +115,7 @@ async fn main() -> Result<(), Error> {
                 Ok::<_, Error>(())
             });
         };
-        let events = sweep.events();
-        while let Ok(event) = events.recv() {
+        while let Some(event) = sweep.event().await {
             match event {
                 SweepEvent::Select(result) => {
                     if result.is_none() && !args.no_match_use_input {
