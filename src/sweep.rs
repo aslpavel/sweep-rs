@@ -274,15 +274,18 @@ impl<H: Haystack> SweepInner<H> {
             let refs = refs.clone();
             let events_notify = events_notify.clone();
             move || {
-                sweep_ui_worker(
+                let result = sweep_ui_worker(
                     options,
                     term,
                     ranker,
                     requests_recv,
                     events_send,
-                    events_notify,
+                    events_notify.clone(),
                     refs,
-                )
+                );
+                // unblock all waiters
+                events_notify.notify_waiters();
+                result
             }
         })?;
         Ok(SweepInner {

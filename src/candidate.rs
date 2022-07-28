@@ -480,23 +480,31 @@ mod tests {
         });
         let candidate_string = serde_json::to_string(&candidate)?;
         let value_string = serde_json::to_string(&value)?;
+        // note that glyph uses pointer equality
         println!("=== mark ===: 1");
-        assert_eq!(candidate, serde_json::from_str(candidate_string.as_str())?);
+        assert_eq!(
+            serde_json::to_value(&candidate).unwrap(),
+            serde_json::to_value(serde_json::from_str::<Candidate>(
+                candidate_string.as_str()
+            )?)
+            .unwrap()
+        );
         println!("=== mark ===: 2");
         println!("{}", value_string);
-        assert_eq!(candidate, serde_json::from_str(value_string.as_str())?);
+        assert_eq!(
+            serde_json::to_value(&candidate).unwrap(),
+            serde_json::to_value(serde_json::from_str::<Candidate>(value_string.as_str())?)
+                .unwrap(),
+        );
         println!("=== mark ===: 3");
-        assert_eq!(candidate, serde_json::from_value(value)?);
+        assert_eq!(
+            serde_json::to_value(&candidate).unwrap(),
+            serde_json::to_value(serde_json::from_value::<Candidate>(value)?).unwrap()
+        );
 
         let candidate = Candidate::new(vec!["four".into()], None, Vec::new(), 0);
         assert_eq!(candidate, serde_json::from_str("\"four\"")?);
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
-
-        // I'm not sure if we want this at all
-        // assert_eq!(
-        //     Candidate::new(vec!["five".into()], None),
-        //     serde_json::from_value(json!({"entry": "five"}))?,
-        // );
 
         Ok(())
     }
