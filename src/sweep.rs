@@ -80,16 +80,16 @@ impl Default for SweepOptions {
 }
 
 /// Simple sweep function when you just need to select single entry from the list
-pub fn sweep<H, HS>(haystack: HS, options: Option<SweepOptions>) -> Result<Option<H>, Error>
+pub async fn sweep<H, HS>(haystack: HS, options: Option<SweepOptions>) -> Result<Option<H>, Error>
 where
     HS: IntoIterator,
     H: Haystack + From<HS::Item>,
 {
     let sweep = Sweep::new(options.unwrap_or_default())?;
     sweep.items_extend(haystack);
-    for event in sweep.events().iter() {
-        if let SweepEvent::Select(Some(entry)) = event {
-            return Ok(Some(entry));
+    while let Some(event) = sweep.event().await {
+        if let SweepEvent::Select(entry) = event {
+            return Ok(entry);
         }
     }
     Ok(None)
