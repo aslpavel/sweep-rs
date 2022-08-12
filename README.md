@@ -52,23 +52,23 @@ Current key bindings can be viewed by pressing `ctrl+h`.
 
 | Name                 | Key Bindings      |
 |----------------------|-------------------|
-|sweep.scorer.next     | "ctrl+s"          |
-|sweep.select          | "ctrl+j" "ctrl+m" |
-|sweep.quit            | "ctrl+c" "esc"    |
-|sweep.help            | "ctrl+h"          |
-|input.move.forward    | "right"           |
-|input.move.backward   | "left"            |
-|input.move.end        | "ctrl+e"          |
-|input.move.start      | "ctrl+a"          |
-|input.move.next_word  | "alt+f"           |
-|input.move.prev_word  | "alt+b"           |
-|input.delete.backward | "backspace"       |
-|input.delete.forward  | "delete"          |
-|input.delete.end      | "ctrl+k"          |
-|list.item.next        | "ctrl+n" "down"   |
-|list.item.prev        | "ctrl+p" "up"     |
-|input.page.next       | "pagedown"        |
-|input.page.prev       | "pageup"          |
+|sweep.scorer.next     | `ctrl+s`          |
+|sweep.select          | `ctrl+j` `ctrl+m` |
+|sweep.quit            | `ctrl+c` `esc`    |
+|sweep.help            | `ctrl+h`          |
+|input.move.forward    | `right`           |
+|input.move.backward   | `left`            |
+|input.move.end        | `ctrl+e`          |
+|input.move.start      | `ctrl+a`          |
+|input.move.next_word  | `alt+f`           |
+|input.move.prev_word  | `alt+b`           |
+|input.delete.backward | `backspace`       |
+|input.delete.forward  | `delete`          |
+|input.delete.end      | `ctrl+k`          |
+|list.item.next        | `ctrl+n` `down`   |
+|list.item.prev        | `ctrl+p` `up`     |
+|input.page.next       | `pagedown`        |
+|input.page.prev       | `pageup`          |
 
 </details>
 
