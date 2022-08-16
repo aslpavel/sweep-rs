@@ -2,7 +2,7 @@ use std::{cell::Cell as StdCell, collections::VecDeque, io::Write, str::FromStr}
 use surf_n_term::{
     common::clamp,
     view::{Axis, BoxConstraint, IntoView, Layout, ScrollBar, Tree, View, ViewContext},
-    Blend, Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, SurfaceMut,
+    Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, SurfaceMut,
     TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
 
@@ -22,19 +22,19 @@ pub struct Theme {
 impl Theme {
     pub fn from_palette(fg: RGBA, bg: RGBA, accent: RGBA) -> Self {
         let cursor = {
-            let cursor_bg = bg.blend(accent.with_alpha(0.8), Blend::Over);
+            let cursor_bg = bg.blend_over(accent.with_alpha(0.8));
             let cursor_fg = cursor_bg.best_contrast(bg, fg);
             Face::new(Some(cursor_fg), Some(cursor_bg), FaceAttrs::EMPTY)
         };
         let input = Face::new(Some(fg), Some(bg), FaceAttrs::EMPTY);
         let list_default = Face::new(
-            Some(bg.blend(fg.with_alpha(0.9), Blend::Over)),
+            Some(bg.blend_over(fg.with_alpha(0.9))),
             Some(bg),
             FaceAttrs::EMPTY,
         );
         let list_selected = Face::new(
             Some(fg),
-            Some(bg.blend(fg.with_alpha(0.1), Blend::Over)),
+            Some(bg.blend_over(fg.with_alpha(0.1))),
             FaceAttrs::EMPTY,
         );
         let scrollbar_on = Face::new(None, Some(accent.with_alpha(0.8)), FaceAttrs::EMPTY);

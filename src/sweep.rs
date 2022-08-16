@@ -27,9 +27,9 @@ use std::{
 };
 use surf_n_term::{
     view::{BoxConstraint, Container, Flex, IntoView, Layout, Text, Tree, View, ViewContext},
-    Blend, Cell, Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position,
-    Size, Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand,
-    TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
+    Cell, Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Size,
+    Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
+    TerminalSurface, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -1179,9 +1179,7 @@ impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
     fn get(&self, index: usize) -> Option<Self::Item> {
         let face_default = Face::default().with_fg(Some(self.theme.fg));
         let face_inactive = Face::default().with_fg(Some(
-            self.theme
-                .bg
-                .blend(self.theme.fg.with_alpha(0.6), Blend::Over),
+            self.theme.bg.blend_over(self.theme.fg.with_alpha(0.6)),
         ));
         self.ranker_result
             .result
