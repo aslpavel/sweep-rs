@@ -36,7 +36,7 @@ async fn main() -> Result<(), Error> {
     if let Some(log_path) = args.log {
         let log = Log::new(log_path)?;
         tracing_subscriber::fmt()
-            //.json()
+            .with_ansi(false)
             .with_span_events(FmtSpan::CLOSE)
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .with_writer(move || log.clone())
