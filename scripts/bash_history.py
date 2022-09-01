@@ -65,8 +65,8 @@ async def main() -> None:
         candidates.append(
             {
                 "fields": [entry],
-                "right": [date.strftime("%F %T")],
-                "offset": 20,
+                "right": [date.strftime(" %F %T")],
+                "offset": 21,
                 "item": entry,
             }
         )
