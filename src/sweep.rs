@@ -858,16 +858,9 @@ where
     }
 
     // find current row offset
-    let mut row_offset = 0;
-    let height = options.height;
-    term.execute(TerminalCommand::CursorGet)?;
-    while let Some(event) = term.poll(None)? {
-        if let TerminalEvent::CursorPosition(Position { row, .. }) = event {
-            row_offset = row;
-            break;
-        }
-    }
+    let mut row_offset = term.position()?.row;
     let term_size = term.size()?;
+    let height = options.height;
     if height > term_size.cells.height {
         row_offset = 0;
     } else if row_offset + height > term_size.cells.height {
