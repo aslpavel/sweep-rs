@@ -1,4 +1,4 @@
-use crate::LockExt;
+use crate::{LockExt, Theme};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Cow,
@@ -9,7 +9,10 @@ use std::{
     ops::Deref,
     sync::{Arc, RwLock},
 };
-use surf_n_term::{Face, Glyph};
+use surf_n_term::{
+    view::{Text, View},
+    Face, Glyph,
+};
 
 /// Previously registered field that is used as base of the field
 ///
@@ -228,6 +231,35 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// Slice containing all searchable lowercase characters. Characters from
     /// the inactive fields will not be present in this slice.
     fn chars(&self) -> &[char];
+
+    /// Creates haystack view from matched positions and theme
+    fn view(&self, positions: &Positions, theme: &Theme) -> Box<dyn View> {
+        let mut chunks = Vec::new();
+        let mut chunk = String::new();
+        let mut highlited = false;
+        for (index, char) in self.chars().iter().enumerate() {
+            let highlight = positions.contains(&index);
+            if highlight && !highlited {
+                let text = std::mem::replace(&mut chunk, String::new());
+                chunks.push(Text::new(text).with_face(theme.list_text));
+                highlited = true;
+            } else if !highlight && highlited {
+                let text = std::mem::replace(&mut chunk, String::new());
+                chunks.push(Text::new(text).with_face(theme.list_highlight));
+                highlited = false;
+            }
+            chunk.push(*char);
+        }
+        if !chunk.is_empty() {
+            let face = if highlited {
+                theme.list_highlight
+            } else {
+                theme.list_default
+            };
+            chunks.push(Text::new(chunk).with_face(face));
+        }
+        Box::new(chunks.into_iter().collect::<Text<'static>>())
+    }
 
     /// Fields (aligned to the left) only used for rendering
     fn fields(&self) -> Fields<'_>;

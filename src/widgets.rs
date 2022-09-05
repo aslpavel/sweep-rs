@@ -15,6 +15,8 @@ pub struct Theme {
     pub input: Face,
     pub list_default: Face,
     pub list_selected: Face,
+    pub list_text: Face,
+    pub list_highlight: Face,
     pub scrollbar_on: Face,
     pub scrollbar_off: Face,
 }
@@ -37,6 +39,8 @@ impl Theme {
             Some(bg.blend_over(fg.with_alpha(0.1))),
             FaceAttrs::EMPTY,
         );
+        let list_text = Face::default().with_fg(list_selected.fg);
+        let list_highlight = cursor;
         let scrollbar_on = Face::new(None, Some(accent.with_alpha(0.8)), FaceAttrs::EMPTY);
         let scrollbar_off = Face::new(None, Some(accent.with_alpha(0.5)), FaceAttrs::EMPTY);
         Self {
@@ -47,6 +51,8 @@ impl Theme {
             input,
             list_default,
             list_selected,
+            list_text,
+            list_highlight,
             scrollbar_on,
             scrollbar_off,
         }
