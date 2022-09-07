@@ -10,8 +10,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{Text, View},
-    Face, Glyph,
+    view::{BoxConstraint, Layout, Tree, View, ViewContext},
+    Face, Glyph, Position, Size, TerminalSurface, TerminalSurfaceExt,
 };
 
 /// Previously registered field that is used as base of the field
@@ -233,32 +233,12 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     fn chars(&self) -> &[char];
 
     /// Creates haystack view from matched positions and theme
-    fn view(&self, positions: &Positions, theme: &Theme) -> Box<dyn View> {
-        let mut chunks = Vec::new();
-        let mut chunk = String::new();
-        let mut highlited = false;
-        for (index, char) in self.chars().iter().enumerate() {
-            let highlight = positions.contains(&index);
-            if highlight && !highlited {
-                let text = std::mem::replace(&mut chunk, String::new());
-                chunks.push(Text::new(text).with_face(theme.list_text));
-                highlited = true;
-            } else if !highlight && highlited {
-                let text = std::mem::replace(&mut chunk, String::new());
-                chunks.push(Text::new(text).with_face(theme.list_highlight));
-                highlited = false;
-            }
-            chunk.push(*char);
-        }
-        if !chunk.is_empty() {
-            let face = if highlited {
-                theme.list_highlight
-            } else {
-                theme.list_default
-            };
-            chunks.push(Text::new(chunk).with_face(face));
-        }
-        Box::new(chunks.into_iter().collect::<Text<'static>>())
+    fn view<'a>(&'a self, positions: &'a Positions, theme: &'a Theme) -> Box<dyn View + 'a> {
+        Box::new(DefaultHaystackView {
+            haystack: self.chars(),
+            positions,
+            theme,
+        })
     }
 
     /// Fields (aligned to the left) only used for rendering
@@ -269,6 +249,45 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 
     /// How much space is allocated to the fields on the right
     fn fields_right_offset(&self) -> usize;
+}
+
+struct DefaultHaystackView<'a> {
+    haystack: &'a [char],
+    positions: &'a Positions,
+    theme: &'a Theme,
+}
+
+impl<'a> View for DefaultHaystackView<'a> {
+    fn render<'b>(
+        &self,
+        _ctx: &ViewContext,
+        surf: &'b mut TerminalSurface<'b>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), surf_n_term::Error> {
+        let mut surf = layout.apply_to(surf);
+        let mut writer = surf.writer();
+        for (index, char) in self.haystack.iter().enumerate() {
+            let face = if self.positions.contains(&index) {
+                self.theme.list_highlight
+            } else {
+                self.theme.list_text
+            };
+            writer.put_char(*char, face);
+        }
+        Ok(())
+    }
+
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        let mut pos = Position::origin();
+        let mut size = Size::empty();
+        surf_n_term::view::layout_string(
+            ct.max().width,
+            &mut size,
+            &mut pos,
+            self.haystack.into_iter().copied(),
+        );
+        Tree::leaf(Layout::new().with_size(size))
+    }
 }
 
 #[derive(Clone)]
