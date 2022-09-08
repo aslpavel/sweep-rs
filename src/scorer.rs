@@ -1,228 +1,15 @@
-use crate::{LockExt, Theme};
-use serde::{de, Deserialize, Deserializer, Serialize};
+use crate::{candidate::FieldRefs, Theme};
 use std::{
-    borrow::Cow,
     cell::RefCell,
     cmp::Ordering,
-    collections::HashMap,
     fmt::{self, Debug},
     ops::Deref,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use surf_n_term::{
-    view::{BoxConstraint, Layout, Tree, View, ViewContext},
-    Face, Glyph, Position, Size, TerminalSurface, TerminalSurfaceExt,
+    view::{layout_string, BoxConstraint, Layout, Tree, View, ViewContext},
+    Face, TerminalSurface, TerminalSurfaceExt,
 };
-
-/// Previously registered field that is used as base of the field
-///
-/// Mainly used avoid constant sending of glyphs (icons)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct FieldRef(pub(crate) usize);
-
-pub(crate) type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
-pub type Fields<'a> = Box<dyn Iterator<Item = Field<'a>> + 'a>;
-
-/// Single theme-able part of the haystack
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct Field<'a> {
-    /// Text content on the field
-    pub text: Cow<'a, str>,
-    /// Flag indicating if the should be used as part of search
-    pub active: bool,
-    /// Render glyph (if glyphs are disabled text is shown)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glyph: Option<Glyph>,
-    /// Face used to override default one
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub face: Option<Face>,
-    /// Base field value
-    #[serde(skip_serializing_if = "Option::is_none", rename = "ref")]
-    pub field_ref: Option<FieldRef>,
-}
-
-impl<'a> Field<'a> {
-    /// resolve reference in the field
-    pub(crate) fn resolve(self, refs: &FieldRefs) -> Self {
-        let field_ref = match self.field_ref {
-            Some(field_ref) => field_ref,
-            None => return self,
-        };
-        let base = match refs.with(|refs| refs.get(&field_ref).cloned()) {
-            Some(base) => base,
-            None => return self,
-        };
-        Self {
-            text: if self.text.is_empty() {
-                base.text
-            } else {
-                self.text
-            },
-            active: self.active,
-            glyph: self.glyph.or(base.glyph),
-            face: self.face.or(base.face),
-            field_ref: None,
-        }
-    }
-
-    pub fn borrow(&'a self) -> Field<'a> {
-        Self {
-            text: match &self.text {
-                Cow::Borrowed(text) => Cow::Borrowed(text),
-                Cow::Owned(text) => Cow::Borrowed(text),
-            },
-            active: self.active,
-            glyph: self.glyph.clone(),
-            face: self.face,
-            field_ref: self.field_ref,
-        }
-    }
-}
-
-impl<'a> Default for Field<'a> {
-    fn default() -> Self {
-        Self {
-            text: Cow::Borrowed(""),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
-    }
-}
-
-impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
-    fn from(text: &'b str) -> Self {
-        Self {
-            text: text.into(),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
-    }
-}
-
-impl From<String> for Field<'static> {
-    fn from(text: String) -> Self {
-        Self {
-            text: text.into(),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
-    }
-}
-
-impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
-    fn from(text: Cow<'b, str>) -> Self {
-        Self {
-            text,
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
-    }
-}
-
-impl<'de, 'a> Deserialize<'de> for Field<'a> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FieldVisitor<'a> {
-            _phantom: &'a (),
-        }
-
-        impl<'de, 'a> de::Visitor<'de> for FieldVisitor<'a> {
-            type Value = Field<'a>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("string, list of {string | (string, bool) | Field}")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Field {
-                    text: v.to_owned().into(),
-                    ..Field::default()
-                })
-            }
-
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Field {
-                    text: v.into(),
-                    ..Field::default()
-                })
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                Ok(Field {
-                    text: seq
-                        .next_element()?
-                        .ok_or_else(|| de::Error::missing_field("text"))?,
-                    active: seq.next_element()?.unwrap_or(true),
-                    ..Field::default()
-                })
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                let mut text = None;
-                let mut active = None;
-                let mut glyph = None;
-                let mut face = None;
-                let mut reference = None;
-                while let Some(name) = map.next_key::<Cow<'de, str>>()? {
-                    match name.as_ref() {
-                        "text" => {
-                            text.replace(map.next_value()?);
-                        }
-                        "active" => {
-                            active.replace(map.next_value()?);
-                        }
-                        "glyph" => {
-                            glyph.replace(map.next_value()?);
-                        }
-                        "face" => {
-                            face.replace(map.next_value()?);
-                        }
-                        "ref" => {
-                            reference.replace(map.next_value()?);
-                        }
-                        _ => {
-                            map.next_value::<de::IgnoredAny>()?;
-                        }
-                    }
-                }
-                let text = text.unwrap_or(Cow::Borrowed::<'static>(""));
-                let text_not_empty = !text.is_empty();
-                Ok(Field {
-                    text,
-                    active: active.unwrap_or(glyph.is_none() && text_not_empty),
-                    glyph,
-                    face,
-                    field_ref: reference,
-                })
-            }
-        }
-
-        deserializer.deserialize_any(FieldVisitor::<'a> { _phantom: &() })
-    }
-}
 
 /// Haystack
 ///
@@ -230,34 +17,28 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// Slice containing all searchable lowercase characters. Characters from
     /// the inactive fields will not be present in this slice.
-    fn chars(&self) -> &[char];
+    fn haystack(&self) -> &[char];
 
     /// Creates haystack view from matched positions and theme
-    fn view<'a>(&'a self, positions: &'a Positions, theme: &'a Theme) -> Box<dyn View + 'a> {
-        Box::new(DefaultHaystackView {
-            haystack: self.chars(),
-            positions,
-            theme,
-        })
+    fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
+        let mut chars = Vec::with_capacity(self.haystack().len());
+        for (index, char) in self.haystack().iter().enumerate() {
+            let face = if positions.contains(&index) {
+                theme.list_highlight
+            } else {
+                theme.list_text
+            };
+            chars.push((*char, face));
+        }
+        Box::new(HaystackView { chars })
     }
-
-    /// Fields (aligned to the left) only used for rendering
-    fn fields(&self) -> Fields<'_>;
-
-    /// Fields aligned to the right only used for rendering
-    fn fields_right(&self) -> Fields<'_>;
-
-    /// How much space is allocated to the fields on the right
-    fn fields_right_offset(&self) -> usize;
 }
 
-struct DefaultHaystackView<'a> {
-    haystack: &'a [char],
-    positions: &'a Positions,
-    theme: &'a Theme,
+struct HaystackView {
+    chars: Vec<(char, Face)>,
 }
 
-impl<'a> View for DefaultHaystackView<'a> {
+impl View for HaystackView {
     fn render<'b>(
         &self,
         _ctx: &ViewContext,
@@ -266,41 +47,34 @@ impl<'a> View for DefaultHaystackView<'a> {
     ) -> Result<(), surf_n_term::Error> {
         let mut surf = layout.apply_to(surf);
         let mut writer = surf.writer();
-        for (index, char) in self.haystack.iter().enumerate() {
-            let face = if self.positions.contains(&index) {
-                self.theme.list_highlight
-            } else {
-                self.theme.list_text
-            };
-            writer.put_char(*char, face);
+        for (char, face) in self.chars.iter() {
+            writer.put_char(*char, *face);
         }
         Ok(())
     }
 
     fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        let mut pos = Position::origin();
-        let mut size = Size::empty();
-        surf_n_term::view::layout_string(
-            ct.max().width,
-            &mut size,
-            &mut pos,
-            self.haystack.into_iter().copied(),
-        );
-        Tree::leaf(Layout::new().with_size(size))
+        Tree::leaf(layout_string(ct, self.chars.iter().map(|c| c.0)))
     }
+}
+
+struct StringHaystackInner {
+    string: String,
+    haystack: Vec<char>,
 }
 
 #[derive(Clone)]
 pub struct StringHaystack {
-    string: String,
-    chars: Vec<char>,
+    inner: Arc<StringHaystackInner>,
 }
 
 impl StringHaystack {
     fn new(string: &str) -> Self {
         let string = string.to_string();
-        let chars = string.chars().collect();
-        Self { string, chars }
+        let haystack = string.chars().collect();
+        Self {
+            inner: Arc::new(StringHaystackInner { string, haystack }),
+        }
     }
 }
 
@@ -308,13 +82,13 @@ impl Deref for StringHaystack {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        self.string.as_ref()
+        self.inner.string.as_ref()
     }
 }
 
 impl Debug for StringHaystack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.string.fmt(f)
+        self.inner.string.fmt(f)
     }
 }
 
@@ -325,23 +99,8 @@ impl<S: AsRef<str>> From<S> for StringHaystack {
 }
 
 impl Haystack for StringHaystack {
-    fn chars(&self) -> &[char] {
-        self.chars.as_slice()
-    }
-
-    fn fields(&self) -> Fields<'_> {
-        Box::new(std::iter::once(Field {
-            text: self.string.as_str().into(),
-            ..Field::default()
-        }))
-    }
-
-    fn fields_right(&self) -> Fields<'_> {
-        Box::new(std::iter::empty())
-    }
-
-    fn fields_right_offset(&self) -> usize {
-        0
+    fn haystack(&self) -> &[char] {
+        self.inner.haystack.as_slice()
     }
 }
 
@@ -363,7 +122,7 @@ pub trait Scorer: Send + Sync + Debug {
     {
         let mut score = Score::MIN;
         let mut positions = Positions::new();
-        self.score_ref(haystack.chars(), &mut score, &mut positions)
+        self.score_ref(haystack.haystack(), &mut score, &mut positions)
             .then(move || ScoreResult {
                 haystack,
                 score,
@@ -765,8 +524,6 @@ impl<'a> ScoreMatrix<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Error;
-    use serde_json::json;
 
     #[test]
     fn test_knuth_morris_pratt() {
@@ -821,47 +578,6 @@ mod tests {
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
         let score = scorer.score(StringHaystack::new("one")).unwrap();
         assert_eq!(score.positions, vec![0]);
-    }
-
-    #[test]
-    fn test_serde_field() -> Result<(), Error> {
-        let mut field = Field {
-            text: "field text π".into(),
-            ..Field::default()
-        };
-
-        let expected = "{\"text\":\"field text π\",\"active\":true}";
-        let value: serde_json::Value = serde_json::from_str(expected)?;
-        assert_eq!(field, serde_json::from_value(value)?);
-        assert_eq!(expected, serde_json::to_string(&field)?);
-        assert_eq!(field, serde_json::from_str(expected)?);
-
-        assert_eq!(field, serde_json::from_str("\"field text π\"")?);
-        assert_eq!(field, serde_json::from_value(json!("field text π"))?);
-
-        assert_eq!(field, serde_json::from_str("[\"field text π\"]")?);
-        assert_eq!(field, serde_json::from_value(json!(["field text π"]))?);
-
-        assert_eq!(field, serde_json::from_str("[\"field text π\", true]")?);
-        assert_eq!(
-            field,
-            serde_json::from_value(json!(["field text π", true]))?
-        );
-
-        field.active = false;
-        let expected = "{\"text\":\"field text π\",\"active\":false}";
-        let value: serde_json::Value = serde_json::from_str(expected)?;
-        assert_eq!(field, serde_json::from_value(value)?);
-        assert_eq!(expected, serde_json::to_string(&field)?);
-        assert_eq!(field, serde_json::from_str(expected)?);
-
-        assert_eq!(field, serde_json::from_str("[\"field text π\", false]")?);
-        assert_eq!(
-            field,
-            serde_json::from_value(json!(["field text π", false]))?
-        );
-
-        Ok(())
     }
 
     #[test]

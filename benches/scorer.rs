@@ -20,17 +20,17 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     let mut score = Score::MIN;
     let mut positions = Positions::new();
     group.bench_function("fuzzy", |b| {
-        b.iter(|| fuzzy.score_ref(haystack.chars(), &mut score, &mut positions))
+        b.iter(|| fuzzy.score_ref(haystack.haystack(), &mut score, &mut positions))
     });
 
     let mut score = Score::MIN;
     let mut positions = Positions::new();
     group.bench_function("substr", |b| {
-        b.iter(|| substr.score_ref(haystack.chars(), &mut score, &mut positions))
+        b.iter(|| substr.score_ref(haystack.haystack(), &mut score, &mut positions))
     });
 
     group.bench_function("knuth-morris-pratt", |b| {
-        b.iter(|| kmp.search(haystack.chars()))
+        b.iter(|| kmp.search(haystack.haystack()))
     });
 
     group.finish();

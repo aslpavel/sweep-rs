@@ -1,7 +1,7 @@
 use crate::{
+    candidate::FieldRefs,
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
-    scorer::FieldRefs,
     substr_scorer,
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
     Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult, ScoreResult,
@@ -18,7 +18,6 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fmt::Write as _,
-    io::Write,
     mem,
     ops::Deref,
     sync::Arc,
@@ -26,10 +25,10 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{BoxConstraint, Container, Flex, IntoView, Layout, Text, Tree, View, ViewContext},
-    Cell, Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Size,
-    Surface, SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
-    TerminalSurface, TerminalSurfaceExt, TerminalWaker,
+    view::{Container, Flex, IntoView, Text, View, ViewContext},
+    Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
+    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
+    TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -505,7 +504,7 @@ struct SweepState<H> {
     // input widget
     input: Input,
     // list widget
-    list: List<RankerResultThemed<H>>,
+    list: List<SweepItems<H>>,
     // ranker
     ranker: Ranker<H>,
     // Filed refs (fields that can be used as a base)
@@ -621,7 +620,7 @@ where
         // widgets
         let input = Input::new(theme.clone());
         let list = List::new(
-            RankerResultThemed::new(
+            SweepItems::new(
                 theme.clone(),
                 Arc::new(RankerResult::<H>::default()),
                 Default::default(),
@@ -784,7 +783,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         let scorer_name = ranker_result.scorer.name().to_string();
         if self.list.items().generation() != ranker_result.generation {
             // update list with new results
-            let old_result = self.list.items_set(RankerResultThemed::new(
+            let old_result = self.list.items_set(SweepItems::new(
                 self.theme.clone(),
                 ranker_result,
                 self.refs.clone(),
@@ -922,10 +921,7 @@ where
                             state.prompt_icon = new_icon;
                         }
                         Current(resolve) => {
-                            let current = state
-                                .list
-                                .current()
-                                .map(|candidate| candidate.result.haystack);
+                            let current = state.list.current().map(|item| item.result.haystack);
                             mem::drop(resolve.send(current));
                         }
                         ScorerByName(None, resolve) => {
@@ -1013,11 +1009,6 @@ where
         } else {
             view.view_owned((row_offset as i32)..(row_offset + height) as i32, ..)
         };
-        // let term_caps = term.capabilities();
-        // match state_help.as_mut() {
-        //     Some(state) => state.render_old(view, term_caps, refs.clone())?,
-        //     None => state.render_old(view, term_caps, refs.clone())?,
-        // }
         let ctx = ViewContext::new(term)?;
         match state_help.as_mut() {
             Some(state) => view.draw_view(&ctx, state)?,
@@ -1044,111 +1035,13 @@ where
     result
 }
 
-struct ScoreResultThemed<H> {
-    result: ScoreResult<H>,
-    face_default: Face,
-    face_inactive: Face,
-    face_highlight: Face,
-    refs: FieldRefs,
-}
-
-impl<H: Haystack> View for ScoreResultThemed<H> {
-    fn render<'a>(
-        &self,
-        ctx: &ViewContext,
-        surf: &'a mut TerminalSurface<'a>,
-        layout: &Tree<Layout>,
-    ) -> Result<(), surf_n_term::Error> {
-        let mut surf = layout.apply_to(surf);
-
-        // space reserved for right fields
-        let offset = self.result.haystack.fields_right_offset();
-
-        // render left side
-        let mut index = 0;
-        let mut left_view = if offset != 0 {
-            surf.view_mut(.., ..-(offset as i32))
-        } else {
-            surf.view_mut(.., ..)
-        };
-        let mut writer = left_view.writer();
-        for field in self.result.haystack.fields() {
-            let field = field.resolve(&self.refs);
-            let face_field = field.face.unwrap_or_default();
-            if !field.active || field.glyph.is_some() {
-                let face = self.face_inactive.overlay(&face_field);
-                writer.face_set(face);
-                match field.glyph {
-                    Some(glyph) if ctx.has_glyphs() => {
-                        writer.put(Cell::new_glyph(face, glyph));
-                    }
-                    _ => writer.write_all(field.text.as_bytes())?,
-                }
-                writer.face_set(self.face_default);
-            } else {
-                let face_highlight = self.face_highlight.overlay(&face_field);
-                let face_default = self.face_default.overlay(&face_field);
-                for c in field.text.chars() {
-                    if self.result.positions.contains(&index) {
-                        writer.put_char(c, face_highlight);
-                    } else {
-                        writer.put_char(c, face_default);
-                    }
-                    index += 1;
-                }
-            }
-        }
-        // render right side
-        if surf.width() <= offset || offset == 0 {
-            return Ok(());
-        }
-        let mut right_view = surf.view_mut(.., -(offset as i32)..);
-        let mut writer = right_view.writer();
-        for field in self.result.haystack.fields_right() {
-            let field = field.resolve(&self.refs);
-            let face = self.face_inactive.overlay(&field.face.unwrap_or_default());
-            writer.face_set(face);
-            match field.glyph {
-                Some(glyph) if ctx.has_glyphs() => {
-                    writer.put(Cell::new_glyph(face, glyph));
-                }
-                _ => writer.write_all(field.text.as_bytes())?,
-            }
-            writer.face_set(self.face_default);
-        }
-
-        Ok(())
-    }
-
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        let size = ct.max();
-        let offset = self.result.haystack.fields_right_offset();
-        let width = if size.width > offset {
-            size.width - offset
-        } else {
-            size.width
-        };
-        let mut length = 0;
-        for field in self.result.haystack.fields() {
-            for c in field.text.chars() {
-                length += match c {
-                    '\n' => width - length % width,
-                    _ => 1,
-                }
-            }
-        }
-        let height = length / width + (if length % width != 0 { 1 } else { 0 });
-        Tree::leaf(Layout::new().with_size(Size::new(height, size.width)))
-    }
-}
-
-struct RankerResultThemed<H> {
+struct SweepItems<H> {
     theme: Theme,
     ranker_result: Arc<RankerResult<H>>,
     refs: FieldRefs,
 }
 
-impl<H> RankerResultThemed<H> {
+impl<H> SweepItems<H> {
     fn new(theme: Theme, ranker_result: Arc<RankerResult<H>>, refs: FieldRefs) -> Self {
         Self {
             theme,
@@ -1162,28 +1055,38 @@ impl<H> RankerResultThemed<H> {
     }
 }
 
-impl<H: Clone + Haystack> ListItems for RankerResultThemed<H> {
-    type Item = ScoreResultThemed<H>;
+impl<H: Haystack> ListItems for SweepItems<H> {
+    type Item = SweepItem<H>;
 
     fn len(&self) -> usize {
         self.ranker_result.result.len()
     }
 
     fn get(&self, index: usize) -> Option<Self::Item> {
-        let face_default = Face::default().with_fg(Some(self.theme.fg));
-        let face_inactive = Face::default().with_fg(Some(
-            self.theme.bg.blend_over(self.theme.fg.with_alpha(0.6)),
-        ));
         self.ranker_result
             .result
             .get(index)
-            .map(|result| ScoreResultThemed {
+            .map(|result| SweepItem {
                 result: result.clone(),
-                face_default,
-                face_inactive,
-                face_highlight: self.theme.cursor,
+                theme: self.theme.clone(),
                 refs: self.refs.clone(),
             })
+    }
+}
+
+struct SweepItem<H> {
+    result: ScoreResult<H>,
+    theme: Theme,
+    refs: FieldRefs,
+}
+
+impl<H: Haystack> IntoView for SweepItem<H> {
+    type View = Box<dyn View>;
+
+    fn into_view(self) -> Self::View {
+        self.result
+            .haystack
+            .view(&self.result.positions, &self.theme, self.refs.clone())
     }
 }
 

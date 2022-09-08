@@ -623,9 +623,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "plotters"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "716b4eeb6c4a1d3ecc956f75b43ec2e8e8ba80026413e70a3f41fd3313d3492b"
+checksum = "2538b639e642295546c50fcd545198c9d64ee2a38620a628724a3b266d5fbf97"
 dependencies = [
  "num-traits",
  "plotters-backend",
@@ -865,9 +865,9 @@ dependencies = [
 
 [[package]]
 name = "surf_n_term"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ade9ea83e47f971cc044536419ef33930e15c30a9d334c89d78c0b88fabcb73"
+checksum = "52a89ab68ad3c33b75f1f0d4e4390846b0ca16b8394415d33c0f707f4c4fc243"
 dependencies = [
  "flate2",
  "fnv",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.9.5"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "argh",
