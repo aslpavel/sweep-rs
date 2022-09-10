@@ -128,15 +128,15 @@ where
         N: FnMut() -> bool + Send + 'static,
     {
         let result: Arc<Mutex<Arc<RankerResult<H>>>> = Default::default();
-        let mut needle = String::new();
-        let mut haystack = Vec::new();
-        let mut generation = 0usize;
         let (sender, receiver) = unbounded();
         std::thread::Builder::new()
             .name("sweep-ranker".to_string())
             .spawn({
                 let result = result.clone();
                 move || {
+                    let mut needle = String::new();
+                    let mut haystack = Vec::new();
+                    let mut generation = 0usize;
                     let mut scorer = scorer_builder("");
                     loop {
                         // block on first event and process all pending requests in one go

@@ -897,6 +897,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "smallvec",
  "surf_n_term",
  "tokio",
  "tracing",

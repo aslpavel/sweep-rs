@@ -23,7 +23,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
         let mut chars = Vec::with_capacity(self.haystack().len());
         for (index, char) in self.haystack().iter().enumerate() {
-            let face = if positions.contains(&index) {
+            let face = if positions.get(index) {
                 theme.list_highlight
             } else {
                 theme.list_text
@@ -121,7 +121,7 @@ pub trait Scorer: Send + Sync + Debug {
         Self: Sized,
     {
         let mut score = Score::MIN;
-        let mut positions = Positions::new();
+        let mut positions = Positions::new(haystack.haystack().len());
         self.score_ref(haystack.haystack(), &mut score, &mut positions)
             .then(move || ScoreResult {
                 haystack,
@@ -130,9 +130,6 @@ pub trait Scorer: Send + Sync + Debug {
             })
     }
 }
-
-/// Matched positions in haystack
-pub type Positions = Vec<usize>;
 
 /// Result of the scoring
 #[derive(Debug, Clone)]
@@ -478,12 +475,11 @@ impl FuzzyScorer {
                         && j > 0
                         && (m.get(i, j) - (d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE)).abs()
                             < f32::EPSILON;
-                    positions.push(j);
+                    positions.set(j);
                     break;
                 }
             }
         }
-        positions.reverse();
         *score = Score::new(m.get(n_len - 1, h_len - 1));
 
         DATA_CELL.with(move |data_cell| data_cell.replace(data));
@@ -521,6 +517,98 @@ impl<'a> ScoreMatrix<'a> {
     }
 }
 
+/// Position set implemented as bit-set
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Positions {
+    chunks: smallvec::SmallVec<[u64; 2]>,
+}
+
+impl Positions {
+    pub fn new(size: usize) -> Self {
+        let chunks_size = if size == 0 { 0 } else { ((size - 1) >> 6) + 1 };
+        let mut chunks = smallvec::SmallVec::new();
+        chunks.resize(chunks_size, 0);
+        Self { chunks }
+    }
+
+    /// set specified index as selected
+    pub fn set(&mut self, index: usize) {
+        let (index, mask) = Self::offset(index);
+        self.chunks[index] |= mask;
+    }
+
+    /// check if index is present, panics if out of range
+    pub fn get(&self, index: usize) -> bool {
+        let (index, mask) = Self::offset(index);
+        self.chunks[index] & mask != 0
+    }
+
+    /// unset all
+    pub fn clear(&mut self) {
+        for chunk in self.chunks.iter_mut() {
+            *chunk = 0;
+        }
+    }
+
+    /// given index return chunk_index and chunk_mask
+    fn offset(index: usize) -> (usize, u64) {
+        let chunk_index = index >> 6; // index / 64
+        let chunk_mask = 1u64 << (index - (chunk_index << 6));
+        (chunk_index, chunk_mask)
+    }
+}
+
+impl std::fmt::Debug for Positions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.into_iter()
+                    .enumerate()
+                    .filter_map(|(i, s)| s.then(|| i)),
+            )
+            .finish()
+    }
+}
+
+impl Extend<usize> for Positions {
+    fn extend<T: IntoIterator<Item = usize>>(&mut self, iter: T) {
+        for item in iter {
+            self.set(item)
+        }
+    }
+}
+
+pub struct PositionsIter<'a> {
+    positions: &'a Positions,
+    index: usize,
+}
+
+impl<'a> Iterator for PositionsIter<'a> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (index, mask) = Positions::offset(self.index);
+        if index < self.positions.chunks.len() {
+            self.index += 1;
+            Some(self.positions.chunks[index] & mask != 0)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Positions {
+    type Item = bool;
+    type IntoIter = PositionsIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        PositionsIter {
+            positions: self,
+            index: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,13 +641,42 @@ mod tests {
         assert!(subseq(&[], &one));
     }
 
+    fn ps(items: impl AsRef<[usize]>) -> Positions {
+        match items.as_ref().iter().max() {
+            None => Positions::new(0),
+            Some(max) => {
+                let mut positions = Positions::new(max + 1);
+                positions.extend(items.as_ref().iter().copied());
+                positions
+            }
+        }
+    }
+
+    #[test]
+    fn positions() {
+        let p = ps([1, 15, 67, 300]);
+        assert_eq!(format!("{p:?}"), "[1, 15, 67, 300]".to_string());
+        assert_eq!(
+            p.into_iter()
+                .enumerate()
+                .filter_map(|(i, m)| m.then(|| i))
+                .collect::<Vec<_>>(),
+            vec![1, 15, 67, 300]
+        );
+        assert_eq!(p.chunks.len(), 5);
+        assert!(p.get(1));
+        assert!(p.get(15));
+        assert!(p.get(67));
+        assert!(p.get(300));
+    }
+
     #[test]
     fn test_fuzzy_scorer() {
         let needle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
         let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
-        assert_eq!(result.positions, vec![1, 2, 4]);
+        assert_eq!(result.positions, ps([1, 2, 4]));
         assert!((result.score.0 - 2.665).abs() < 0.001);
 
         assert!(scorer.score(StringHaystack::new("two")).is_none());
@@ -572,12 +689,12 @@ mod tests {
         let score = scorer
             .score(StringHaystack::new(" one babababcd "))
             .unwrap();
-        assert_eq!(score.positions, vec![1, 2, 3, 8, 9, 10, 11, 12]);
+        assert_eq!(score.positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
 
         let needle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
         let score = scorer.score(StringHaystack::new("one")).unwrap();
-        assert_eq!(score.positions, vec![0]);
+        assert_eq!(score.positions, ps([0]));
     }
 
     #[test]

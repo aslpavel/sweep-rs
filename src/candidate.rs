@@ -353,7 +353,7 @@ impl View for CandidteView {
                 let face_highlight = self.face_highlight.overlay(&face_field);
                 let face_default = self.face_default.overlay(&face_field);
                 for c in field.text.chars() {
-                    if self.positions.contains(&index) {
+                    if self.positions.get(index) {
                         writer.put_char(c, face_highlight);
                     } else {
                         writer.put_char(c, face_default);

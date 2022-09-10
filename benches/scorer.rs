@@ -18,13 +18,13 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1 as u64));
 
     let mut score = Score::MIN;
-    let mut positions = Positions::new();
+    let mut positions = Positions::new(CANDIDATE.len());
     group.bench_function("fuzzy", |b| {
         b.iter(|| fuzzy.score_ref(haystack.haystack(), &mut score, &mut positions))
     });
 
     let mut score = Score::MIN;
-    let mut positions = Positions::new();
+    let mut positions = Positions::new(CANDIDATE.len());
     group.bench_function("substr", |b| {
         b.iter(|| substr.score_ref(haystack.haystack(), &mut score, &mut positions))
     });
