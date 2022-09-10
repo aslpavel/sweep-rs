@@ -3,7 +3,6 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     fmt::{self, Debug},
-    ops::Deref,
     sync::Arc,
 };
 use surf_n_term::{
@@ -17,18 +16,18 @@ use surf_n_term::{
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// Slice containing all searchable lowercase characters. Characters from
     /// the inactive fields will not be present in this slice.
-    fn haystack(&self) -> &[char];
+    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_>;
 
     /// Creates haystack view from matched positions and theme
     fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
-        let mut chars = Vec::with_capacity(self.haystack().len());
-        for (index, char) in self.haystack().iter().enumerate() {
+        let mut chars = Vec::new();
+        for (index, char) in self.haystack().enumerate() {
             let face = if positions.get(index) {
                 theme.list_highlight
             } else {
                 theme.list_text
             };
-            chars.push((*char, face));
+            chars.push((char, face));
         }
         Box::new(HaystackView { chars })
     }
@@ -58,50 +57,14 @@ impl View for HaystackView {
     }
 }
 
-struct StringHaystackInner {
-    string: String,
-    haystack: Vec<char>,
-}
-
-#[derive(Clone)]
-pub struct StringHaystack {
-    inner: Arc<StringHaystackInner>,
-}
-
-impl StringHaystack {
-    fn new(string: &str) -> Self {
-        let string = string.to_string();
-        let haystack = string.chars().collect();
-        Self {
-            inner: Arc::new(StringHaystackInner { string, haystack }),
-        }
+impl Haystack for String {
+    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
+        Box::new(self.chars().flat_map(|c| c.to_lowercase()))
     }
 }
 
-impl Deref for StringHaystack {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.inner.string.as_ref()
-    }
-}
-
-impl Debug for StringHaystack {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.string.fmt(f)
-    }
-}
-
-impl<S: AsRef<str>> From<S> for StringHaystack {
-    fn from(string: S) -> Self {
-        StringHaystack::new(string.as_ref())
-    }
-}
-
-impl Haystack for StringHaystack {
-    fn haystack(&self) -> &[char] {
-        self.inner.haystack.as_slice()
-    }
+thread_local! {
+    static HAYSTACK: RefCell<Vec<char>> = Default::default();
 }
 
 /// Scorer
@@ -120,14 +83,19 @@ pub trait Scorer: Send + Sync + Debug {
         H: Haystack,
         Self: Sized,
     {
-        let mut score = Score::MIN;
-        let mut positions = Positions::new(haystack.haystack().len());
-        self.score_ref(haystack.haystack(), &mut score, &mut positions)
-            .then(move || ScoreResult {
-                haystack,
-                score,
-                positions,
-            })
+        HAYSTACK.with(|target| {
+            let mut target = target.borrow_mut();
+            target.clear();
+            target.extend(haystack.haystack());
+            let mut score = Score::MIN;
+            let mut positions = Positions::new(target.len());
+            self.score_ref(target.as_slice(), &mut score, &mut positions)
+                .then(move || ScoreResult {
+                    haystack,
+                    score,
+                    positions,
+                })
+        })
     }
 }
 
@@ -675,25 +643,23 @@ mod tests {
         let needle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
-        let result = scorer.score(StringHaystack::new(" on/e two")).unwrap();
+        let result = scorer.score(" on/e two".to_string()).unwrap();
         assert_eq!(result.positions, ps([1, 2, 4]));
         assert!((result.score.0 - 2.665).abs() < 0.001);
 
-        assert!(scorer.score(StringHaystack::new("two")).is_none());
+        assert!(scorer.score("two".to_string()).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
         let needle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer
-            .score(StringHaystack::new(" one babababcd "))
-            .unwrap();
+        let score = scorer.score(" one babababcd ".to_string()).unwrap();
         assert_eq!(score.positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
 
         let needle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score(StringHaystack::new("one")).unwrap();
+        let score = scorer.score("one".to_string()).unwrap();
         assert_eq!(score.positions, ps([0]));
     }
 

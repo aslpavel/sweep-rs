@@ -25,8 +25,6 @@ struct CandidateInner {
     fields_right: Vec<Field<'static>>,
     // right aligned fields offset
     fields_right_offset: usize,
-    // searchable characters
-    chars: Vec<char>,
     // extra fields extracted from candidate object during parsing, this
     // can be useful when candidate some additional data associated with it
     extra: HashMap<String, Value>,
@@ -44,17 +42,9 @@ impl Candidate {
         fields_right: Vec<Field<'static>>,
         fields_right_offset: usize,
     ) -> Self {
-        let chars = fields
-            .iter()
-            .filter_map(|f| {
-                (f.active && f.glyph.is_none()).then(|| f.text.chars().flat_map(char::to_lowercase))
-            })
-            .flatten()
-            .collect();
         Self {
             inner: Arc::new(CandidateInner {
                 fields,
-                chars,
                 fields_right,
                 fields_right_offset,
                 extra: extra.unwrap_or_default(),
@@ -286,8 +276,16 @@ impl<'a> Iterator for SplitInclusive<'a> {
 }
 
 impl Haystack for Candidate {
-    fn haystack(&self) -> &[char] {
-        &self.inner.chars
+    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
+        let chars = self
+            .inner
+            .fields
+            .iter()
+            .filter_map(|f| {
+                (f.active && f.glyph.is_none()).then(|| f.text.chars().flat_map(char::to_lowercase))
+            })
+            .flatten();
+        Box::new(chars)
     }
 
     fn view(
