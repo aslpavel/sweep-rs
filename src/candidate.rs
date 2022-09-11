@@ -281,9 +281,7 @@ impl Haystack for Candidate {
             .inner
             .fields
             .iter()
-            .filter_map(|f| {
-                (f.active && f.glyph.is_none()).then(|| f.text.chars().flat_map(char::to_lowercase))
-            })
+            .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
             .flatten();
         Box::new(chars)
     }

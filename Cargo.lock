@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "argh",

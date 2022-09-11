@@ -59,7 +59,7 @@ impl View for HaystackView {
 
 impl Haystack for String {
     fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        Box::new(self.chars().flat_map(|c| c.to_lowercase()))
+        Box::new(self.chars())
     }
 }
 
@@ -86,7 +86,7 @@ pub trait Scorer: Send + Sync + Debug {
         HAYSTACK.with(|target| {
             let mut target = target.borrow_mut();
             target.clear();
-            target.extend(haystack.haystack());
+            target.extend(haystack.haystack().flat_map(|c| c.to_lowercase()));
             let mut score = Score::MIN;
             let mut positions = Positions::new(target.len());
             self.score_ref(target.as_slice(), &mut score, &mut positions)
