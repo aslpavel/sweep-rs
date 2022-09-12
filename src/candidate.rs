@@ -431,7 +431,6 @@ pub struct Field<'a> {
 
 impl<'a> Field<'a> {
     /// resolve reference in the field
-    #[allow(unused)]
     pub(crate) fn resolve(self, refs: &FieldRefs) -> Self {
         let field_ref = match self.field_ref {
             Some(field_ref) => field_ref,

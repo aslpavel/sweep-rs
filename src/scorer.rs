@@ -31,6 +31,11 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
         }
         Box::new(HaystackView { chars })
     }
+
+    /// Large preview of pointed item
+    fn preview(&self, _theme: &Theme) -> Option<Box<dyn View>> {
+        None
+    }
 }
 
 struct HaystackView {

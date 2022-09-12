@@ -289,7 +289,6 @@ impl Input {
         }
     }
 
-    #[allow(unused)]
     pub fn handle(&mut self, event: &TerminalEvent) {
         use KeyName::*;
         match event {
@@ -521,7 +520,6 @@ impl<T: ListItems> List<T> {
         }
     }
 
-    #[allow(unused)]
     pub fn handle(&mut self, event: &TerminalEvent) {
         if let TerminalEvent::Key(Key { name, mode }) = event {
             match *mode {

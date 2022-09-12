@@ -27,8 +27,8 @@ use std::{
 use surf_n_term::{
     view::{Container, Flex, IntoView, Text, View, ViewContext},
     Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
-    TerminalWaker,
+    SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
+    TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -649,6 +649,13 @@ where
         }
     }
 
+    // get preview of the currently pointed haystack item
+    fn preview(&self) -> Option<Box<dyn View>> {
+        self.list
+            .current()
+            .and_then(|item| item.result.haystack.preview(&self.theme))
+    }
+
     fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
         match action {
@@ -883,7 +890,7 @@ where
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
-    let result = term.run_render(|term, event, view| -> Result<TerminalAction<()>, Error> {
+    let result = term.run_render(|term, event, mut view| {
         // handle events
         match event {
             Some(TerminalEvent::Resize(_term_size)) => {
@@ -1003,19 +1010,41 @@ where
         }
 
         // render
-        let mut view = if options.border > 0 && options.border < view.width() / 2 {
+        let mut state_view = if options.border > 0 && options.border < view.width() / 2 {
             let border = options.border as i32;
-            view.view_owned(
+            view.view_mut(
                 (row_offset as i32)..(row_offset + height) as i32,
                 border..-border,
             )
         } else {
-            view.view_owned((row_offset as i32)..(row_offset + height) as i32, ..)
+            view.view_mut((row_offset as i32)..(row_offset + height) as i32, ..)
         };
         let ctx = ViewContext::new(term)?;
         match state_help.as_mut() {
-            Some(state) => view.draw_view(&ctx, state)?,
-            None => view.draw_view(&ctx, &mut state)?,
+            None => state_view.draw_view(&ctx, &mut state)?,
+            Some(state) => {
+                let preview = state.preview();
+                state_view.draw_view(&ctx, state)?;
+                if let Some(preview) = preview {
+                    // drawing preview above or below depending on which is larger
+                    if row_offset
+                        > view
+                            .height()
+                            .saturating_sub(row_offset)
+                            .saturating_sub(height)
+                    {
+                        // draw preview above
+                        let preview = Flex::column().add_flex_child(1.0, ()).add_child(preview);
+                        view.view_mut(..row_offset.saturating_sub(1), ..)
+                            .draw_view(&ctx, preview)?;
+                    } else {
+                        // draw preview below
+                        let preview = Flex::column().add_child(preview).add_flex_child(1.0, ());
+                        view.view_mut(row_offset + height.., ..)
+                            .draw_view(&ctx, preview)?;
+                    }
+                }
+            }
         }
 
         Ok(TerminalAction::Wait)
