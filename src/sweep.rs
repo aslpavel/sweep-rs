@@ -1020,29 +1020,27 @@ where
             view.view_mut((row_offset as i32)..(row_offset + height) as i32, ..)
         };
         let ctx = ViewContext::new(term)?;
-        match state_help.as_mut() {
-            None => state_view.draw_view(&ctx, &mut state)?,
-            Some(state) => {
-                let preview = state.preview();
-                state_view.draw_view(&ctx, state)?;
-                if let Some(preview) = preview {
-                    // drawing preview above or below depending on which is larger
-                    if row_offset
-                        > view
-                            .height()
-                            .saturating_sub(row_offset)
-                            .saturating_sub(height)
-                    {
-                        // draw preview above
-                        let preview = Flex::column().add_flex_child(1.0, ()).add_child(preview);
-                        view.view_mut(..row_offset.saturating_sub(1), ..)
-                            .draw_view(&ctx, preview)?;
-                    } else {
-                        // draw preview below
-                        let preview = Flex::column().add_child(preview).add_flex_child(1.0, ());
-                        view.view_mut(row_offset + height.., ..)
-                            .draw_view(&ctx, preview)?;
-                    }
+        if let Some(state) = state_help.as_mut() {
+            state_view.draw_view(&ctx, state)?
+        } else {
+            let preview = state.preview();
+            state_view.draw_view(&ctx, &mut state)?;
+            if let Some(preview) = preview {
+                // drawing preview above or below depending on which is larger
+                let space_below = view
+                    .height()
+                    .saturating_sub(row_offset)
+                    .saturating_sub(height);
+                if row_offset > space_below {
+                    // draw preview above
+                    let preview = Flex::column().add_flex_child(1.0, ()).add_child(preview);
+                    view.view_mut(..row_offset.saturating_sub(1), ..)
+                        .draw_view(&ctx, preview)?;
+                } else {
+                    // draw preview below
+                    let preview = Flex::column().add_child(preview).add_flex_child(1.0, ());
+                    view.view_mut(row_offset + height.., ..)
+                        .draw_view(&ctx, preview)?;
                 }
             }
         }
