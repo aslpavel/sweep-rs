@@ -5,15 +5,22 @@ mod scorer;
 pub use scorer::{
     FuzzyScorer, Haystack, KMPPattern, Positions, Score, ScoreResult, Scorer, SubstrScorer,
 };
+
 mod rank;
 pub use rank::{fuzzy_scorer, substr_scorer, Ranker, RankerResult, ScorerBuilder};
+
 mod candidate;
 pub use candidate::{Candidate, Field, FieldRef, FieldSelector};
+
 mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
+
 pub mod rpc;
+
 mod widgets;
 pub use widgets::Theme;
+
+pub use surf_n_term;
 
 trait LockExt {
     type Value;
