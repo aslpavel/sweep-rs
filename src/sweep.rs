@@ -1023,10 +1023,9 @@ where
         if let Some(state) = state_help.as_mut() {
             state_view.draw_view(&ctx, state)?
         } else {
-            let preview = state.preview();
             state_view.draw_view(&ctx, &mut state)?;
-            if let Some(preview) = preview {
-                // drawing preview above or below depending on which is larger
+            // drawing current item preview, above or below whichever is larger
+            if let Some(preview) = state.preview() {
                 let space_below = view
                     .height()
                     .saturating_sub(row_offset)
