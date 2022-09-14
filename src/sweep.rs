@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{Container, Flex, IntoView, Margins, Text, View, ViewContext},
+    view::{Align, Container, Flex, IntoView, Margins, Text, View, ViewContext},
     Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker,
@@ -1037,17 +1037,20 @@ where
                     .saturating_sub(height);
                 if row_offset > space_below {
                     // draw preview above
-                    let preview =
-                        Container::new(Flex::column().add_flex_child(1.0, ()).add_child(preview))
-                            .with_margins(margins);
-                    view.view_mut(..row_offset, ..).draw_view(&ctx, preview)?;
+                    view.view_mut(..row_offset, ..).draw_view(
+                        &ctx,
+                        Container::new(preview)
+                            .with_vertical(Align::End)
+                            .with_margins(margins),
+                    )?;
                 } else {
                     // draw preview below
-                    let preview =
-                        Container::new(Flex::column().add_child(preview).add_flex_child(1.0, ()))
-                            .with_margins(margins);
-                    view.view_mut(row_offset + height.., ..)
-                        .draw_view(&ctx, preview)?;
+                    view.view_mut(row_offset + height.., ..).draw_view(
+                        &ctx,
+                        Container::new(preview)
+                            .with_vertical(Align::Start)
+                            .with_margins(margins),
+                    )?;
                 }
             }
         }
