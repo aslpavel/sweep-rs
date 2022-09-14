@@ -36,8 +36,9 @@ tracing = "^0.1"
 tracing-futures = "^0.2"
 lazy_static = "^1.1"
 mimalloc = { version = "^0.1", default-features = false }
-surf_n_term = "^0.6.7"
 smallvec = "1.9.0"
+
+surf_n_term = "^0.6.9"
 # surf_n_term = { path = "../surf-n-term" }
 # surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
 

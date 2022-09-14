@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{Container, Flex, IntoView, Text, View, ViewContext},
+    view::{Container, Flex, IntoView, Margins, Text, View, ViewContext},
     Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker,
@@ -1026,18 +1026,26 @@ where
             state_view.draw_view(&ctx, &mut state)?;
             // drawing current item preview, above or below whichever is larger
             if let Some(preview) = state.preview() {
+                let margins = Margins {
+                    left: options.border,
+                    right: options.border,
+                    ..Default::default()
+                };
                 let space_below = view
                     .height()
                     .saturating_sub(row_offset)
                     .saturating_sub(height);
                 if row_offset > space_below {
                     // draw preview above
-                    let preview = Flex::column().add_flex_child(1.0, ()).add_child(preview);
-                    view.view_mut(..row_offset.saturating_sub(1), ..)
-                        .draw_view(&ctx, preview)?;
+                    let preview =
+                        Container::new(Flex::column().add_flex_child(1.0, ()).add_child(preview))
+                            .with_margins(margins);
+                    view.view_mut(..row_offset, ..).draw_view(&ctx, preview)?;
                 } else {
                     // draw preview below
-                    let preview = Flex::column().add_child(preview).add_flex_child(1.0, ());
+                    let preview =
+                        Container::new(Flex::column().add_child(preview).add_flex_child(1.0, ()))
+                            .with_margins(margins);
                     view.view_mut(row_offset + height.., ..)
                         .draw_view(&ctx, preview)?;
                 }
