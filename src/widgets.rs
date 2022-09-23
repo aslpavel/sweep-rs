@@ -359,12 +359,12 @@ impl<'a> View for &'a Input {
 
         let mut writer = surf.writer().face(self.theme.input);
         for c in self.before[self.offset()..].iter() {
-            writer.put(Cell::new(self.theme.input, Some(*c)));
+            writer.put(Cell::new_char(self.theme.input, Some(*c)));
         }
         let mut iter = self.after.iter().rev();
-        writer.put(Cell::new(self.theme.cursor, iter.next().copied()));
+        writer.put(Cell::new_char(self.theme.cursor, iter.next().copied()));
         for c in iter {
-            writer.put(Cell::new(self.theme.input, Some(*c)));
+            writer.put(Cell::new_char(self.theme.input, Some(*c)));
         }
 
         Ok(())
