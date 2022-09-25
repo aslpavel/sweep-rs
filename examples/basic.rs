@@ -1,13 +1,15 @@
+use std::convert::Infallible;
+
 use anyhow::Error;
+use futures::stream;
 use sweep::sweep;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
-    let items: Vec<_> = ["One", "Two", "Three", "Four", "Five"]
+    let items = ["One", "Two", "Three", "Four", "Five"]
         .into_iter()
-        .map(|e| e.to_owned())
-        .collect();
-    let entry: Option<String> = sweep(items, None).await?;
-    println!("{:?}", entry);
+        .map(|e| Ok::<_, Infallible>(e.to_owned()));
+    let result = sweep(stream::iter(items), None).await?;
+    println!("{:?}", result);
     Ok(())
 }

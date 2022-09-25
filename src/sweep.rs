@@ -12,7 +12,8 @@ use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use futures::{
     channel::oneshot,
     future::{self, BoxFuture},
-    FutureExt,
+    stream::TryStreamExt,
+    FutureExt, Stream,
 };
 use serde_json::{json, Value};
 use std::{
@@ -78,23 +79,29 @@ impl Default for SweepOptions {
     }
 }
 
-/// Simple sweep function when you just need to select single entry from the list
-pub async fn sweep<HS>(
-    haystack: HS,
-    options: Option<SweepOptions>,
-) -> Result<Option<HS::Item>, Error>
+/// Simple sweep function when you just need to select single entry from the stream of items
+pub async fn sweep<IS, I, E>(items: IS, options: Option<SweepOptions>) -> Result<Option<I>, Error>
 where
-    HS: IntoIterator,
-    HS::Item: Haystack,
+    IS: Stream<Item = Result<I, E>>,
+    I: Haystack,
+    Error: From<E>,
 {
-    let sweep = Sweep::new(options.unwrap_or_default())?;
-    sweep.items_extend(haystack);
-    while let Some(event) = sweep.event().await {
-        if let SweepEvent::Select(entry) = event {
-            return Ok(entry);
+    let sweep: Sweep<I> = Sweep::new(options.unwrap_or_default())?;
+    let mut collected = false; // whether all items are send sweep instance
+    tokio::pin!(items);
+    loop {
+        tokio::select! {
+            event = sweep.event() => match event {
+                Some(SweepEvent::Select(entry)) => return Ok(entry),
+                None => return Ok(None),
+                _ => continue,
+            },
+            item = items.try_next(), if !collected => match item? {
+                Some(item) => sweep.items_extend(Some(item)),
+                None => collected = true,
+            },
         }
     }
-    Ok(None)
 }
 
 #[derive(Debug)]

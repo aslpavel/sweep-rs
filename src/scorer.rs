@@ -14,8 +14,7 @@ use surf_n_term::{
 ///
 /// Item that can scored against the needle by the scorer.
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
-    /// Slice containing all searchable lowercase characters. Characters from
-    /// the inactive fields will not be present in this slice.
+    /// Slice containing all searchable lowercase characters
     fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_>;
 
     /// Creates haystack view from matched positions and theme
