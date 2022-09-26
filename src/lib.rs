@@ -13,7 +13,7 @@ mod candidate;
 pub use candidate::{Candidate, Field, FieldRef, FieldSelector};
 
 mod sweep;
-pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, SCORER_NEXT_TAG};
+pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions};
 
 pub mod rpc;
 

@@ -36,8 +36,6 @@ use tokio::{
     sync::{mpsc, Notify},
 };
 
-pub const SCORER_NEXT_TAG: &str = "sweep.scorer.next";
-
 lazy_static::lazy_static! {
     pub static ref DEFAULT_ICON: &'static str = "broom";
     pub static ref KEYBOARD_ICON: &'static str = "keyboard";
@@ -207,7 +205,7 @@ where
         self.ranker.scorer_set(scorer)
     }
 
-    /// Switch to next scorer
+    /// Switch scorer, if name is not provided next scorer is chosen
     pub async fn scorer_by_name(&self, name: Option<String>) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::ScorerByName(name.clone(), send));
@@ -448,16 +446,12 @@ impl Sweep<Candidate> {
         self.send_request(SweepRequest::PeerSet(send));
 
         // handle events and serve
-        let sweep = self.clone();
         async move {
             let serve = peer.serve(read, write);
             let events = async move {
                 tokio::pin!(recv);
                 while let Some(event) = recv.recv().await {
                     match event {
-                        SweepEvent::Bind(tag) if tag == SCORER_NEXT_TAG => {
-                            sweep.scorer_by_name(None).await?;
-                        }
                         SweepEvent::Bind(tag) => {
                             peer.notify_with_value("bind", json!({ "tag": tag }))?
                         }
@@ -485,12 +479,15 @@ enum SweepAction {
     Select,
     Quit,
     Help,
+    ScorerNext,
     Input(InputAction),
     List(ListAction),
 }
 
 /// Object representing current state of the sweep worker
 struct SweepState<H> {
+    // scorer builder
+    scorers: VecDeque<ScorerBuilder>,
     // sweep prompt
     prompt: String,
     // prompt icon
@@ -539,6 +536,7 @@ where
         ranker: Ranker<H>,
         theme: Theme,
         refs: FieldRefs,
+        scorers: VecDeque<ScorerBuilder>,
     ) -> Self {
         // faces
         let stats_face = Face::new(
@@ -578,14 +576,13 @@ where
             SweepAction::Help,
         );
         // next scorer
-        let scorer_next = SweepAction::User(SCORER_NEXT_TAG.to_owned());
-        key_actions.insert(SCORER_NEXT_TAG, scorer_next.clone());
+        key_actions.insert("sweep.scorer.next", SweepAction::ScorerNext);
         key_map.register(
             &[Key {
                 name: KeyName::Char('s'),
                 mode: KeyMod::CTRL,
             }],
-            scorer_next,
+            SweepAction::ScorerNext,
         );
         // quit
         key_actions.insert("sweep.quit", SweepAction::Quit);
@@ -639,6 +636,7 @@ where
         );
 
         Self {
+            scorers,
             prompt,
             prompt_icon,
             key_map_state: Vec::new(),
@@ -663,6 +661,35 @@ where
             .and_then(|item| item.result.haystack.preview(&self.theme))
     }
 
+    // peek scorer by name, or next
+    fn scorer_by_name(&mut self, name: Option<String>) -> bool {
+        match name {
+            None => {
+                self.scorers.rotate_left(1);
+                self.ranker.scorer_set(self.scorers[0].clone());
+                true
+            }
+            Some(name) => {
+                // find index of the scorer by its name
+                let index = self.scorers.iter().enumerate().find_map(|(i, s)| {
+                    if s("").name() == name {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                });
+                match index {
+                    None => false,
+                    Some(index) => {
+                        self.scorers.swap(0, index);
+                        self.ranker.scorer_set(self.scorers[0].clone());
+                        true
+                    }
+                }
+            }
+        }
+    }
+
     fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
         match action {
@@ -685,6 +712,10 @@ where
                 }
             },
             SweepAction::Help => return Help,
+            SweepAction::ScorerNext => {
+                self.scorer_by_name(None);
+                return Nothing;
+            }
         }
         Nothing
     }
@@ -780,6 +811,7 @@ where
             ranker,
             self.theme.clone(),
             FieldRefs::default(),
+            self.scorers.clone(),
         )
     }
 }
@@ -844,7 +876,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
 }
 
 fn sweep_ui_worker<H>(
-    mut options: SweepOptions,
+    options: SweepOptions,
     mut term: SystemTerminal,
     ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
@@ -891,6 +923,7 @@ where
         ranker,
         options.theme.clone(),
         refs.clone(),
+        options.scorers,
     );
     let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
     let mut state_help: Option<SweepState<Candidate>> = None;
@@ -941,29 +974,8 @@ where
                             let current = state.list.current().map(|item| item.result.haystack);
                             mem::drop(resolve.send(current));
                         }
-                        ScorerByName(None, resolve) => {
-                            options.scorers.rotate_left(1);
-                            state.ranker.scorer_set(options.scorers[0].clone());
-                            let _ = resolve.send(true);
-                        }
-                        ScorerByName(Some(name), resolve) => {
-                            // find index of the scorer by its name
-                            let index = options.scorers.iter().enumerate().find_map(|(i, s)| {
-                                if s("").name() == name {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            });
-                            let success = match index {
-                                None => false,
-                                Some(index) => {
-                                    options.scorers.swap(0, index);
-                                    state.ranker.scorer_set(options.scorers[0].clone());
-                                    true
-                                }
-                            };
-                            let _ = resolve.send(success);
+                        ScorerByName(name, resolve) => {
+                            let _ = resolve.send(state.scorer_by_name(name));
                         }
                     }
                 }

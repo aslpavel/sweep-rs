@@ -13,7 +13,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme, SCORER_NEXT_TAG};
+use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -116,26 +116,19 @@ async fn main() -> Result<(), Error> {
             });
         };
         while let Some(event) = sweep.event().await {
-            match event {
-                SweepEvent::Select(result) => {
-                    if result.is_none() && !args.no_match_use_input {
-                        continue;
-                    }
-                    let input = sweep.query_get().await?;
-                    std::mem::drop(sweep); // cleanup terminal
-                    let result = match result {
-                        Some(candidate) if args.json => serde_json::to_string(&candidate)?,
-                        Some(candidate) => candidate.to_string(),
-                        None => input,
-                    };
-                    output.write_all(result.as_bytes()).await?;
-                    break;
+            if let SweepEvent::Select(result) = event {
+                if result.is_none() && !args.no_match_use_input {
+                    continue;
                 }
-                SweepEvent::Bind(tag) => {
-                    if tag == SCORER_NEXT_TAG {
-                        sweep.scorer_by_name(None).await?;
-                    }
-                }
+                let input = sweep.query_get().await?;
+                std::mem::drop(sweep); // cleanup terminal
+                let result = match result {
+                    Some(candidate) if args.json => serde_json::to_string(&candidate)?,
+                    Some(candidate) => candidate.to_string(),
+                    None => input,
+                };
+                output.write_all(result.as_bytes()).await?;
+                break;
             }
         }
     }
