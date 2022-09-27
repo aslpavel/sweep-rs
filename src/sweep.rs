@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{Align, Container, Flex, IntoView, Margins, Text, View, ViewContext},
+    view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
     Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
     SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
     TerminalSurfaceExt, TerminalWaker,
@@ -86,6 +86,7 @@ where
 {
     let sweep: Sweep<I> = Sweep::new(options.unwrap_or_default())?;
     let mut collected = false; // whether all items are send sweep instance
+    let items = items.try_chunks(1024);
     tokio::pin!(items);
     loop {
         tokio::select! {
@@ -94,8 +95,8 @@ where
                 None => return Ok(None),
                 _ => continue,
             },
-            item = items.try_next(), if !collected => match item? {
-                Some(item) => sweep.items_extend(Some(item)),
+            chunk = items.try_next(), if !collected => match chunk.map_err(|e| e.1)? {
+                Some(chunk) => sweep.items_extend(chunk),
                 None => collected = true,
             },
         }
@@ -1045,31 +1046,18 @@ where
             state_view.draw_view(&ctx, &mut state)?;
             // drawing current item preview, above or below whichever is larger
             if let Some(preview) = state.preview() {
-                let margins = Margins {
-                    left: options.border,
-                    right: options.border,
-                    ..Default::default()
-                };
                 let space_below = view
                     .height()
                     .saturating_sub(row_offset)
                     .saturating_sub(height);
                 if row_offset > space_below {
                     // draw preview above
-                    view.view_mut(..row_offset, ..).draw_view(
-                        &ctx,
-                        Container::new(preview)
-                            .with_vertical(Align::End)
-                            .with_margins(margins),
-                    )?;
+                    view.view_mut(..row_offset, ..)
+                        .draw_view(&ctx, Container::new(preview).with_vertical(Align::End))?;
                 } else {
                     // draw preview below
-                    view.view_mut(row_offset + height.., ..).draw_view(
-                        &ctx,
-                        Container::new(preview)
-                            .with_vertical(Align::Start)
-                            .with_margins(margins),
-                    )?;
+                    view.view_mut(row_offset + height.., ..)
+                        .draw_view(&ctx, Container::new(preview).with_vertical(Align::Start))?;
                 }
             }
         }
