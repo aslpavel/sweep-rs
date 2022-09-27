@@ -213,7 +213,7 @@ impl<'de> Deserialize<'de> for Candidate {
                 let fields_right = fields_right.unwrap_or_default();
                 Ok(Candidate::new(
                     fields,
-                    (!extra.is_empty()).then(move || extra),
+                    (!extra.is_empty()).then_some(extra),
                     fields_right,
                     fields_right_offset,
                 ))
@@ -259,9 +259,8 @@ impl<'a> Iterator for SplitInclusive<'a> {
                         let chunk = &self.string[self.start..];
                         self.start = string_len;
                         return Some(chunk);
-                    } else {
-                        return None;
                     }
+                    return None;
                 }
             };
             let should_split = ch == self.sep && self.prev != self.sep;
@@ -622,6 +621,8 @@ enum FieldSelect {
 
 impl FieldSelect {
     fn matches(&self, index: usize, size: usize) -> bool {
+        use FieldSelect::*;
+
         let index = index as i32;
         let size = size as i32;
         let resolve = |value: i32| -> i32 {
@@ -631,7 +632,7 @@ impl FieldSelect {
                 value
             }
         };
-        use FieldSelect::*;
+
         match *self {
             All => return true,
             Single(single) => {

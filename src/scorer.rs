@@ -90,11 +90,11 @@ pub trait Scorer: Send + Sync + Debug {
         HAYSTACK.with(|target| {
             let mut target = target.borrow_mut();
             target.clear();
-            target.extend(haystack.haystack().flat_map(|c| c.to_lowercase()));
+            target.extend(haystack.haystack().flat_map(char::to_lowercase));
             let mut score = Score::MIN;
             let mut positions = Positions::new(target.len());
             self.score_ref(target.as_slice(), &mut score, &mut positions)
-                .then(move || ScoreResult {
+                .then_some(ScoreResult {
                     haystack,
                     score,
                     positions,
@@ -536,7 +536,7 @@ impl std::fmt::Debug for Positions {
             .entries(
                 self.into_iter()
                     .enumerate()
-                    .filter_map(|(i, s)| s.then(|| i)),
+                    .filter_map(|(i, s)| s.then_some(i)),
             )
             .finish()
     }

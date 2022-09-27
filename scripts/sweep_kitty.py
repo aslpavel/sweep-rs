@@ -45,6 +45,7 @@ async def main() -> None:
         help="keep order of elements (do not use ranking score)",
     )
     parser.add_argument("--sweep", default="sweep", help="sweep binary")
+    parser.add_argument("--log", help="log file")
     args = parser.parse_args()
 
     candidates: List[Any]
@@ -68,6 +69,8 @@ async def main() -> None:
         no_match=args.no_match,
         altscreen=True,
         tmp_socket=True,
+        log=args.log,
+        border=0,
     )
 
     if args.json:
