@@ -1,7 +1,7 @@
 #![deny(warnings)]
 #![allow(clippy::type_complexity)]
 
-use anyhow::{anyhow, Context, Error};
+use anyhow::{Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
 use mimalloc::MiMalloc;
@@ -56,10 +56,12 @@ async fn main() -> Result<(), Error> {
             {
                 use std::os::unix::io::AsRawFd;
                 if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
-                    return Err(anyhow!("stdin can not be a tty, pipe in data instead"));
+                    return Err(anyhow::anyhow!(
+                        "stdin can not be a tty, pipe in data instead"
+                    ));
                 }
                 if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
-                    return Err(anyhow!("stdout can not be a tty if rpc is enabled"));
+                    return Err(anyhow::anyhow!("stdout can not be a tty if rpc is enabled"));
                 }
             }
             (Box::pin(tokio::io::stdin()), Box::pin(tokio::io::stdout()))
