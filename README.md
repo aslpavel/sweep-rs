@@ -1,18 +1,22 @@
 ### Sweep
+
 Sweep is a tool used to interactively search through a list of entries. It is inspired by [fzf](https://github.com/junegunn/fzf).
 ![screenshot](resources/sweep.png)
 
 ### Features
-  - Fast
-  - Beautiful
-  - Easily customizable color palette by specifying only three main colors from which all other colors are derived.
-  - JSON-RPC protocol can be used to communicate with sweep process.
-  - Includes asyncio [python binding](scripts/sweep.py)
-  - Configurable key bindings
-  - Support for rendering custom icons/glyphs from SVG path (requires kitty-image or sixel)
+
+- Fast
+- Beautiful
+- Easily customizable color palette by specifying only three main colors from which all other colors are derived.
+- JSON-RPC protocol can be used to communicate with sweep process.
+- Includes asyncio [python binding](scripts/sweep.py)
+- Configurable key bindings
+- Support for rendering custom icons/glyphs from SVG path (requires kitty-image or sixel)
 
 ### Usage
+
 #### Basic usage
+
 <details>
   <summary><code>$ sweep --help</code></summary>
 
@@ -46,34 +50,38 @@ Options:
 </details>
 
 #### Key bindings
+
 Current key bindings can be viewed by pressing `ctrl+h`.
+
 <details>
   <summary>default look like this</summary>
 
-| Name                 | Key Bindings      |
-|----------------------|-------------------|
-|sweep.scorer.next     | `ctrl+s`          |
-|sweep.select          | `ctrl+j` `ctrl+m` |
-|sweep.quit            | `ctrl+c` `esc`    |
-|sweep.help            | `ctrl+h`          |
-|input.move.forward    | `right`           |
-|input.move.backward   | `left`            |
-|input.move.end        | `ctrl+e`          |
-|input.move.start      | `ctrl+a`          |
-|input.move.next_word  | `alt+f`           |
-|input.move.prev_word  | `alt+b`           |
-|input.delete.backward | `backspace`       |
-|input.delete.forward  | `delete`          |
-|input.delete.end      | `ctrl+k`          |
-|list.item.next        | `ctrl+n` `down`   |
-|list.item.prev        | `ctrl+p` `up`     |
-|input.page.next       | `pagedown`        |
-|input.page.prev       | `pageup`          |
+| Name                  | Key Bindings      |
+| --------------------- | ----------------- |
+| sweep.scorer.next     | `ctrl+s`          |
+| sweep.select          | `ctrl+j` `ctrl+m` |
+| sweep.quit            | `ctrl+c` `esc`    |
+| sweep.help            | `ctrl+h`          |
+| input.move.forward    | `right`           |
+| input.move.backward   | `left`            |
+| input.move.end        | `ctrl+e`          |
+| input.move.start      | `ctrl+a`          |
+| input.move.next_word  | `alt+f`           |
+| input.move.prev_word  | `alt+b`           |
+| input.delete.backward | `backspace`       |
+| input.delete.forward  | `delete`          |
+| input.delete.end      | `ctrl+k`          |
+| list.item.next        | `ctrl+n` `down`   |
+| list.item.prev        | `ctrl+p` `up`     |
+| input.page.next       | `pagedown`        |
+| input.page.prev       | `pageup`          |
 
 </details>
 
 #### Bash history integration
+
 Copy [`bash_history.py`](scripts/bash_history.py) [`path_history.py`](scripts/path_history.py) and [`sweep.py`](scripts/sweep.py) somewhere in your `$PATH`.
+
 <details>
   <summary>Add this to your <code>~/.bashrc</code></summary>
 
@@ -129,13 +137,15 @@ PROMPT_COMMAND="__sweep_path_add__; $PROMPT_COMMAND"
 </details>
 
 This result in the following key binding in your bash session
-* `ctrl+r` history lookup
-* `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
-* `ctrl+o` open path (inspect key bindings with `ctrl+h`)
 
+- `ctrl+r` history lookup
+- `ctrl+t` insert path (inspect key bindings with `ctrl+h`)
+- `ctrl+o` open path (inspect key bindings with `ctrl+h`)
 
 #### Sway run command integration
+
 There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates separate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
+
 <details>
   <summary>Add this to your sway config</summary>
 
@@ -155,24 +165,32 @@ And here is how it looks
 ![sway](resources/sway.png)
 
 ### Installation
-  - Clone
-  - Install rust toolchain either with the package manager of your choice or with [rustup](https://rustup.rs/)
-  - Build and install it with cargo (default installation path is $HOME/.cargo/bin/sweep make sure it is in your $PATH)
-  ```
-  $ cargo install --path .
-  ```
-  - Or build it and copy the binary
-  ```
-  $ cargo build --release
-  $ cp target/release/sweep ~/.bin
-  ```
-  - Test it
-  ```
-  $ printf "one\ntwo\nthree" | sweep
-  ```
-  - Enjoy
+
+- Clone
+- Install rust toolchain either with the package manager of your choice or with [rustup](https://rustup.rs/)
+- Build and install it with cargo (default installation path is $HOME/.cargo/bin/sweep make sure it is in your $PATH)
+
+```
+$ cargo install --path .
+```
+
+- Or build it and copy the binary
+
+```
+$ cargo build --release
+$ cp target/release/sweep ~/.bin
+```
+
+- Test it
+
+```
+$ printf "one\ntwo\nthree" | sweep
+```
+
+- Enjoy
 
 ### Demo time!
+
 ![demo](resources/demo.gif)
 
 You can also run `./scripts/demo.py` to see different formatting and icon usage.
@@ -180,13 +198,18 @@ Note that to render icons terminal needs to support support kitty-image or sixel
 ![demo icons](resources/demo.png)
 
 ### [JSON-RPC](https://www.jsonrpc.org/specification)
+
 #### Wire protocol
+
 ```
 <decimal string representing size of JSON object in bytes>\n
 <JSON object>
 ```
+
 #### Methods and Types
+
 - **Type**
+
 ```
 Field = String
   | (String, bool)
@@ -199,7 +222,9 @@ Icon = {
     size?: [float; 2],                // height, width in terminal cells (default: [1, 1])
 }
 ```
+
 - **Methods**
+
 ```
 field_register(field: Field) -> int      // Register field that can be used as the base for the other field
 items_extend(items: [Item])              // Extend list of searchable items
@@ -210,8 +235,11 @@ query_get() -> String                    // Get query string used to filter item
 terminate()                              // Gracefully terminate sweep process
 prompt_set(prompt: String, icon?: Icon)  // Set prompt string (label string before search input)
 bind(key: String, tag: String)           // Assign new key binding. `key` is a space separated list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
+preview_toggle(value?: bool)             // Whether to show preview associated with the current item
 ```
+
 - **Events** (encoded as method calls coming from the sweep process)
+
 ```
 select(item: Item)  // Entry was selected by pressing `Enter` ("sweep.select" action)
 bind(tag: String)   // Key binding was pressed, with previously registered key binding

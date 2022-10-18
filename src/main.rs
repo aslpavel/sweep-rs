@@ -90,6 +90,7 @@ async fn main() -> Result<(), Error> {
         scorers: VecDeque::new(),
         altscreen: args.altscreen,
         border: args.border,
+        preview: args.preview,
         ..SweepOptions::default()
     })?;
     sweep.query_set(args.query.clone());
@@ -241,6 +242,10 @@ pub struct Args {
     /// leave border on the sides
     #[argh(option, default = "1")]
     pub border: usize,
+
+    /// whether show preview by default
+    #[argh(option, default = "true")]
+    pub preview: bool,
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

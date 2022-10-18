@@ -304,6 +304,13 @@ class Sweep(Generic[I]):
         if attrs:
             await self._peer.prompt_set(**attrs)
 
+    async def preview_set(
+        self,
+        value: Optional[bool]
+    ) -> None:
+        """Whether to show preview associated with the current item"""
+        await self._peer.preview_set(value=value)
+
     async def bind(self, key: str, tag: str) -> None:
         """Assign new key binding"""
         await self._peer.bind(key=key, tag=tag)
