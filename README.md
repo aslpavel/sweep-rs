@@ -235,7 +235,7 @@ query_get() -> String                    // Get query string used to filter item
 terminate()                              // Gracefully terminate sweep process
 prompt_set(prompt: String, icon?: Icon)  // Set prompt string (label string before search input)
 bind(key: String, tag: String)           // Assign new key binding. `key` is a space separated list of chords, `tag` can either be sweep action, user action (bind notification is send) or empty string which means to unbind
-preview_toggle(value?: bool)             // Whether to show preview associated with the current item
+preview_set(value?: bool)                // Whether to show preview associated with the current item
 ```
 
 - **Events** (encoded as method calls coming from the sweep process)
