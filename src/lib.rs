@@ -10,7 +10,7 @@ mod rank;
 pub use rank::{fuzzy_scorer, substr_scorer, Ranker, RankerResult, ScorerBuilder};
 
 mod candidate;
-pub use candidate::{Candidate, Field, FieldRef, FieldSelector};
+pub use candidate::{Candidate, Field, FieldRef, FieldRefs, FieldSelector};
 
 mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions};

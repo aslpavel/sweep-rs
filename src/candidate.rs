@@ -408,7 +408,7 @@ impl View for CandidteView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FieldRef(pub(crate) usize);
-pub(crate) type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
+pub type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
 
 /// Single theme-able part of the haystack
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]

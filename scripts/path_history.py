@@ -296,7 +296,7 @@ class PathSelector:
         self.history = history
         # None - history mode
         # Path - path mode
-        self.path = None
+        self.path: Optional[Path] = None
         self.path_cache = FileNode(Path("/"))
         self.show_path_task = None
 

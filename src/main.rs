@@ -4,7 +4,6 @@
 use anyhow::{Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
-use mimalloc::MiMalloc;
 use std::{
     collections::VecDeque,
     fs::File,
@@ -18,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {

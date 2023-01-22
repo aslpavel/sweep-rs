@@ -429,7 +429,7 @@ class RpcError(Exception):
     @classmethod
     def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcError]:
         error: Optional[Dict[str, Any]] = obj.get("error")
-        if not isinstance(error, dict):
+        if error is None:
             return None
         code = error.get("code")
         if not isinstance(code, int):

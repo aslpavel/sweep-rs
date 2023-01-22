@@ -87,9 +87,9 @@ where
     Error: From<E>,
 {
     let sweep: Sweep<I> = Sweep::new(options.unwrap_or_default())?;
+    let collect = sweep.items_extend_stream(items.map_err(Error::from));
     let mut collected = false; // whether all items are send sweep instance
-    let items = items.try_chunks(1024);
-    tokio::pin!(items);
+    tokio::pin!(collect);
     loop {
         tokio::select! {
             event = sweep.event() => match event {
@@ -97,10 +97,10 @@ where
                 None => return Ok(None),
                 _ => continue,
             },
-            chunk = items.try_next(), if !collected => match chunk.map_err(|e| e.1)? {
-                Some(chunk) => sweep.items_extend(chunk),
-                None => collected = true,
-            },
+            collect_result = &mut collect, if !collected => {
+                collected = true;
+                let _ = collect_result?;
+            }
         }
     }
 }
@@ -170,7 +170,7 @@ where
         })
     }
 
-    /// Extend list of searchable items
+    /// Extend list of searchable items from iterator
     pub fn items_extend<HS>(&self, items: HS)
     where
         HS: IntoIterator,
@@ -178,6 +178,18 @@ where
     {
         self.ranker
             .haystack_extend(items.into_iter().map(From::from).collect())
+    }
+
+    /// Extend list of searchable items from stream
+    pub async fn items_extend_stream(
+        &self,
+        items: impl Stream<Item = Result<H, Error>>,
+    ) -> Result<(), Error> {
+        items
+            .try_chunks(1024)
+            .map_err(|e| e.1)
+            .try_for_each(|chunk| async move { Ok(self.items_extend(chunk)) })
+            .await
     }
 
     /// Clear list of searchable items
