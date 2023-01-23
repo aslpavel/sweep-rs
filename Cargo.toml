@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "sweep",
+  "chronicler"
+]
+
+[profile.release]
+lto="fat"

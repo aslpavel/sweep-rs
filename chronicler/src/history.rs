@@ -8,7 +8,10 @@ use sqlx::{
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
-    surf_n_term::view::{Align, Container, Frame, View},
+    surf_n_term::{
+        view::{Align, Container, Frame, Text, View},
+        Face, FaceAttrs,
+    },
     Haystack, Theme,
 };
 
@@ -45,13 +48,18 @@ impl Haystack for HistoryEntry {
             Ok::<_, anyhow::Error>(())
         })()
         .expect("in memory write failed");
+        let text = Text::new(text).with_face(Face::new(
+            Some(theme.bg),
+            Some(theme.fg),
+            FaceAttrs::default(),
+        ));
         Some(
             Frame::new(
                 Container::new(text)
                     .with_horizontal(Align::Expand)
                     .with_color(theme.fg),
                 theme.fg,
-                theme.bg,
+                theme.accent,
                 0.2,
                 0.7,
             )

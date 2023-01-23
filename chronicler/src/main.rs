@@ -20,6 +20,15 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 async fn main() -> Result<(), Error> {
     let args: Args = argh::from_env();
 
+    if args.version {
+        println!(
+            "sweep {} ({})",
+            env!("CARGO_PKG_VERSION"),
+            env!("COMMIT_INFO")
+        );
+        return Ok(());
+    }
+
     let appnder = tracing_appender::rolling::never("/tmp", "hist.log");
     tracing_subscriber::fmt()
         .with_span_events(FmtSpan::CLOSE)
@@ -101,6 +110,9 @@ enum ArgsSubcommand {
 /// History manager
 #[derive(Debug, argh::FromArgs)]
 struct Args {
+    /// show sweep version and quit
+    #[argh(switch)]
+    pub version: bool,
     /// history database path
     #[argh(option)]
     db: Option<PathBuf>,

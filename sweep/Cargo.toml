@@ -20,9 +20,6 @@ path = "src/lib.rs"
 name = "sweep"
 path = "src/main.rs"
 
-[profile.release]
-lto="fat"
-
 [dependencies]
 anyhow = "^1.0"
 crossbeam-channel = "^0.5"
