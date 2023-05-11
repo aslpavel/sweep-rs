@@ -627,7 +627,7 @@ where
         key_map.register(
             &[Key {
                 name: KeyName::Char('p'),
-                mode: KeyMod::CTRL,
+                mode: KeyMod::CTRL | KeyMod::SHIFT,
             }],
             SweepAction::PreviewToggle,
         );
