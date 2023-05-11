@@ -17,5 +17,5 @@ tracing-subscriber = "0.3.15"
 argh = "0.1.9"
 tokio-stream = { version = "0.1.10", features = ["fs"] }
 mimalloc = { version = "^0.1", default-features = false }
-dirs = "4.0.0"
+dirs = "5.0"
 lazy_static = "1.4.0"
