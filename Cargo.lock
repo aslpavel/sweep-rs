@@ -1419,9 +1419,9 @@ dependencies = [
 
 [[package]]
 name = "surf_n_term"
-version = "0.7.4"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44e72f197509b1f8df63277745ee2bacd2c26c41373c53b161733b63604a7a12"
+checksum = "a92b92c7aae81ed4b630c6f2416cd48571d40cf11023e018a1a6e83744889c0b"
 dependencies = [
  "flate2",
  "fnv",

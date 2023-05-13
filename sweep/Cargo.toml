@@ -35,8 +35,8 @@ lazy_static = "^1.1"
 mimalloc = { version = "^0.1", default-features = false }
 smallvec = "1.9.0"
 
-surf_n_term = "^0.7.4"
-# surf_n_term = { path = "../surf-n-term" }
+surf_n_term = "^0.7.5"
+# surf_n_term = { path = "../../surf-n-term" }
 # surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
 
 # main binary dependencies (TODO: use workspace)
