@@ -304,10 +304,7 @@ class Sweep(Generic[I]):
         if attrs:
             await self._peer.prompt_set(**attrs)
 
-    async def preview_set(
-        self,
-        value: Optional[bool]
-    ) -> None:
+    async def preview_set(self, value: Optional[bool]) -> None:
         """Whether to show preview associated with the current item"""
         await self._peer.preview_set(value=value)
 
@@ -803,7 +800,7 @@ class Event(Generic[E]):
         """
         self._handlers.add(handler)
 
-    def __await__(self) -> Generator[Any, None, E]:
+    def __await__(self) -> Generator[E, None, E]:
         """Await for next event"""
         future: Future[E] = asyncio.get_running_loop().create_future()
         self._futures.add(future)
