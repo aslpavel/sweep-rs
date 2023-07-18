@@ -69,7 +69,7 @@ async fn main() -> Result<(), Error> {
             let stream = match address.parse() {
                 Ok(fd) => unsafe { StdUnixStream::from_raw_fd(fd) },
                 Err(_) => {
-                    StdUnixStream::connect(&address).context("failed to connnect to io-socket")?
+                    StdUnixStream::connect(address).context("failed to connnect to io-socket")?
                 }
             };
             stream.set_nonblocking(true)?;

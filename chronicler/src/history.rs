@@ -126,7 +126,7 @@ impl History {
             .thread_name(|index| format!("hist-sqlite-{index}"));
         let pool = SqlitePool::connect_lazy_with(options);
         sqlx::query(CREATE_TABLE_QUERY)
-            .execute(&mut pool.acquire().await?)
+            .execute(&mut *pool.acquire().await?)
             .await?;
         Ok(Self { pool })
     }
@@ -167,7 +167,7 @@ impl History {
                     .bind(entry.start_ts)
                     .bind(entry.end_ts)
                     .bind(entry.session)
-                    .fetch_one(&mut conn)
+                    .fetch_one(&mut *conn)
                     .await
                     .context("insert query")?;
                 Ok(id.try_get(0)?)
@@ -183,7 +183,7 @@ impl History {
                     .bind(entry.start_ts)
                     .bind(entry.end_ts)
                     .bind(entry.session)
-                    .execute(&mut conn)
+                    .execute(&mut *conn)
                     .await
                     .context("update query")?;
                 Ok(id)

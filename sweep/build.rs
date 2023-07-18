@@ -1,6 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let commit_info = std::process::Command::new("git")
-        .args(&["show", "-s", "--format=%h %ci"])
+        .args(["show", "-s", "--format=%h %ci"])
         .output()?;
     println!(
         "cargo:rustc-env=COMMIT_INFO={}",

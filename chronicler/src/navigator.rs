@@ -173,13 +173,10 @@ impl Navigator {
     // Go to parent directory
     async fn cmd_goto_parent(&mut self) -> Result<(), Error> {
         use NavigatorState::*;
-        match &self.state {
-            Path(path) => {
-                if let Some(path) = path.parent().map(PathBuf::from) {
-                    self.switch_mode(Path(path), Some("")).await?;
-                }
+        if let Path(path) = &self.state {
+            if let Some(path) = path.parent().map(PathBuf::from) {
+                self.switch_mode(Path(path), Some("")).await?;
             }
-            _ => {}
         }
         Ok(())
     }

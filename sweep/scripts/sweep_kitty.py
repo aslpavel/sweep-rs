@@ -17,6 +17,8 @@ async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run sweep inside a newly create kitty window"
     )
+    parser.add_argument("--class", help="kitty window class/app_id")
+    parser.add_argument("--title", help="kitty window title")
     parser.add_argument(
         "-p",
         "--prompt",
@@ -45,7 +47,6 @@ async def main() -> None:
         help="keep order of elements (do not use ranking score)",
     )
     parser.add_argument("--sweep", default="sweep", help="sweep binary")
-    parser.add_argument("--log", help="log file")
     args = parser.parse_args()
 
     candidates: List[Any]
@@ -56,9 +57,14 @@ async def main() -> None:
         for line in sys.stdin:
             candidates.append(line.strip())
 
+    kitty_args = ["kitty", "--title", args.title or "sweep-menu"]
+    kitty_class = getattr(args, "class", None)
+    if kitty_class:
+        kitty_args.extend(["--class", kitty_class])
+
     result = await sweep(
         candidates,
-        sweep=["kitty", "--title", "sweep-menu", args.sweep],
+        sweep=[*kitty_args, args.sweep],
         prompt=args.prompt,
         nth=args.nth,
         height=1024,
@@ -69,8 +75,7 @@ async def main() -> None:
         no_match=args.no_match,
         altscreen=True,
         tmp_socket=True,
-        log=args.log,
-        border=0,
+        border=0
     )
 
     if args.json:

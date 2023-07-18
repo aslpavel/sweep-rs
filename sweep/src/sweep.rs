@@ -99,7 +99,7 @@ where
             },
             collect_result = &mut collect, if !collected => {
                 collected = true;
-                let _ = collect_result?;
+                collect_result?;
             }
         }
     }
@@ -188,7 +188,10 @@ where
         items
             .try_chunks(1024)
             .map_err(|e| e.1)
-            .try_for_each(|chunk| async move { Ok(self.items_extend(chunk)) })
+            .try_for_each(|chunk| async move {
+                self.items_extend(chunk);
+                Ok(())
+            })
             .await
     }
 
