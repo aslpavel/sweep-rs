@@ -8,11 +8,8 @@ use sqlx::{
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
-    surf_n_term::{
-        view::{Align, Container, Frame, Text, View},
-        Face, FaceAttrs,
-    },
-    Haystack, Theme,
+    surf_n_term::view::{Align, Container, Text, View},
+    Haystack, HaystackPreview, Theme,
 };
 
 #[derive(Clone, Debug, FromRow)]
@@ -34,37 +31,27 @@ impl Haystack for HistoryEntry {
         Box::new(self.cmd.chars())
     }
 
-    fn preview(&self, theme: &Theme) -> Option<Box<dyn View>> {
+    fn preview(&self, theme: &Theme) -> Option<HaystackPreview> {
         let mut text = String::new();
         (|| {
-            writeln!(&mut text, "id: {}", self.id)?;
-            writeln!(&mut text, "cmd: {}", self.cmd)?;
-            writeln!(&mut text, "status: {}", self.status)?;
-            writeln!(&mut text, "cwd: {}", self.cwd)?;
-            writeln!(&mut text, "hostname: {}", self.hostname)?;
-            writeln!(&mut text, "user: {}", self.user)?;
-            writeln!(&mut text, "duration: {}", self.end_ts - self.start_ts)?;
-            write!(&mut text, "session: {}", self.session)?;
+            writeln!(&mut text, " id: {}", self.id)?;
+            writeln!(&mut text, " status: {}", self.status)?;
+            writeln!(&mut text, " cwd: {}", self.cwd)?;
+            writeln!(&mut text, " hostname: {}", self.hostname)?;
+            writeln!(&mut text, " user: {}", self.user)?;
+            writeln!(&mut text, " duration: {}", self.end_ts - self.start_ts)?;
+            write!(&mut text, " session: {}", self.session)?;
             Ok::<_, anyhow::Error>(())
         })()
         .expect("in memory write failed");
-        let text = Text::new(text).with_face(Face::new(
-            Some(theme.bg),
-            Some(theme.fg),
-            FaceAttrs::default(),
-        ));
-        Some(
-            Frame::new(
-                Container::new(text)
-                    .with_horizontal(Align::Expand)
-                    .with_color(theme.fg),
-                theme.fg,
-                theme.accent,
-                0.2,
-                0.7,
-            )
-            .boxed(),
-        )
+        let text = Text::new(text).with_face(theme.list_selected);
+        let view = Container::new(text)
+            .with_horizontal(Align::Expand)
+            .with_vertical(Align::Expand)
+            .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
+            .boxed();
+
+        Some(HaystackPreview::new(view, Some(1.0)))
     }
 }
 

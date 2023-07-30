@@ -42,6 +42,7 @@ async fn main() -> Result<(), Error> {
         .ok_or_else(|| anyhow::anyhow!("faield to determine home directory"))?;
     let options = SweepOptions {
         theme: args.theme,
+        tty_path: args.tty_path,
         ..Default::default()
     };
 
@@ -113,12 +114,19 @@ struct Args {
     /// show sweep version and quit
     #[argh(switch)]
     pub version: bool,
+
     /// history database path
     #[argh(option)]
     db: Option<PathBuf>,
+
     /// theme as a list of comma-separated attributes
     #[argh(option, default = "Theme::light()")]
     pub theme: Theme,
+
+    /// path to the TTY
+    #[argh(option, long = "tty", default = "\"/dev/tty\".to_string()")]
+    pub tty_path: String,
+
     /// action
     #[argh(subcommand)]
     subcommand: ArgsSubcommand,

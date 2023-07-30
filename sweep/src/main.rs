@@ -47,6 +47,23 @@ async fn main() -> Result<(), Error> {
         Pin<Box<dyn AsyncWrite + Send>>,
     ) = match args.io_socket {
         None => {
+            let input: Pin<Box<dyn AsyncRead + Send>> = match args.input.as_deref() {
+                Some("-") | None => {
+                    let stdin = tokio::io::stdin();
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        use std::os::unix::io::AsRawFd;
+                        if nix::unistd::isatty(stdin.as_raw_fd())? {
+                            return Err(anyhow::anyhow!(
+                                "stdin can not be a tty, pipe in data instead"
+                            ));
+                        }
+                    }
+                    Box::pin(stdin)
+                }
+                Some(path) => Box::pin(tokio::fs::File::open(path).await?),
+            };
+
             // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
             // from asyncio python interface, sweep subprocess is created with
             // `socketpair` as its {stdin|stdout}, but `isatty` when used on socket
@@ -54,16 +71,11 @@ async fn main() -> Result<(), Error> {
             #[cfg(not(target_os = "macos"))]
             {
                 use std::os::unix::io::AsRawFd;
-                if nix::unistd::isatty(std::io::stdin().as_raw_fd())? {
-                    return Err(anyhow::anyhow!(
-                        "stdin can not be a tty, pipe in data instead"
-                    ));
-                }
                 if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
                     return Err(anyhow::anyhow!("stdout can not be a tty if rpc is enabled"));
                 }
             }
-            (Box::pin(tokio::io::stdin()), Box::pin(tokio::io::stdout()))
+            (input, Box::pin(tokio::io::stdout()))
         }
         Some(ref address) => {
             let stream = match address.parse() {
@@ -229,6 +241,10 @@ pub struct Args {
     /// path/descriptor of the unix socket used to communicate instead of stdio/stdin
     #[argh(option)]
     pub io_socket: Option<String>,
+
+    /// read input from file (ignored if --io-socket is used)
+    #[argh(option)]
+    pub input: Option<String>,
 
     /// show sweep version and quit
     #[argh(switch)]

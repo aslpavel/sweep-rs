@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use sweep::{surf_n_term::Glyph, Haystack, Sweep, SweepEvent, SweepOptions};
+use sweep::{surf_n_term::Glyph, Haystack, HaystackPreview, Sweep, SweepEvent, SweepOptions};
 
 const CMD_GOTO_PARENT: &str = "path.goto.parent";
 const CMD_COMPLETE: &str = "path.complete";
@@ -45,7 +45,7 @@ impl Haystack for NavigatorItem {
         }
     }
 
-    fn preview(&self, theme: &sweep::Theme) -> Option<Box<dyn sweep::surf_n_term::view::View>> {
+    fn preview(&self, theme: &sweep::Theme) -> Option<HaystackPreview> {
         use NavigatorItem::*;
         match self {
             Path(path) => path.preview(theme),

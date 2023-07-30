@@ -3,7 +3,8 @@
 
 mod scorer;
 pub use scorer::{
-    FuzzyScorer, Haystack, KMPPattern, Positions, Score, ScoreResult, Scorer, SubstrScorer,
+    FuzzyScorer, Haystack, HaystackPreview, KMPPattern, Positions, Score, ScoreResult, Scorer,
+    SubstrScorer,
 };
 
 mod rank;

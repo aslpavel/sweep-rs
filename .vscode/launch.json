@@ -37,6 +37,52 @@
         "args": ["test", "--no-run", "--lib"] // Cargo command line to build the debug target
         // "args": ["build", "--bin=foo"] is another possibility
       }
+    },
+    {
+      "name": "chronicler",
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": ["rust"],
+      "cargo": {
+        "args": ["build", "--bin=chronicler"],
+        "filter": {
+          "kind": "bin"
+        }
+      },
+      "program": "${workspaceFolder}/target/debug/chronicler",
+      "args": [
+        // check target terminal with `tty` cmd, and run `sleep 3600`
+        "--tty",
+        "/dev/pts/5",
+        "cmd"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "sweep",
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": ["rust"],
+      "cargo": {
+        "args": ["build", "--bin=sweep"],
+        "filter": {
+          "kind": "bin"
+        }
+      },
+      "program": "${workspaceFolder}/target/debug/sweep",
+      "args": [
+        "--json",
+        "--input",
+        "/tmp/test.json",
+        // check target terminal with `tty` cmd, and run `sleep 3600`
+        "--tty",
+        "/dev/pts/1",
+        "--log",
+        "/tmp/sweep.log"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
     }
   ]
 }

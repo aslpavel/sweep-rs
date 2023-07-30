@@ -1,4 +1,4 @@
-use std::{cell::Cell as StdCell, collections::VecDeque, io::Write, str::FromStr};
+use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, io::Write, str::FromStr};
 use surf_n_term::{
     common::clamp,
     view::{Axis, BoxConstraint, IntoView, Layout, ScrollBar, Tree, View, ViewContext},
@@ -20,6 +20,9 @@ pub struct Theme {
     pub list_inactive: Face,
     pub scrollbar_on: Face,
     pub scrollbar_off: Face,
+    pub stats: Face,
+    pub label: Face,
+    pub separator: Face,
 }
 
 impl Theme {
@@ -45,6 +48,13 @@ impl Theme {
         let list_inactive = Face::default().with_fg(Some(bg.blend_over(fg.with_alpha(0.6))));
         let scrollbar_on = Face::new(None, Some(accent.with_alpha(0.8)), FaceAttrs::EMPTY);
         let scrollbar_off = Face::new(None, Some(accent.with_alpha(0.5)), FaceAttrs::EMPTY);
+        let stats = Face::new(
+            Some(accent.best_contrast(bg, fg)),
+            Some(accent),
+            FaceAttrs::EMPTY,
+        );
+        let label = stats.with_attrs(FaceAttrs::BOLD);
+        let separator = Face::new(Some(accent), input.bg, FaceAttrs::EMPTY);
         Self {
             fg,
             bg,
@@ -58,6 +68,9 @@ impl Theme {
             list_inactive,
             scrollbar_on,
             scrollbar_off,
+            stats,
+            label,
+            separator,
         }
     }
 
@@ -464,22 +477,25 @@ pub trait ListItems {
 
 pub struct List<T> {
     items: T,
-    theme: Theme,
-    /// visible offset
-    offset: StdCell<usize>,
-    /// current cursor position
     cursor: usize,
-    height_hint: usize,
+    theme: Theme,
+    view_state: StdCell<ListViewState>,
+}
+
+/// Current state of the list view (it is only updated on layout calculation)
+#[derive(Debug, Clone, Copy, Default)]
+struct ListViewState {
+    offset: usize,  // visibile offset (first rendered element offset)
+    visible: usize, // number of visible elements
 }
 
 impl<T: ListItems> List<T> {
     pub fn new(items: T, theme: Theme) -> Self {
         Self {
             items,
-            theme,
-            offset: StdCell::new(0),
             cursor: 0,
-            height_hint: 1,
+            theme,
+            view_state: StdCell::default(),
         }
     }
 
@@ -488,8 +504,8 @@ impl<T: ListItems> List<T> {
     }
 
     pub fn items_set(&mut self, items: T) -> T {
-        self.offset = StdCell::new(0);
         self.cursor = 0;
+        self.view_state = StdCell::default();
         std::mem::replace(&mut self.items, items)
     }
 
@@ -506,10 +522,14 @@ impl<T: ListItems> List<T> {
                     self.cursor -= 1
                 }
             }
-            PageNext => self.cursor += self.height_hint,
+            PageNext => {
+                let page_size = max(self.view_state.get().visible, 1);
+                self.cursor += page_size;
+            }
             PagePrev => {
-                if self.cursor >= self.height_hint {
-                    self.cursor -= self.height_hint
+                let page_size = max(self.view_state.get().visible, 1);
+                if self.cursor >= page_size {
+                    self.cursor -= page_size;
                 }
             }
         }
@@ -540,17 +560,14 @@ impl<T: ListItems> List<T> {
         }
     }
 
+    /// First visible element position
+    #[cfg(test)]
     fn offset(&self) -> usize {
-        self.offset.get()
+        self.view_state.get().offset
     }
 
-    fn offset_fix(&self, height: usize) -> usize {
-        if self.offset() > self.cursor {
-            self.offset.replace(self.cursor);
-        } else if height > 0 && self.offset() + height - 1 < self.cursor {
-            self.offset.replace(self.cursor - height + 1);
-        }
-        self.offset.get()
+    pub fn scroll_bar(&self) -> ListScrollBar<'_, T> {
+        ListScrollBar { list: self }
     }
 }
 
@@ -586,7 +603,7 @@ where
 
             // render cursor
             if item_data.pointed {
-                let mut surf = surf.view_mut(row..row + height, ..-1);
+                let mut surf = surf.view_mut(row..row + height, ..);
                 surf.erase(self.theme.list_selected);
                 let cursor_face = Face::default().with_fg(Some(self.theme.accent));
                 write!(surf.writer().face_set(cursor_face), " ● ")?;
@@ -607,8 +624,17 @@ where
             return Tree::leaf(Layout::new());
         }
 
-        // offset if it is too far from the cursor
-        let offset = self.offset_fix(ct.max().height);
+        // adjust offset so item pointed by cursor will be visible
+        let offset = self.view_state.get().offset;
+        let offset = if offset > self.cursor {
+            self.cursor
+        } else if height > 0 && offset + height - 1 < self.cursor {
+            self.cursor - height + 1
+        } else {
+            offset
+        };
+
+        // create view and calculate layout for all visible items
         let child_ct = BoxConstraint::new(Size::new(0, width - 4), Size::new(height, width - 4));
         let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
         let mut children_height = 0;
@@ -630,12 +656,17 @@ where
             layouts.push_back(layout);
 
             if children_height > height {
+                // cursor is rendered, all height is taken
                 if index > self.cursor {
-                    break; // all height is occupied, cursor is rendered
+                    break;
                 }
-                // we have not reached cursor yet, removing items from the top
-                // until we can fit new child
-                while children_height > height && !layouts.is_empty() {
+                // cursor is not rendered, remove children from the top until
+                // we have some space available
+                while children_height > height {
+                    if index == self.cursor && layouts.len() == 1 {
+                        // do not remove the item if it is pointed by cursor
+                        break;
+                    }
                     match layouts.pop_front() {
                         Some(layout) => {
                             children_height -= layout.size().height;
@@ -647,40 +678,56 @@ where
             }
         }
 
-        // fix offset
-        self.offset.set(offset + children_removed);
-
-        // compute offsets
-        let mut offset = 0;
-        for layout in layouts.iter_mut() {
-            layout.set_pos(Position::new(offset, 3));
-            offset += layout.size().height;
-        }
-
-        // add scroll bar
-        let scroll_bar_face = Face::default()
-            .with_fg(self.theme.scrollbar_on.bg)
-            .with_bg(self.theme.scrollbar_off.bg);
-        let scroll_bar = ScrollBar::new(
-            Axis::Vertical,
-            scroll_bar_face,
-            self.items.len(),
-            self.cursor,
-            layouts.len(),
-        );
-        let mut scroll_bar_layout =
-            scroll_bar.layout(ctx, BoxConstraint::tight(Size::new(height, 1)));
-        scroll_bar_layout.set_pos(Position::new(0, width - 1));
-        scroll_bar_layout.set_data(ListItemView {
-            view: Box::new(scroll_bar),
-            pointed: false,
+        // update view state
+        self.view_state.set(ListViewState {
+            offset: offset + children_removed,
+            visible: layouts.len(),
         });
-        layouts.push_back(scroll_bar_layout);
+
+        // compute view offsets
+        let mut view_offset = 0;
+        for layout in layouts.iter_mut() {
+            layout.set_pos(Position::new(view_offset, 3));
+            view_offset += layout.size().height;
+        }
 
         Tree::new(
             Layout::new().with_size(Size::new(height, width)),
             layouts.into(),
         )
+    }
+}
+
+pub struct ListScrollBar<'a, T> {
+    list: &'a List<T>,
+}
+
+impl<'a, T: ListItems> View for ListScrollBar<'a, T> {
+    fn render<'b>(
+        &self,
+        ctx: &ViewContext,
+        surf: &'b mut TerminalSurface<'b>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), Error> {
+        let theme = &self.list.theme;
+        let bg = theme.list_default.with_fg(theme.list_default.bg);
+        let scroll_bar_face = bg.overlay(
+            &Face::default()
+                .with_fg(theme.scrollbar_on.bg)
+                .with_bg(theme.scrollbar_off.bg),
+        );
+        let scroll_bar = ScrollBar::new(
+            Axis::Vertical,
+            scroll_bar_face,
+            self.list.items.len(),
+            self.list.cursor,
+            self.list.view_state.get().visible,
+        );
+        scroll_bar.render(ctx, surf, layout)
+    }
+
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        Tree::leaf(Layout::new().with_size(Size::new(ct.max().height, 1)))
     }
 }
 
@@ -691,6 +738,12 @@ mod tests {
     use surf_n_term::view::Text;
 
     struct VecItems<T>(Vec<T>);
+
+    impl<T> VecItems<T> {
+        fn new(items: impl Into<Vec<T>>) -> Self {
+            Self(items.into())
+        }
+    }
 
     impl<T> ListItems for VecItems<T>
     where
@@ -739,16 +792,12 @@ mod tests {
         theme.list_selected.bg = Some("#8ec07c".parse()?);
 
         println!("multi-line entry");
-        let items = VecItems(
-            [
-                "1. other entry",
-                "2. this is the third entry",
-                "3. first multi line\n - first\n - second\n - thrid",
-                "4. fourth entry",
-            ]
-            .into_iter()
-            .collect(),
-        );
+        let items = VecItems::new([
+            "1. other entry",
+            "2. this is the third entry",
+            "3. first multi line\n - first\n - second\n - thrid",
+            "4. fourth entry",
+        ]);
         let mut list = List::new(items, theme);
 
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
@@ -763,15 +812,11 @@ mod tests {
         assert_eq!(list.offset(), 2);
 
         println!("tall multi-line entry");
-        let items = VecItems(
-            [
-                "first",
-                "too many line to be shown\n - 1\n - 2\n - 3\n - 4\n - 5\n - 6",
-                "last",
-            ]
-            .into_iter()
-            .collect(),
-        );
+        let items = VecItems::new([
+            "first",
+            "too many lines to be shown\n - 1\n - 2\n - 3\n - 4\n - 5\n - 6",
+            "last",
+        ]);
         list.items_set(items);
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
@@ -785,7 +830,7 @@ mod tests {
         assert_eq!(list.offset(), 2);
 
         println!("very long line");
-        let items = VecItems(
+        let items = VecItems::new(
             [
                 "first short",
                 "second",
@@ -793,8 +838,6 @@ mod tests {
                 "second very very long line that should be split into multiple lines and rendered correctly",
                 "last",
             ]
-            .into_iter()
-            .collect(),
         );
         list.items_set(items);
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));

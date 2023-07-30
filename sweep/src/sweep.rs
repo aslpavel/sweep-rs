@@ -4,8 +4,8 @@ use crate::{
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
     widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
-    Candidate, Field, FieldRef, Haystack, LockExt, Ranker, RankerResult, ScoreResult,
-    ScorerBuilder,
+    Candidate, Field, FieldRef, Haystack, HaystackPreview, LockExt, Ranker, RankerResult,
+    ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
@@ -26,10 +26,9 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
-    Color, DecMode, Face, FaceAttrs, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface,
-    SurfaceMut, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
-    TerminalSurfaceExt, TerminalWaker,
+    view::{Container, Flex, IntoView, Text, View, ViewContext},
+    DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
+    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -540,12 +539,6 @@ struct SweepState<H> {
     key_actions: HashMap<&'static str, SweepAction>,
     // theme
     theme: Theme,
-    // face used for label (FIXME: merge into theme?)
-    label_face: Face,
-    // face used for separator
-    separator_face: Face,
-    // face sue for stats
-    stats_face: Face,
     // input widget
     input: Input,
     // list widget
@@ -579,15 +572,6 @@ where
         scorers: VecDeque<ScorerBuilder>,
         preview: bool,
     ) -> Self {
-        // faces
-        let stats_face = Face::new(
-            Some(theme.accent.best_contrast(theme.bg, theme.fg)),
-            Some(theme.accent),
-            FaceAttrs::EMPTY,
-        );
-        let label_face = stats_face.with_attrs(FaceAttrs::BOLD);
-        let separator_face = Face::new(Some(theme.accent), theme.input.bg, FaceAttrs::EMPTY);
-
         // key map
         let mut key_map = KeyMap::new();
         let mut key_actions = HashMap::new();
@@ -630,7 +614,7 @@ where
         key_map.register(
             &[Key {
                 name: KeyName::Char('p'),
-                mode: KeyMod::CTRL | KeyMod::SHIFT,
+                mode: KeyMod::ALT,
             }],
             SweepAction::PreviewToggle,
         );
@@ -693,9 +677,6 @@ where
             key_empty_backspace: None,
             key_map,
             key_actions,
-            label_face,
-            separator_face,
-            stats_face,
             theme,
             input,
             list,
@@ -706,7 +687,7 @@ where
     }
 
     // get preview of the currently pointed haystack item
-    fn preview(&self) -> Option<Box<dyn View>> {
+    fn preview(&self) -> Option<HaystackPreview> {
         self.list
             .current()
             .and_then(|item| item.result.haystack.preview(&self.theme))
@@ -895,14 +876,14 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         }
 
         // prompt
-        let mut prompt = Text::new("").with_face(self.label_face);
+        let mut prompt = Text::new("").with_face(self.theme.label);
         match &self.prompt_icon {
             Some(icon) => prompt.push_text(Text::glyph(icon.clone()).with_text(" ")),
             None => prompt.push_text(" "),
         };
         prompt.push_text(self.prompt.as_str());
         prompt.push_text(" ");
-        prompt.push_text(Text::new(" ").with_face(self.separator_face));
+        prompt.push_text(Text::new(" ").with_face(self.theme.separator));
 
         // stats
         let scorer_repr = format!(" [{scorer_name}] ");
@@ -912,8 +893,8 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         };
         stats_text.push_text(scorer);
         let stats = Text::new("")
-            .with_face(self.stats_face)
-            .add_text(Text::new("").with_face(self.separator_face))
+            .with_face(self.theme.stats)
+            .add_text(Text::new("").with_face(self.theme.separator))
             .add_text(stats_text);
 
         // header
@@ -922,9 +903,19 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             .add_flex_child(1.0, &self.input)
             .add_child(stats);
 
+        // body
+        let mut body = Flex::row();
+        body.push_flex_child(1.0, &self.list);
+        if self.preview {
+            if let Some(preview) = self.preview() {
+                body.push_flex_child(preview.flex.unwrap_or(0.0), preview.view);
+            }
+        }
+        body.push_child(self.list.scroll_bar());
+
         Flex::column()
             .add_child(Container::new(header).with_height(1))
-            .add_flex_child(1.0, &self.list)
+            .add_flex_child(1.0, body)
     }
 }
 
@@ -1102,23 +1093,24 @@ where
         } else {
             state_view.draw_view(&ctx, &mut state)?;
             // drawing current item preview, above or below whichever is larger
-            if state.preview {
-                if let Some(preview) = state.preview() {
-                    let space_below = view
-                        .height()
-                        .saturating_sub(row_offset)
-                        .saturating_sub(height);
-                    if row_offset > space_below {
-                        // draw preview above
-                        view.view_mut(..row_offset, ..)
-                            .draw_view(&ctx, Container::new(preview).with_vertical(Align::End))?;
-                    } else {
-                        // draw preview below
-                        view.view_mut(row_offset + height.., ..)
-                            .draw_view(&ctx, Container::new(preview).with_vertical(Align::Start))?;
-                    }
-                }
-            }
+            // if state.preview {
+            //     if let Some(preview) = state.preview() {
+            //         let preview = preview.view;
+            //         let space_below = view
+            //             .height()
+            //             .saturating_sub(row_offset)
+            //             .saturating_sub(height);
+            //         if row_offset > space_below {
+            //             // draw preview above
+            //             view.view_mut(..row_offset, ..)
+            //                 .draw_view(&ctx, Container::new(preview).with_vertical(Align::End))?;
+            //         } else {
+            //             // draw preview below
+            //             view.view_mut(row_offset + height.., ..)
+            //                 .draw_view(&ctx, Container::new(preview).with_vertical(Align::Start))?;
+            //         }
+            //     }
+            // }
         }
 
         Ok(TerminalAction::Wait)

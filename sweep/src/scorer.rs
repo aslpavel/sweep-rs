@@ -32,8 +32,22 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     }
 
     /// Large preview of pointed item
-    fn preview(&self, _theme: &Theme) -> Option<Box<dyn View>> {
+    fn preview(&self, _theme: &Theme) -> Option<HaystackPreview> {
         None
+    }
+}
+
+/// Preview rendered for haystack item
+pub struct HaystackPreview {
+    /// Preview of the item
+    pub(crate) view: Box<dyn View>,
+    /// Flex value value of the view see [`surf_n_term::view::Flex`]
+    pub(crate) flex: Option<f64>,
+}
+
+impl HaystackPreview {
+    pub fn new(view: Box<dyn View>, flex: Option<f64>) -> Self {
+        Self { view, flex }
     }
 }
 
