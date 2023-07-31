@@ -135,3 +135,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.01)  # yield
         self.assertTrue(events_task.cancelled())
         await serve
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -26,6 +26,11 @@ async def main() -> None:
         help="override prompt string",
     )
     parser.add_argument(
+        "--prompt-icon",
+        default=None,
+        help="set prompt icon",
+    )
+    parser.add_argument(
         "--nth",
         help="comma-seprated list of fields for limiting search",
     )
@@ -66,6 +71,7 @@ async def main() -> None:
         candidates,
         sweep=[*kitty_args, args.sweep],
         prompt=args.prompt,
+        prompt_icon=args.prompt_icon,
         nth=args.nth,
         height=1024,
         delimiter=args.delimiter,
@@ -75,7 +81,7 @@ async def main() -> None:
         no_match=args.no_match,
         altscreen=True,
         tmp_socket=True,
-        border=0
+        border=0,
     )
 
     if args.json:

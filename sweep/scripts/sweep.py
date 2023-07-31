@@ -71,10 +71,47 @@ class SweepSelect(Generic[I]):
 class SweepIcon(NamedTuple):
     """SVG icon"""
 
+    # only these characters are allowed to be in the svg path
+    PATH_CHARS = set("+-e0123456789.,MmZzLlHhVvCcSsQqTtAa\r\t\n ")
+
     path: str
     view_box: Optional[Tuple[float, float, float, float]] = None
     fill_rule: Optional[str] = None
     size: Optional[Tuple[int, int]] = None
+
+    @staticmethod
+    def from_str_or_file(str_or_file: str) -> Optional[SweepIcon]:
+        """Create sweep icon either by reading it from file or parsing from string"""
+        if os.path.exists(str_or_file):
+            with open(str_or_file, "r") as file:
+                str_or_file = file.read()
+        try:
+            return SweepIcon.from_json(json.loads(str_or_file))
+        except json.JSONDecodeError:
+            return SweepIcon.from_json(str_or_file)
+
+    @staticmethod
+    def from_json(obj: Any) -> Optional[SweepIcon]:
+        """Create icon from JSON object"""
+
+        def is_path(path: str) -> bool:
+            if set(path) - SweepIcon.PATH_CHARS:
+                return False
+            return True
+
+        if isinstance(obj, dict):
+            obj = cast(Dict[str, Any], obj)
+            path = obj.get("path")
+            if isinstance(path, str) and is_path(path):
+                return SweepIcon(
+                    path=path,
+                    view_box=obj.get("view_box"),
+                    fill_rule=obj.get("fill_rule"),
+                    size=obj.get("size"),
+                )
+        elif isinstance(obj, str) and is_path(obj):
+            return SweepIcon(obj)
+        return None
 
     def to_json(self) -> Dict[str, Any]:
         """Create JSON object out sweep icon struct"""
@@ -93,7 +130,7 @@ SweepEvent = Union[SweepBind, SweepSelect[I]]
 
 async def sweep(
     items: Iterable[I],
-    prompt_icon: Optional[SweepIcon] = None,
+    prompt_icon: Optional[SweepIcon | str] = None,
     **options: Any,
 ) -> Optional[I]:
     """Convenience wrapper around `Sweep`
@@ -101,6 +138,11 @@ async def sweep(
     Useful when you only need to select one candidate from a list of items
     """
     async with Sweep[I](**options) as sweep:
+        if not isinstance(prompt_icon, (SweepIcon, type(None))):
+            icon = SweepIcon.from_str_or_file(prompt_icon)
+            if icon is None:
+                raise ValueError(f"invalid prompt icon: {prompt_icon}")
+            prompt_icon = icon
         await sweep.prompt_set(prompt=options.get("prompt"), icon=prompt_icon)
         await sweep.items_extend(items)
         async for event in sweep:
@@ -825,6 +867,11 @@ async def main() -> None:
         help="override prompt string",
     )
     parser.add_argument(
+        "--prompt-icon",
+        default=None,
+        help="set prompt icon",
+    )
+    parser.add_argument(
         "--query",
         help="start sweep with the given query",
     )
@@ -889,6 +936,7 @@ async def main() -> None:
         candidates,
         sweep=shlex.split(args.sweep),
         prompt=args.prompt,
+        prompt_icon=args.prompt_icon,
         query=args.query,
         nth=args.nth,
         height=args.height or 11,
