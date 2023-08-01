@@ -14,20 +14,24 @@ use surf_n_term::{
 ///
 /// Item that can scored against the needle by the scorer.
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
-    /// Slice containing all searchable lowercase characters
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_>;
+    /// Scope function is called with all characters one after another that will
+    /// be searchable by [Scorer]
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char);
 
     /// Creates haystack view from matched positions and theme
     fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
         let mut chars = Vec::new();
-        for (index, char) in self.haystack().enumerate() {
+        self.haystack_scope(|char| {
+            let index = chars.len();
             let face = if positions.get(index) {
                 theme.list_highlight
             } else {
                 theme.list_text
             };
             chars.push((char, face));
-        }
+        });
         Box::new(HaystackView { chars })
     }
 
@@ -76,8 +80,11 @@ impl View for HaystackView {
 }
 
 impl Haystack for String {
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        Box::new(self.chars())
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.chars().for_each(scope)
     }
 }
 
@@ -104,7 +111,7 @@ pub trait Scorer: Send + Sync + Debug {
         HAYSTACK.with(|target| {
             let mut target = target.borrow_mut();
             target.clear();
-            target.extend(haystack.haystack().flat_map(char::to_lowercase));
+            haystack.haystack_scope(|char| target.extend(char::to_lowercase(char)));
             let mut score = Score::MIN;
             let mut positions = Positions::new(target.len());
             self.score_ref(target.as_slice(), &mut score, &mut positions)
@@ -506,7 +513,7 @@ impl<'a> ScoreMatrix<'a> {
 /// Position set implemented as bit-set
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Positions {
-    chunks: smallvec::SmallVec<[u64; 2]>,
+    chunks: smallvec::SmallVec<[u64; 3]>,
 }
 
 impl Positions {

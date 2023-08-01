@@ -23,9 +23,11 @@ pub struct PathItem {
 }
 
 impl Haystack for PathItem {
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        let chars: Vec<_> = self.path.to_string_lossy().chars().collect();
-        Box::new(chars.into_iter())
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.path.to_string_lossy().chars().for_each(scope)
     }
 }
 

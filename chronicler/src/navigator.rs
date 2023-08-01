@@ -24,11 +24,14 @@ pub enum NavigatorItem {
 }
 
 impl Haystack for NavigatorItem {
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.haystack(),
-            History(history) => history.haystack(),
+            Path(path) => path.haystack_scope(scope),
+            History(history) => history.haystack_scope(scope),
         }
     }
 

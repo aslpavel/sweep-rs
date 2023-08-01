@@ -27,8 +27,11 @@ pub struct HistoryEntry {
 }
 
 impl Haystack for HistoryEntry {
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        Box::new(self.cmd.chars())
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.cmd.chars().for_each(scope)
     }
 
     fn preview(&self, theme: &Theme) -> Option<HaystackPreview> {

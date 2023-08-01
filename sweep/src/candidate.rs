@@ -26,7 +26,7 @@ struct CandidateInner {
     // right aligned fields offset
     fields_right_offset: usize,
     // extra fields extracted from candidate object during parsing, this
-    // can be useful when candidate some additional data associated with it
+    // can be useful when candidate has some additional data associated with it
     extra: HashMap<String, Value>,
 }
 
@@ -122,6 +122,14 @@ impl Candidate {
 
     fn fields(&self) -> impl Iterator<Item = Field<'_>> {
         self.inner.fields.iter().map(Field::borrow)
+    }
+
+    fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.inner
+            .fields
+            .iter()
+            .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
+            .flatten()
     }
 
     fn fields_right(&self) -> impl Iterator<Item = Field<'_>> {
@@ -275,14 +283,11 @@ impl<'a> Iterator for SplitInclusive<'a> {
 }
 
 impl Haystack for Candidate {
-    fn haystack(&self) -> Box<dyn Iterator<Item = char> + '_> {
-        let chars = self
-            .inner
-            .fields
-            .iter()
-            .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
-            .flatten();
-        Box::new(chars)
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.chars().for_each(scope);
     }
 
     fn view(
