@@ -36,11 +36,13 @@ use tokio::{
 };
 
 lazy_static::lazy_static! {
-    pub static ref DEFAULT_ICON: &'static str = "broom";
-    pub static ref KEYBOARD_ICON: &'static str = "keyboard";
-    pub static ref ICONS: HashMap<String, Glyph> =
+    static ref ICONS: HashMap<String, Glyph> =
         serde_json::from_str(include_str!("./icons.json"))
             .expect("invalid icons.json file");
+    static ref DEFAULT_ICON: &'static Glyph = ICONS.get("broom")
+        .expect("failed to get default icon");
+    static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
+        .expect("failed to get keyboard icon");
 }
 
 pub struct SweepOptions {
@@ -64,7 +66,7 @@ impl Default for SweepOptions {
         Self {
             height: 11,
             prompt: "INPUT".to_string(),
-            prompt_icon: ICONS.get(*DEFAULT_ICON).cloned(),
+            prompt_icon: Some(DEFAULT_ICON.clone()),
             theme: Theme::light(),
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
@@ -839,7 +841,7 @@ where
         ranker.haystack_extend(candidates);
         SweepState::new(
             "BINDINGS".to_owned(),
-            ICONS.get(*KEYBOARD_ICON).cloned(),
+            Some(KEYBOARD_ICON.clone()),
             ranker,
             self.theme.clone(),
             FieldRefs::default(),
@@ -1093,25 +1095,6 @@ where
             state_view.draw_view(&ctx, state)?
         } else {
             state_view.draw_view(&ctx, &mut state)?;
-            // drawing current item preview, above or below whichever is larger
-            // if state.preview {
-            //     if let Some(preview) = state.preview() {
-            //         let preview = preview.view;
-            //         let space_below = view
-            //             .height()
-            //             .saturating_sub(row_offset)
-            //             .saturating_sub(height);
-            //         if row_offset > space_below {
-            //             // draw preview above
-            //             view.view_mut(..row_offset, ..)
-            //                 .draw_view(&ctx, Container::new(preview).with_vertical(Align::End))?;
-            //         } else {
-            //             // draw preview below
-            //             view.view_mut(row_offset + height.., ..)
-            //                 .draw_view(&ctx, Container::new(preview).with_vertical(Align::Start))?;
-            //         }
-            //     }
-            // }
         }
 
         Ok(TerminalAction::Wait)
@@ -1194,7 +1177,5 @@ mod tests {
     #[test]
     fn test_icons_parsing() {
         let _ = ICONS.len();
-        assert!(ICONS.contains_key(*DEFAULT_ICON));
-        assert!(ICONS.contains_key(*KEYBOARD_ICON));
     }
 }

@@ -661,6 +661,14 @@ where
             let view = item.into_view().boxed();
             let mut layout = view.layout(ctx, child_ct);
 
+            // make sure item height is at least one, otherwise it will result
+            // in missing cursor
+            let size = layout.size();
+            layout.value.set_size(Size {
+                height: max(size.height, 1),
+                ..size
+            });
+
             // insert layout
             children_height += layout.size().height;
             layout.set_data(ListItemView { view, pointed });

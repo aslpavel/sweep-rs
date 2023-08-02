@@ -18,16 +18,27 @@ use tokio_stream::wrappers::ReadDirStream;
 
 #[derive(Debug, Clone)]
 pub struct PathItem {
+    /// Number of bytes in the path that are part of the root of the walk
+    pub root_length: usize,
+    /// Full path of an item
     pub path: PathBuf,
+    /// Metadata associated with path
     pub metadata: Option<Metadata>,
 }
 
 impl Haystack for PathItem {
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, mut scope: S)
     where
         S: FnMut(char),
     {
-        self.path.to_string_lossy().chars().for_each(scope)
+        let path = self.path.to_string_lossy();
+        match path.get(self.root_length..) {
+            Some(path) => path.chars().for_each(&mut scope),
+            None => path.chars().for_each(&mut scope),
+        }
+        if let Some(true) = self.metadata.as_ref().map(|m| m.is_dir()) {
+            scope('/')
+        }
     }
 }
 
@@ -37,46 +48,59 @@ pub fn walk<'caller>(
     ignore: impl Fn(&Path) -> bool + 'caller,
 ) -> impl Stream<Item = Result<PathItem, Error>> + 'caller {
     let ignore = Arc::new(ignore);
-    fs::symlink_metadata(root.as_ref().to_owned())
-        .then(|metadata| async move {
+    let root = root
+        .as_ref()
+        .canonicalize()
+        .unwrap_or_else(|_| root.as_ref().to_owned());
+    fs::symlink_metadata(root.to_owned())
+        .then(move |metadata| async move {
+            let root_length = root.as_os_str().len() + 1;
             let init = PathItem {
-                path: root.as_ref().to_owned(),
+                root_length,
+                path: root,
                 metadata: metadata.ok(),
             };
             bounded_unfold(64, Some(init), move |item| {
-                let ignore = ignore.clone();
-                async move {
-                    let children = match &item.metadata {
-                        Some(metadata) if metadata.is_dir() => async {
-                            let read_dir = fs::read_dir(&item.path).await?;
-                            let mut entries: Vec<_> = ReadDirStream::new(read_dir)
-                                .map_ok(|entry| entry.path())
-                                .try_filter_map(|path| async {
-                                    if ignore(&path) {
-                                        return Ok(None);
-                                    }
-                                    let metadata = fs::symlink_metadata(&path).await.ok();
-                                    Ok(Some(PathItem { path, metadata }))
-                                })
-                                .try_collect()
-                                .await?;
-                            entries
-                                .sort_unstable_by(|a, b| path_sort_key(b).cmp(&path_sort_key(a)));
-                            Ok::<_, Error>(entries)
-                        }
-                        .await
-                        .unwrap_or_else(|error| {
-                            tracing::warn!(?item.path, ?error, "failed to list directory");
-                            Vec::new()
-                        }),
-                        _ => Vec::new(),
-                    };
-                    Ok((item, children))
-                }
+                path_unfold(item, ignore.clone())
             })
         })
         .into_stream()
         .flatten()
+}
+
+async fn path_unfold<I>(item: PathItem, ignore: Arc<I>) -> Result<(PathItem, Vec<PathItem>), Error>
+where
+    I: Fn(&Path) -> bool,
+{
+    let children = match &item.metadata {
+        Some(metadata) if metadata.is_dir() => async {
+            let read_dir = fs::read_dir(&item.path).await?;
+            let mut entries: Vec<_> = ReadDirStream::new(read_dir)
+                .map_ok(|entry| entry.path())
+                .try_filter_map(|path| async {
+                    if ignore(&path) {
+                        return Ok(None);
+                    }
+                    let metadata = fs::symlink_metadata(&path).await.ok();
+                    Ok(Some(PathItem {
+                        root_length: item.root_length,
+                        path,
+                        metadata,
+                    }))
+                })
+                .try_collect()
+                .await?;
+            entries.sort_unstable_by(|a, b| path_sort_key(b).cmp(&path_sort_key(a)));
+            Ok::<_, Error>(entries)
+        }
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(?item.path, ?error, "failed to list directory");
+            Vec::new()
+        }),
+        _ => Vec::new(),
+    };
+    Ok((item, children))
 }
 
 fn path_sort_key(item: &PathItem) -> (bool, bool, &Path) {

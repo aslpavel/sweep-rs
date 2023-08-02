@@ -53,7 +53,7 @@
       "args": [
         // check target terminal with `tty` cmd, and run `sleep 3600`
         "--tty",
-        "/dev/pts/5",
+        "/dev/pts/1",
         "cmd"
       ],
       "cwd": "${workspaceFolder}",
@@ -77,7 +77,7 @@
         "/tmp/test.json",
         // check target terminal with `tty` cmd, and run `sleep 3600`
         "--tty",
-        "/dev/pts/1",
+        "/dev/pts/4",
         "--log",
         "/tmp/sweep.log"
       ],

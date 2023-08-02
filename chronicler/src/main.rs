@@ -11,7 +11,7 @@ use sweep::{SweepOptions, Theme};
 use std::{io::Read, path::PathBuf};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
-const HISTORY_DB: &str = ".command_history.db";
+const HISTORY_DB: &str = "chronicler/history.db";
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Error> {
 
     let db_path = args
         .db
-        .or_else(|| Some(dirs::home_dir()?.join(HISTORY_DB)))
+        .or_else(|| Some(dirs::data_dir()?.join(HISTORY_DB)))
         .ok_or_else(|| anyhow::anyhow!("faield to determine home directory"))?;
     let options = SweepOptions {
         theme: args.theme,

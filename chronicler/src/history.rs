@@ -8,9 +8,13 @@ use sqlx::{
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
-    surf_n_term::view::{Align, Container, Text, View},
-    Haystack, HaystackPreview, Theme,
+    surf_n_term::view::{Align, Container, Flex, Justify, Text, View},
+    Haystack, HaystackPreview, HaystackView, Theme,
 };
+use time::{format_description::FormatItem, macros::format_description};
+
+const DATE_FORMAT: &[FormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
 
 #[derive(Clone, Debug, FromRow)]
 pub struct HistoryEntry {
@@ -26,6 +30,13 @@ pub struct HistoryEntry {
     pub session: String,
 }
 
+impl HistoryEntry {
+    fn start_dt(&self) -> Result<time::OffsetDateTime, Error> {
+        let timestamp = (self.start_ts * 1e9) as i128;
+        Ok(time::OffsetDateTime::from_unix_timestamp_nanos(timestamp)?)
+    }
+}
+
 impl Haystack for HistoryEntry {
     fn haystack_scope<S>(&self, scope: S)
     where
@@ -34,16 +45,45 @@ impl Haystack for HistoryEntry {
         self.cmd.chars().for_each(scope)
     }
 
+    fn view(
+        &self,
+        positions: &sweep::Positions,
+        theme: &Theme,
+        _refs: sweep::FieldRefs,
+    ) -> Box<dyn View> {
+        let cmd = HaystackView::new(self, positions, theme);
+        if theme.show_preview {
+            cmd.boxed()
+        } else {
+            let mut view = Flex::row()
+                .justify(Justify::SpaceBetween)
+                .add_flex_child(1.0, cmd);
+            if let Ok(date) = self
+                .start_dt()
+                .and_then(|date| Ok(date.format(DATE_FORMAT)?))
+            {
+                view.push_child(date);
+            }
+            view.boxed()
+        }
+    }
+
     fn preview(&self, theme: &Theme) -> Option<HaystackPreview> {
         let mut text = String::new();
         (|| {
-            writeln!(&mut text, " id: {}", self.id)?;
-            writeln!(&mut text, " status: {}", self.status)?;
-            writeln!(&mut text, " cwd: {}", self.cwd)?;
-            writeln!(&mut text, " hostname: {}", self.hostname)?;
-            writeln!(&mut text, " user: {}", self.user)?;
-            writeln!(&mut text, " duration: {}", self.end_ts - self.start_ts)?;
-            write!(&mut text, " session: {}", self.session)?;
+            writeln!(&mut text)?;
+            writeln!(&mut text, "  status   : {}", self.status)?;
+            if let Ok(date) = self.start_dt() {
+                writeln!(&mut text, "  date     : {}", date.format(&DATE_FORMAT)?)?;
+            }
+            writeln!(
+                &mut text,
+                "  duration : {:.3}s",
+                self.end_ts - self.start_ts
+            )?;
+            writeln!(&mut text, "  cwd      : {}", self.cwd)?;
+            writeln!(&mut text, "  user     : {}", self.user)?;
+            writeln!(&mut text, "  hostname : {}", self.hostname)?;
             Ok::<_, anyhow::Error>(())
         })()
         .expect("in memory write failed");
@@ -54,7 +94,7 @@ impl Haystack for HistoryEntry {
             .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
             .boxed();
 
-        Some(HaystackPreview::new(view, Some(1.0)))
+        Some(HaystackPreview::new(view, Some(0.6)))
     }
 }
 
@@ -129,8 +169,15 @@ impl History {
     }
 
     /// All history entries in the database
+    #[allow(dead_code)]
     pub fn entries(&self) -> impl Stream<Item = Result<HistoryEntry, Error>> + '_ {
         sqlx::query_as(LIST_QUERY)
+            .fetch(&self.pool)
+            .map_err(Error::from)
+    }
+
+    pub fn entries_unique_cmd(&self) -> impl Stream<Item = Result<HistoryEntry, Error>> + '_ {
+        sqlx::query_as(LIST_UNIQUE_CMD_QUERY)
             .fetch(&self.pool)
             .map_err(Error::from)
     }
@@ -198,11 +245,24 @@ CREATE TABLE IF NOT EXISTS history (
 ) STRICT;
 
 -- index to speed up retrieval of most frequent paths
-CREATE INDEX IF NOT EXISTS history_cwd ON history(cwd);
+CREATE INDEX IF NOT EXISTS history_cwd ON history(cwd, end_ts);
+CREATE INDEX IF NOT EXISTS history_end_ts ON history(end_ts);
 "#;
 
 const LIST_QUERY: &str = r#"
 SELECT * FROM history ORDER BY end_ts DESC;
+"#;
+
+const LIST_UNIQUE_CMD_QUERY: &str = r#"
+SELECT *
+FROM history h1
+JOIN (
+    SELECT cmd, MAX(end_ts) as max_ts
+    FROM history
+    GROUP BY cmd
+) h2
+ON h1.cmd = h2.cmd AND h1.end_ts = h2.max_ts
+ORDER BY end_ts DESC;
 "#;
 
 const PATH_QUERY: &str = r#"
