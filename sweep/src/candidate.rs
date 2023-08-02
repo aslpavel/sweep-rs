@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{BoxConstraint, Layout, Tree, View, ViewContext},
+    view::{BoxConstraint, IntoView, Layout, Tree, View, ViewContext},
     Cell, Face, Glyph, Size, Surface, SurfaceMut, TerminalSurface, TerminalSurfaceExt,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
@@ -435,7 +435,7 @@ pub struct Field<'a> {
 
 impl<'a> Field<'a> {
     /// resolve reference in the field
-    pub(crate) fn resolve(self, refs: &FieldRefs) -> Self {
+    pub fn resolve(self, refs: &FieldRefs) -> Self {
         let field_ref = match self.field_ref {
             Some(field_ref) => field_ref,
             None => return self,
@@ -468,6 +468,21 @@ impl<'a> Field<'a> {
             face: self.face,
             field_ref: self.field_ref,
         }
+    }
+}
+
+impl<'a> IntoView for Field<'a> {
+    type View = surf_n_term::view::Text<'a>;
+
+    fn into_view(self) -> Self::View {
+        let mut text = surf_n_term::view::Text::new(self.text);
+        if let Some(face) = self.face {
+            text = text.with_face(face);
+        }
+        if let Some(glyph) = self.glyph {
+            text = text.with_glyph(glyph);
+        }
+        text
     }
 }
 

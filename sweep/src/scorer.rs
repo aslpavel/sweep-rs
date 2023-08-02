@@ -22,17 +22,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 
     /// Creates haystack view from matched positions and theme
     fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
-        let mut chars = Vec::new();
-        self.haystack_scope(|char| {
-            let index = chars.len();
-            let face = if positions.get(index) {
-                theme.list_highlight
-            } else {
-                theme.list_text
-            };
-            chars.push((char, face));
-        });
-        Box::new(HaystackView { chars })
+        Box::new(HaystackView::new(self, positions, theme))
     }
 
     /// Large preview of pointed item
@@ -55,8 +45,25 @@ impl HaystackPreview {
     }
 }
 
-struct HaystackView {
+/// Generic [View] for haystack object
+pub struct HaystackView {
     chars: Vec<(char, Face)>,
+}
+
+impl HaystackView {
+    pub fn new(haystack: &impl Haystack, positions: &Positions, theme: &Theme) -> Self {
+        let mut chars = Vec::new();
+        haystack.haystack_scope(|char| {
+            let index = chars.len();
+            let face = if positions.get(index) {
+                theme.list_highlight
+            } else {
+                theme.list_text
+            };
+            chars.push((char, face));
+        });
+        HaystackView { chars }
+    }
 }
 
 impl View for HaystackView {

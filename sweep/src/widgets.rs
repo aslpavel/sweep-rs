@@ -23,6 +23,7 @@ pub struct Theme {
     pub stats: Face,
     pub label: Face,
     pub separator: Face,
+    pub show_preview: bool,
 }
 
 impl Theme {
@@ -71,6 +72,7 @@ impl Theme {
             stats,
             label,
             separator,
+            show_preview: false,
         }
     }
 
@@ -246,6 +248,10 @@ impl Input {
             offset: StdCell::new(0),
             theme,
         }
+    }
+
+    pub fn theme_set(&mut self, theme: Theme) {
+        self.theme = theme;
     }
 
     pub fn apply(&mut self, action: InputAction) {
@@ -467,7 +473,7 @@ pub trait ListItems {
     fn len(&self) -> usize;
 
     /// Get entry in the list by it's index
-    fn get(&self, index: usize) -> Option<Self::Item>;
+    fn get(&self, index: usize, theme: Theme) -> Option<Self::Item>;
 
     /// Check if list is empty
     fn is_empty(&self) -> bool {
@@ -485,7 +491,7 @@ pub struct List<T> {
 /// Current state of the list view (it is only updated on layout calculation)
 #[derive(Debug, Clone, Copy, Default)]
 struct ListViewState {
-    offset: usize,  // visibile offset (first rendered element offset)
+    offset: usize,  // visible offset (first rendered element offset)
     visible: usize, // number of visible elements
 }
 
@@ -510,7 +516,7 @@ impl<T: ListItems> List<T> {
     }
 
     pub fn current(&self) -> Option<T::Item> {
-        self.items.get(self.cursor)
+        self.items.get(self.cursor, self.theme.clone())
     }
 
     pub fn apply(&mut self, action: ListAction) {
@@ -568,6 +574,10 @@ impl<T: ListItems> List<T> {
 
     pub fn scroll_bar(&self) -> ListScrollBar<'_, T> {
         ListScrollBar { list: self }
+    }
+
+    pub fn theme_set(&mut self, theme: Theme) {
+        self.theme = theme;
     }
 }
 
@@ -639,8 +649,9 @@ where
         let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
         let mut children_height = 0;
         let mut children_removed = 0;
-        for index in offset..offset + height {
-            let item = match self.items().get(index) {
+        // looping over items starting from offset
+        for index in offset..offset + 2 * height {
+            let item = match self.items().get(index, self.theme.clone()) {
                 None => break,
                 Some(item) => item,
             };
@@ -755,7 +766,7 @@ mod tests {
             self.0.len()
         }
 
-        fn get(&self, index: usize) -> Option<Self::Item> {
+        fn get(&self, index: usize, _theme: Theme) -> Option<Self::Item> {
             let value = self.0.get(index)?;
             Some(Text::new(value.to_string()))
         }

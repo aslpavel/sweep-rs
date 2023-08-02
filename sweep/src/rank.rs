@@ -279,6 +279,7 @@ where
 
     /// Get last result
     pub fn result(&self) -> Arc<RankerResult<H>> {
-        self.result.with(|result| result.clone())
+        self.result
+            .with(|result| tracing::debug_span!("clone result").in_scope(|| result.clone()))
     }
 }

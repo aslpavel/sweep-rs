@@ -94,14 +94,16 @@ async fn main() -> Result<(), Error> {
     let sweep: Sweep<Candidate> = Sweep::new(SweepOptions {
         height: args.height,
         prompt: args.prompt.clone(),
-        theme: args.theme.clone(),
+        theme: Theme {
+            show_preview: args.preview,
+            ..args.theme
+        },
         keep_order: args.keep_order,
         tty_path: args.tty_path.clone(),
         title: args.title.clone(),
         scorers: VecDeque::new(),
         altscreen: args.altscreen,
         border: args.border,
-        preview: args.preview,
         ..SweepOptions::default()
     })?;
     sweep.query_set(args.query.clone());
