@@ -95,6 +95,15 @@ impl Haystack for String {
     }
 }
 
+impl Haystack for &'static str {
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.chars().for_each(scope)
+    }
+}
+
 thread_local! {
     static HAYSTACK: RefCell<Vec<char>> = Default::default();
 }
