@@ -8,7 +8,7 @@ pub use scorer::{
 };
 
 mod rank;
-pub use rank::{fuzzy_scorer, substr_scorer, Ranker, Ranker1, RankerResult, ScorerBuilder};
+pub use rank::{fuzzy_scorer, substr_scorer, Ranker, RankerResult, ScorerBuilder};
 
 mod candidate;
 pub use candidate::{Candidate, Field, FieldRef, FieldRefs, FieldSelector};

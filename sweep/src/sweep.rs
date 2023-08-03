@@ -293,10 +293,12 @@ impl<H: Haystack> SweepInner<H> {
         let term = SystemTerminal::open(&options.tty_path)
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
-        let ranker = Ranker::new(options.scorers[0].clone(), options.keep_order, {
+        let ranker = Ranker::new({
             let waker = waker.clone();
-            move || waker.wake().is_ok()
+            move |_| waker.wake().is_ok()
         });
+        ranker.scorer_set(options.scorers[0].clone());
+        ranker.keep_order(Some(options.keep_order));
         let refs: FieldRefs = Default::default();
         let events_notify = Arc::new(Notify::new());
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
@@ -837,7 +839,8 @@ where
                 )
             })
             .collect();
-        let ranker = Ranker::new(fuzzy_scorer(), false, move || term_waker.wake().is_ok());
+        let ranker = Ranker::new(move |_| term_waker.wake().is_ok());
+        ranker.keep_order(Some(true));
         ranker.haystack_extend(candidates);
         SweepState::new(
             "BINDINGS".to_owned(),
@@ -859,12 +862,12 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         let ranker_result = self.ranker.result();
         let mut stats_text = Text::new(format!(
             " {}/{} {:.2?}",
-            ranker_result.result.len(),
-            ranker_result.haystack_size,
-            ranker_result.duration,
+            ranker_result.len(),
+            ranker_result.haystack_len(),
+            ranker_result.duration(),
         ));
-        let scorer_name = ranker_result.scorer.name().to_string();
-        if self.list.items().generation() != ranker_result.generation {
+        let scorer_name = ranker_result.scorer().name().to_string();
+        if self.list.items().generation() != ranker_result.generation() {
             // update list with new results
             let old_result = self
                 .list
@@ -1131,7 +1134,7 @@ impl<H> SweepItems<H> {
     }
 
     fn generation(&self) -> usize {
-        self.ranker_result.generation
+        self.ranker_result.generation()
     }
 }
 
@@ -1139,18 +1142,15 @@ impl<H: Haystack> ListItems for SweepItems<H> {
     type Item = SweepItem<H>;
 
     fn len(&self) -> usize {
-        self.ranker_result.result.len()
+        self.ranker_result.len()
     }
 
     fn get(&self, index: usize, theme: Theme) -> Option<Self::Item> {
-        self.ranker_result
-            .result
-            .get(index)
-            .map(|result| SweepItem {
-                result: result.clone(),
-                theme,
-                refs: self.refs.clone(),
-            })
+        self.ranker_result.get(index).map(|result| SweepItem {
+            result: result.clone(),
+            theme,
+            refs: self.refs.clone(),
+        })
     }
 }
 
