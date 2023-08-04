@@ -958,57 +958,62 @@ where
         size_buf: String,
         message_buf: Vec<u8>,
     }
-    let init = State {
-        reader: BufReader::new(read),
-        size_buf: String::new(),
-        message_buf: Vec::new(),
-    };
-    futures::stream::try_unfold(init, |mut state| {
-        async move {
-            // read size
-            state.size_buf.clear();
-            state
-                .reader
-                .read_line(&mut state.size_buf)
-                .await
-                .map_err(|error| RpcError {
-                    kind: RpcErrorKind::ParseError,
-                    data: format!("failed to read message size: {}", error),
-                })?;
-            if state.size_buf.is_empty() {
-                return Ok(None);
+    futures::stream::try_unfold(
+        State {
+            reader: BufReader::new(read),
+            size_buf: String::new(),
+            message_buf: Vec::new(),
+        },
+        |mut state| {
+            async move {
+                // read size
+                state.size_buf.clear();
+                state
+                    .reader
+                    .read_line(&mut state.size_buf)
+                    .await
+                    .map_err(|error| RpcError {
+                        kind: RpcErrorKind::ParseError,
+                        data: format!("failed to read message size: {}", error),
+                    })?;
+                if state.size_buf.is_empty() {
+                    return Ok(None);
+                }
+                let size: usize =
+                    state
+                        .size_buf
+                        .trim()
+                        .parse::<usize>()
+                        .map_err(|error| RpcError {
+                            kind: RpcErrorKind::ParseError,
+                            data: format!("failed parse message size: {}", error),
+                        })?;
+
+                // read message
+                state.message_buf.clear();
+                state.message_buf.resize_with(size, || 0u8);
+                state
+                    .reader
+                    .read_exact(&mut state.message_buf)
+                    .await
+                    .map_err(|error| RpcError {
+                        kind: RpcErrorKind::ParseError,
+                        data: format!("failed to read message: {}", error),
+                    })?;
+
+                // parse message
+                let message =
+                    serde_json::from_slice(state.message_buf.as_ref()).map_err(|error| {
+                        RpcError {
+                            kind: RpcErrorKind::ParseError,
+                            data: format!("failed parse message: {}", error),
+                        }
+                    })?;
+
+                Ok(Some((message, state)))
             }
-            let size: usize = state
-                .size_buf
-                .trim()
-                .parse::<usize>()
-                .map_err(|error| RpcError {
-                    kind: RpcErrorKind::ParseError,
-                    data: format!("failed parse message size: {}", error),
-                })?;
-
-            // read message
-            state.message_buf.clear();
-            state.message_buf.resize_with(size, || 0u8);
-            state
-                .reader
-                .read_exact(&mut state.message_buf)
-                .await
-                .map_err(|error| RpcError {
-                    kind: RpcErrorKind::ParseError,
-                    data: format!("failed to read message: {}", error),
-                })?;
-
-            // parse message
-            let message =
-                serde_json::from_slice(state.message_buf.as_ref()).map_err(|error| RpcError {
-                    kind: RpcErrorKind::ParseError,
-                    data: format!("failed parse message: {}", error),
-                })?;
-
-            Ok(Some((message, state)))
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]

@@ -409,6 +409,8 @@ pub enum ListAction {
     ItemPrev,
     PageNext,
     PagePrev,
+    Home,
+    End,
 }
 
 impl ListAction {
@@ -450,7 +452,7 @@ impl ListAction {
                     name: KeyName::PageDown,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.page.next",
+                name: "list.page.next",
                 description: "Move one page down in the list",
             },
             ActionDesc {
@@ -459,8 +461,26 @@ impl ListAction {
                     name: KeyName::PageUp,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.page.prev",
+                name: "list.page.prev",
                 description: "Move one page up in the list",
+            },
+            ActionDesc {
+                action: ListAction::Home,
+                chord: &[&[Key {
+                    name: KeyName::Home,
+                    mode: KeyMod::EMPTY,
+                }]],
+                name: "list.home",
+                description: "Move to the beginning of the list",
+            },
+            ActionDesc {
+                action: ListAction::End,
+                chord: &[&[Key {
+                    name: KeyName::End,
+                    mode: KeyMod::EMPTY,
+                }]],
+                name: "list.home",
+                description: "Move to the end of the list",
             },
         ]
     }
@@ -519,6 +539,15 @@ impl<T: ListItems> List<T> {
         self.items.get(self.cursor, self.theme.clone())
     }
 
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn cursor_set(&mut self, cursor: usize) {
+        self.cursor = cursor;
+        self.view_state.get_mut().offset = cursor;
+    }
+
     pub fn apply(&mut self, action: ListAction) {
         use ListAction::*;
         match action {
@@ -537,6 +566,13 @@ impl<T: ListItems> List<T> {
                 if self.cursor >= page_size {
                     self.cursor -= page_size;
                 }
+            }
+            Home => {
+                self.cursor = 0;
+                self.view_state.get_mut().offset = 0;
+            }
+            End => {
+                self.cursor = self.items.len() - 1;
             }
         }
         if self.items.len() > 0 {

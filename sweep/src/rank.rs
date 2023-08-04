@@ -253,6 +253,10 @@ impl<H> RankerResult<H> {
         self.matches.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.matches.is_empty()
+    }
+
     /// Number of all items
     pub fn haystack_len(&self) -> usize {
         self.haystack.with(|hs| hs.len())
@@ -284,6 +288,19 @@ impl<H> RankerResult<H> {
             score: matched.score.unwrap_or(Score::MIN),
             positions: matched.positions,
         })
+    }
+
+    /// Get haystack index given match index
+    pub fn get_haystack_index(&self, index: usize) -> Option<usize> {
+        Some(self.matches.get(index)?.index)
+    }
+
+    /// Find match index by haystack index
+    pub fn find_match_index(&self, haystack_index: usize) -> Option<usize> {
+        self.matches
+            .iter()
+            .enumerate()
+            .find_map(|(index, matched)| (matched.index == haystack_index).then_some(index))
     }
 
     /// Iterator over all matched items

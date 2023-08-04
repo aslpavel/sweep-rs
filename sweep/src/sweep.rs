@@ -868,12 +868,25 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         ));
         let scorer_name = ranker_result.scorer().name().to_string();
         if self.list.items().generation() != ranker_result.generation() {
+            // find cursor position of currently pointed item in the new result
+            let cursor = if self.list.cursor() == 0 {
+                None
+            } else {
+                self.list
+                    .items()
+                    .ranker_result
+                    .get_haystack_index(self.list.cursor())
+                    .and_then(|haystack_index| ranker_result.find_match_index(haystack_index))
+            };
             // update list with new results
-            let old_result = self
+            let old_items = self
                 .list
                 .items_set(SweepItems::new(ranker_result, self.refs.clone()));
+            if let Some(cursor) = cursor {
+                self.list.cursor_set(cursor);
+            }
             // dropping old result might add noticeable delay for large lists
-            rayon::spawn(move || std::mem::drop(old_result));
+            rayon::spawn(move || std::mem::drop(old_items));
         }
 
         // prompt

@@ -269,7 +269,7 @@ impl FromStr for NavigatorBind {
             CMD_COMPLETE => Ok(Self::Completion),
             CMD_COMMAND_HISTORY => Ok(Self::ShowCommandHistory),
             CMD_PATH_HISTORY => Ok(Self::ShowPathHistory),
-            cmd => return Err(anyhow::anyhow!("unhandled bind command: {}", cmd)),
+            cmd => Err(anyhow::anyhow!("unhandled bind command: {}", cmd)),
         }
     }
 }
@@ -336,11 +336,11 @@ fn path_collapse(path: &Path) -> String {
     let parts: Vec<_> = path.iter().collect();
     let mut result: Vec<u8> = Vec::new();
     (|| {
-        result.write(parts[0].as_bytes())?;
+        result.write_all(parts[0].as_bytes())?;
         write!(&mut result, "/\u{2026}")?;
         for part in parts[parts.len() - 4..].iter() {
             write!(&mut result, "/")?;
-            result.write(part.as_bytes())?;
+            result.write_all(part.as_bytes())?;
         }
         Ok::<_, Error>(())
     })()
