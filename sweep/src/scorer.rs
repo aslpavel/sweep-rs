@@ -115,6 +115,9 @@ pub trait Scorer: Send + Sync + Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
 
+    /// Needle
+    fn needle(&self) -> &str;
+
     /// Actual scorer non generic implementation
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool;
 
@@ -154,6 +157,9 @@ impl<'a, S: Scorer> Scorer for &'a S {
     fn name(&self) -> &str {
         (**self).name()
     }
+    fn needle(&self) -> &str {
+        (**self).needle()
+    }
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
@@ -163,6 +169,9 @@ impl Scorer for Box<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
     }
+    fn needle(&self) -> &str {
+        (**self).needle()
+    }
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
@@ -171,6 +180,9 @@ impl Scorer for Box<dyn Scorer> {
 impl Scorer for Arc<dyn Scorer> {
     fn name(&self) -> &str {
         (**self).name()
+    }
+    fn needle(&self) -> &str {
+        (**self).needle()
     }
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
         (**self).score_ref(haystack, score, positions)
@@ -235,6 +247,7 @@ const SCORE_MATCH_DOT: f32 = 0.6;
 /// characters inside the haystack.
 #[derive(Debug, Clone)]
 pub struct SubstrScorer {
+    needle: String,
     words: Vec<KMPPattern<char>>,
 }
 
@@ -250,13 +263,20 @@ impl SubstrScorer {
                 }
             })
             .collect();
-        Self { words }
+        Self {
+            needle: needle.into_iter().collect(),
+            words,
+        }
     }
 }
 
 impl Scorer for SubstrScorer {
     fn name(&self) -> &str {
         "substr"
+    }
+
+    fn needle(&self) -> &str {
+        self.needle.as_str()
     }
 
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
@@ -358,6 +378,7 @@ impl<T: PartialEq> KMPPattern<T> {
 #[derive(Clone, Debug)]
 pub struct FuzzyScorer {
     needle: Vec<char>,
+    needle_str: String,
 }
 
 thread_local! {
@@ -366,7 +387,8 @@ thread_local! {
 
 impl FuzzyScorer {
     pub fn new(needle: Vec<char>) -> Self {
-        Self { needle }
+        let needle_str = needle.iter().cloned().collect();
+        Self { needle, needle_str }
     }
 
     fn bonus(haystack: &[char], bonus: &mut [f32]) {
@@ -501,6 +523,10 @@ impl Scorer for FuzzyScorer {
         "fuzzy"
     }
 
+    fn needle(&self) -> &str {
+        &self.needle_str
+    }
+
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
         Self::subseq(self.needle.as_ref(), haystack)
             && Self::score_impl(self.needle.as_ref(), haystack, score, positions)
@@ -546,10 +572,14 @@ impl Positions {
         self.chunks[index] |= mask;
     }
 
-    /// check if index is present, panics if out of range
+    /// check if index is present
     pub fn get(&self, index: usize) -> bool {
         let (index, mask) = Self::offset(index);
-        self.chunks[index] & mask != 0
+        if let Some(chunk) = self.chunks.get(index) {
+            chunk & mask != 0
+        } else {
+            false
+        }
     }
 
     /// unset all

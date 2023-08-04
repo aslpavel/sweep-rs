@@ -193,11 +193,10 @@ fn ranker_worker<H, N>(
                 rank(scorer.clone(), &haystack, &mut matches, false);
                 // copy previous matches
                 matches.extend(matches_prev.iter().rev().cloned());
+                matches.reverse();
                 // sort matches
                 if !keep_order {
                     matches.par_sort_unstable_by(|a, b| b.score.cmp(&a.score));
-                } else {
-                    matches.reverse();
                 }
                 matches
             }
@@ -371,6 +370,10 @@ where
     S: Scorer + Clone,
     H: Haystack,
 {
+    if scorer.needle().is_empty() {
+        return;
+    }
+
     // score haystack items
     hastack.with(|haystack| {
         matches

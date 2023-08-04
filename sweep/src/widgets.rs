@@ -479,7 +479,7 @@ impl ListAction {
                     name: KeyName::End,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "list.home",
+                name: "list.end",
                 description: "Move to the end of the list",
             },
         ]

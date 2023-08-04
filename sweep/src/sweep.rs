@@ -27,8 +27,9 @@ use std::{
 };
 use surf_n_term::{
     view::{Container, Flex, IntoView, Text, View, ViewContext},
-    DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
-    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
+    DecMode, Face, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut,
+    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
+    TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -518,9 +519,9 @@ enum SweepAction {
     Quit,
     Help,
     ScorerNext,
+    PreviewToggle,
     Input(InputAction),
     List(ListAction),
-    PreviewToggle,
 }
 
 /// Object representing current state of the sweep worker
@@ -785,7 +786,7 @@ where
 
     /// Crate sweep states which renders help view
     fn help_state(&self, term_waker: TerminalWaker) -> SweepState<Candidate> {
-        let mut bindings = BTreeMap::new();
+        let mut bindings = BTreeMap::new(); // action -> (name, key_binding)
         for (name, action) in self.key_actions.iter() {
             bindings.insert(action.clone(), (name.to_string(), String::new()));
         }
@@ -797,30 +798,37 @@ where
                 };
                 (name, String::new())
             });
-            let fail = "in memory write failed";
-            write!(keys, "\"").expect(fail);
-            for (index, key) in chord.iter().enumerate() {
-                if index != 0 {
-                    write!(keys, " ").expect(fail);
+            // format key binding
+            (|| {
+                write!(keys, "\"")?;
+                for (index, key) in chord.iter().enumerate() {
+                    if index != 0 {
+                        write!(keys, " ")?;
+                    }
+                    write!(keys, "{}", key)?;
                 }
-                write!(keys, "{}", key).expect(fail);
-            }
-            write!(keys, "\" ").expect(fail);
+                write!(keys, "\" ")?;
+                Ok::<_, Error>(())
+            })()
+            .expect("in memory write failed");
         });
         let name_len = bindings
             .values()
             .map(|(name, _)| name.len())
             .max()
             .unwrap_or(0);
+        let user_binding = Face::default().with_fg(Some(self.theme.accent));
         let candidates = bindings
             .into_iter()
-            .map(|(_action, (name, chrod))| {
+            .map(|(action, (name, chrod))| {
                 let mut extra = HashMap::with_capacity(1);
                 extra.insert("name".to_owned(), name.clone().into());
+                let face = matches!(action, SweepAction::User(_)).then_some(user_binding);
                 Candidate::new(
                     vec![
                         Field {
                             text: format!("{0:<1$}", name, name_len).into(),
+                            face,
                             ..Field::default()
                         },
                         Field {
