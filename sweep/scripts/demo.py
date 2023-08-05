@@ -19,6 +19,7 @@ ICON_BEER = SweepIcon(
     "h-7A1.75 1.75 0 0 0 5.5 5.25V6H16v-.75Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback="[P]",
 )
 
 
@@ -33,7 +34,7 @@ ICON_COCKTAIL = SweepIcon(
     ".75 0 1 0 1.47.294l.88-4.397ZM12.135 8H6.5V6.5h5.935l-.3 1.5Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
-    fallback=" ",
+    fallback="[C]",
 )
 
 
@@ -52,6 +53,7 @@ ICON_BACKPACK = SweepIcon(
     "a.5.5 0 0 1 0 1H18Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback="[B]",
 )
 
 
@@ -66,14 +68,12 @@ async def main():
         await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)
         ref_backpack = await sweep.field_register(
             {
-                "text": "[B]",
                 "glyph": ICON_BACKPACK.to_json(),
                 "face": "bg=#076678,fg=#ebdbb2",
             }
         )
         ref_cocktail = await sweep.field_register(
             {
-                "text": "[C]",
                 "glyph": ICON_COCKTAIL.to_json(),
                 "face": "fg=#427b58",
             }
@@ -106,7 +106,7 @@ async def main():
         # direct glyph icon usage example
         await sweep.items_extend(
             [{"entry": [
-                {"text": "[P]", "glyph": ICON_BEER.to_json(), "face": "fg=#cc241d"},
+                {"glyph": ICON_BEER.to_json(), "face": "fg=#cc241d"},
                 {"text": "<- direct icon usage ", "active": False},
             ]}]
         )

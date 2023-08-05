@@ -8,8 +8,9 @@ use sqlx::{
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
+    haystack_default_view,
     surf_n_term::view::{Align, Container, Flex, Justify, Text, View},
-    Haystack, HaystackPreview, HaystackView, Theme,
+    Haystack, HaystackPreview, Theme,
 };
 use time::{format_description::FormatItem, macros::format_description};
 
@@ -51,7 +52,7 @@ impl Haystack for HistoryEntry {
         theme: &Theme,
         _refs: sweep::FieldRefs,
     ) -> Box<dyn View> {
-        let cmd = HaystackView::new(self, positions, theme);
+        let cmd = haystack_default_view(self, positions, theme);
         if theme.show_preview {
             cmd.boxed()
         } else {

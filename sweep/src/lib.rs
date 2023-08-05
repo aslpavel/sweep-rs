@@ -3,7 +3,7 @@
 
 mod scorer;
 pub use scorer::{
-    FuzzyScorer, Haystack, HaystackPreview, HaystackView, KMPPattern, Positions, Score,
+    haystack_default_view, FuzzyScorer, Haystack, HaystackPreview, KMPPattern, Positions, Score,
     ScoreResult, Scorer, SubstrScorer,
 };
 
@@ -11,7 +11,7 @@ mod rank;
 pub use rank::{fuzzy_scorer, substr_scorer, Ranker, RankerResult, ScorerBuilder};
 
 mod candidate;
-pub use candidate::{Candidate, Field, FieldRef, FieldRefs, FieldSelector};
+pub use candidate::{fields_view, Candidate, Field, FieldRef, FieldRefs, FieldSelector};
 
 mod sweep;
 pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions};

@@ -5,10 +5,7 @@ use std::{
     fmt::{self, Debug},
     sync::Arc,
 };
-use surf_n_term::{
-    view::{layout_string, BoxConstraint, Layout, Tree, View, ViewContext},
-    Face, TerminalSurface, TerminalSurfaceExt,
-};
+use surf_n_term::view::{Text, View};
 
 /// Haystack
 ///
@@ -22,7 +19,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 
     /// Creates haystack view from matched positions and theme
     fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
-        Box::new(HaystackView::new(self, positions, theme))
+        haystack_default_view(self, positions, theme).boxed()
     }
 
     /// Large preview of pointed item
@@ -45,45 +42,23 @@ impl HaystackPreview {
     }
 }
 
-/// Generic [View] for haystack object
-pub struct HaystackView {
-    chars: Vec<(char, Face)>,
-}
-
-impl HaystackView {
-    pub fn new(haystack: &impl Haystack, positions: &Positions, theme: &Theme) -> Self {
-        let mut chars = Vec::new();
-        haystack.haystack_scope(|char| {
-            let index = chars.len();
-            let face = if positions.get(index) {
-                theme.list_highlight
-            } else {
-                theme.list_text
-            };
-            chars.push((char, face));
+pub fn haystack_default_view(
+    haystack: &impl Haystack,
+    positions: &Positions,
+    theme: &Theme,
+) -> impl View {
+    let mut text = Text::new();
+    let mut index = 0;
+    haystack.haystack_scope(|char| {
+        text.set_face(if positions.get(index) {
+            theme.list_highlight
+        } else {
+            theme.list_text
         });
-        HaystackView { chars }
-    }
-}
-
-impl View for HaystackView {
-    fn render<'b>(
-        &self,
-        _ctx: &ViewContext,
-        surf: &'b mut TerminalSurface<'b>,
-        layout: &Tree<Layout>,
-    ) -> Result<(), surf_n_term::Error> {
-        let mut surf = layout.apply_to(surf);
-        let mut writer = surf.writer();
-        for (char, face) in self.chars.iter() {
-            writer.put_char(*char, *face);
-        }
-        Ok(())
-    }
-
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        Tree::leaf(layout_string(ct, self.chars.iter().map(|c| c.0)))
-    }
+        text.put_char(char);
+        index += 1;
+    });
+    text
 }
 
 impl Haystack for String {

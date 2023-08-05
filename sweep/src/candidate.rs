@@ -7,13 +7,12 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fmt,
-    io::Write,
     str::FromStr,
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{BoxConstraint, Layout, Tree, View, ViewContext},
-    Cell, Face, Glyph, Size, Surface, SurfaceMut, TerminalSurface, TerminalSurfaceExt,
+    view::{Container, Flex, Justify, Text, View},
+    Face, Glyph,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -120,8 +119,8 @@ impl Candidate {
         })
     }
 
-    fn fields(&self) -> impl Iterator<Item = Field<'_>> {
-        self.inner.fields.iter().map(Field::borrow)
+    fn fields(&self) -> &[Field<'_>] {
+        &self.inner.fields
     }
 
     fn chars(&self) -> impl Iterator<Item = char> + '_ {
@@ -132,8 +131,8 @@ impl Candidate {
             .flatten()
     }
 
-    fn fields_right(&self) -> impl Iterator<Item = Field<'_>> {
-        self.inner.fields_right.iter().map(Field::borrow)
+    fn fields_right(&self) -> &[Field<'_>] {
+        &self.inner.fields_right
     }
 
     fn fields_right_offset(&self) -> usize {
@@ -296,115 +295,86 @@ impl Haystack for Candidate {
         theme: &crate::Theme,
         refs: FieldRefs,
     ) -> Box<dyn View> {
-        Box::new(CandidteView {
-            candidate: self.clone(),
-            positions: positions.clone(),
-            refs,
-            face_default: theme.list_text,
-            face_highlight: theme.list_highlight,
-            face_inactive: theme.list_inactive,
-        })
+        // left side
+        let mut positions_offset = 0;
+        let left = fields_view(
+            self.fields(),
+            positions,
+            &mut positions_offset,
+            &refs,
+            theme.list_text,
+            theme.list_highlight,
+            theme.list_inactive,
+        );
+
+        // right side
+        let right = fields_view(
+            self.fields_right(),
+            &Positions::new(0),
+            &mut positions_offset,
+            &refs,
+            theme.list_text,
+            theme.list_highlight,
+            theme.list_inactive,
+        );
+
+        let mut view = Flex::row()
+            .justify(Justify::SpaceBetween)
+            .add_flex_child(1.0, left);
+        if !right.is_empty() {
+            if self.fields_right_offset() > 0 {
+                view.push_child(
+                    Container::new(right)
+                        .with_horizontal(surf_n_term::view::Align::Start)
+                        .with_width(self.fields_right_offset()),
+                )
+            } else {
+                view.push_child(right);
+            };
+        }
+        view.boxed()
     }
 }
 
-struct CandidteView {
-    candidate: Candidate,
-    positions: Positions,
-    refs: FieldRefs,
+/// Convert fields into [Text] view
+pub fn fields_view(
+    fields: &[Field<'_>],
+    positions: &Positions,
+    positions_offset: &mut usize,
+    refs: &FieldRefs,
     face_default: Face,
     face_highlight: Face,
     face_inactive: Face,
-}
+) -> Text {
+    let mut text = Text::new();
+    for field in fields {
+        text.set_face(face_default);
+        let field = field.resolve(refs);
+        let field_face = field.face.unwrap_or_default();
 
-impl View for CandidteView {
-    fn render<'a>(
-        &self,
-        ctx: &ViewContext,
-        surf: &'a mut TerminalSurface<'a>,
-        layout: &Tree<Layout>,
-    ) -> Result<(), surf_n_term::Error> {
-        let mut surf = layout.apply_to(surf);
-
-        // space reserved for right fields
-        let offset = self.candidate.fields_right_offset();
-
-        // render left side
-        let mut index = 0;
-        let mut left_view = if offset != 0 {
-            surf.view_mut(.., ..-(offset as i32))
-        } else {
-            surf.view_mut(.., ..)
-        };
-        let mut writer = left_view.writer();
-        for field in self.candidate.fields() {
-            let field = field.resolve(&self.refs);
-            let face_field = field.face.unwrap_or_default();
-            if !field.active || field.glyph.is_some() {
-                let face = self.face_inactive.overlay(&face_field);
-                writer.face_set(face);
-                match field.glyph {
-                    Some(glyph) if ctx.has_glyphs() => {
-                        writer.put(Cell::new_glyph(face, glyph));
-                    }
-                    _ => writer.write_all(field.text.as_bytes())?,
-                }
-                writer.face_set(self.face_default);
-            } else {
-                let face_highlight = self.face_highlight.overlay(&face_field);
-                let face_default = self.face_default.overlay(&face_field);
-                for c in field.text.chars() {
-                    if self.positions.get(index) {
-                        writer.put_char(c, face_highlight);
-                    } else {
-                        writer.put_char(c, face_default);
-                    }
-                    index += 1;
-                }
-            }
-        }
-        // render right side
-        if surf.width() <= offset || offset == 0 {
-            return Ok(());
-        }
-        let mut right_view = surf.view_mut(.., -(offset as i32)..);
-        let mut writer = right_view.writer();
-        for field in self.candidate.fields_right() {
-            let field = field.resolve(&self.refs);
-            let face = self.face_inactive.overlay(&field.face.unwrap_or_default());
-            writer.face_set(face);
-            match field.glyph {
-                Some(glyph) if ctx.has_glyphs() => {
-                    writer.put(Cell::new_glyph(face, glyph));
-                }
-                _ => writer.write_all(field.text.as_bytes())?,
-            }
-            writer.face_set(self.face_default);
-        }
-
-        Ok(())
-    }
-
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        let size = ct.max();
-        let offset = self.candidate.fields_right_offset();
-        let width = if size.width > offset {
-            size.width - offset
-        } else {
-            size.width
-        };
-        let mut length = 0;
-        for field in self.candidate.fields() {
+        if field.active && field.glyph.is_none() {
+            // active field
+            let face_highlight = face_highlight.overlay(&field_face);
+            let face_default = face_default.overlay(&field_face);
             for c in field.text.chars() {
-                length += match c {
-                    '\r' => 0,
-                    '\n' => width - length % width,
-                    _ => 1,
+                if positions.get(*positions_offset) {
+                    text.set_face(face_highlight).put_char(c);
+                } else {
+                    text.set_face(face_default).put_char(c);
                 }
+                *positions_offset += 1;
             }
+        } else {
+            // inactive field
+            text.with_face(face_inactive.overlay(&field_face), |text| {
+                match field.glyph {
+                    Some(glyph) => text.put_glyph(glyph.clone()),
+                    None => text.push_str(&field.text),
+                };
+            });
         }
-        let height = length / width + (if length % width != 0 { 1 } else { 0 });
-        Tree::leaf(Layout::new().with_size(Size::new(height, size.width)))
     }
+    text
 }
 
 /// Previously registered field that is used as base of the field
@@ -435,23 +405,21 @@ pub struct Field<'a> {
 
 impl<'a> Field<'a> {
     /// resolve reference in the field
-    pub fn resolve(self, refs: &FieldRefs) -> Self {
-        let field_ref = match self.field_ref {
-            Some(field_ref) => field_ref,
-            None => return self,
+    pub fn resolve(&'a self, refs: &FieldRefs) -> Field<'a> {
+        let Some(field_ref) = self.field_ref else {
+            return self.borrow()
         };
-        let base = match refs.with(|refs| refs.get(&field_ref).cloned()) {
-            Some(base) => base,
-            None => return self,
+        let Some(base) = refs.with(|refs| refs.get(&field_ref).cloned()) else {
+            return self.borrow()
         };
         Self {
             text: if self.text.is_empty() {
                 base.text
             } else {
-                self.text
+                Cow::Borrowed(&self.text)
             },
             active: self.active,
-            glyph: self.glyph.or(base.glyph),
+            glyph: self.glyph.clone().or(base.glyph),
             face: self.face.or(base.face),
             field_ref: None,
         }
@@ -459,10 +427,7 @@ impl<'a> Field<'a> {
 
     pub fn borrow(&'a self) -> Field<'a> {
         Self {
-            text: match &self.text {
-                Cow::Borrowed(text) => Cow::Borrowed(text),
-                Cow::Owned(text) => Cow::Borrowed(text),
-            },
+            text: Cow::Borrowed(&self.text),
             active: self.active,
             glyph: self.glyph.clone(),
             face: self.face,
@@ -470,23 +435,6 @@ impl<'a> Field<'a> {
         }
     }
 }
-
-/*
-impl<'a> IntoView for Field<'a> {
-    type View = surf_n_term::view::Text;
-
-    fn into_view(self) -> Self::View {
-        let mut text = surf_n_term::view::Text::new(self.text);
-        if let Some(face) = self.face {
-            text = text.with_face(face);
-        }
-        if let Some(glyph) = self.glyph {
-            text = text.with_glyph(glyph);
-        }
-        text
-    }
-}
-*/
 
 impl<'a> Default for Field<'a> {
     fn default() -> Self {
