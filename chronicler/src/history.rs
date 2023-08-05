@@ -69,7 +69,8 @@ impl Haystack for HistoryEntry {
     }
 
     fn preview(&self, theme: &Theme) -> Option<HaystackPreview> {
-        let mut text = String::new();
+        let mut text = Text::new();
+        text.set_face(theme.list_selected);
         (|| {
             writeln!(&mut text)?;
             writeln!(&mut text, "  status   : {}", self.status)?;
@@ -87,13 +88,12 @@ impl Haystack for HistoryEntry {
             Ok::<_, anyhow::Error>(())
         })()
         .expect("in memory write failed");
-        let text = Text::new(text).with_face(theme.list_selected);
-        let view = Container::new(text)
+
+        let view = Container::new(text.take())
             .with_horizontal(Align::Expand)
             .with_vertical(Align::Expand)
             .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
             .boxed();
-
         Some(HaystackPreview::new(view, Some(0.6)))
     }
 }

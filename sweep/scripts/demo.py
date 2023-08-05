@@ -33,6 +33,7 @@ ICON_COCKTAIL = SweepIcon(
     ".75 0 1 0 1.47.294l.88-4.397ZM12.135 8H6.5V6.5h5.935l-.3 1.5Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback=" ",
 )
 
 
@@ -59,7 +60,7 @@ async def main():
 
     async with Sweep[Any](
         tty="/dev/tty",  # use different tty obtained with tty call "/dev/pts/0",
-        sweep=["cargo", "run", "--"],
+        sweep=["cargo", "run", "--bin=sweep", "--"],
         log="/tmp/sweep.log",  # nosec
     ) as sweep:
         await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)

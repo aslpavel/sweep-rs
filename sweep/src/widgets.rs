@@ -671,7 +671,11 @@ where
         }
 
         // adjust offset so item pointed by cursor will be visible
-        let offset = self.view_state.get().offset;
+        let offset = self
+            .view_state
+            .get()
+            .offset
+            .min(self.items.len().saturating_sub(height)); // offset is at least hight from the bottom
         let offset = if offset > self.cursor {
             self.cursor
         } else if height > 0 && offset + height - 1 < self.cursor {
@@ -790,7 +794,6 @@ impl<'a, T: ListItems> View for ListScrollBar<'a, T> {
 mod tests {
     use super::*;
     use std::fmt::Display;
-    use surf_n_term::view::Text;
 
     struct VecItems<T>(Vec<T>);
 
@@ -804,7 +807,7 @@ mod tests {
     where
         T: Display + Clone,
     {
-        type Item = Text<'static>;
+        type Item = String;
 
         fn len(&self) -> usize {
             self.0.len()
@@ -812,7 +815,7 @@ mod tests {
 
         fn get(&self, index: usize, _theme: Theme) -> Option<Self::Item> {
             let value = self.0.get(index)?;
-            Some(Text::new(value.to_string()))
+            Some(value.to_string())
         }
     }
 

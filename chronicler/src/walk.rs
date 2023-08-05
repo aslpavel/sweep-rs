@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
     task::Poll,
 };
-use sweep::Haystack;
+use sweep::{surf_n_term::view::View, Haystack};
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
@@ -40,12 +40,19 @@ impl Haystack for PathItem {
             scope('/')
         }
     }
+
+    fn preview(&self, _theme: &sweep::Theme) -> Option<sweep::HaystackPreview> {
+        Some(sweep::HaystackPreview::new(
+            format!("{:?}", self.metadata.as_ref()?).boxed(),
+            Some(1.0),
+        ))
+    }
 }
 
 /// Walk directory returning a stream of [PathItem] in the breadth first order
 pub fn walk<'caller>(
     root: impl AsRef<Path> + 'caller,
-    ignore: impl Fn(&Path) -> bool + 'caller,
+    ignore: impl Fn(&PathItem) -> bool + 'caller,
 ) -> impl Stream<Item = Result<PathItem, Error>> + 'caller {
     let ignore = Arc::new(ignore);
     let root = root
@@ -70,7 +77,7 @@ pub fn walk<'caller>(
 
 async fn path_unfold<I>(item: PathItem, ignore: Arc<I>) -> Result<(PathItem, Vec<PathItem>), Error>
 where
-    I: Fn(&Path) -> bool,
+    I: Fn(&PathItem) -> bool,
 {
     let children = match &item.metadata {
         Some(metadata) if metadata.is_dir() => async {
@@ -78,15 +85,16 @@ where
             let mut entries: Vec<_> = ReadDirStream::new(read_dir)
                 .map_ok(|entry| entry.path())
                 .try_filter_map(|path| async {
-                    if ignore(&path) {
-                        return Ok(None);
-                    }
                     let metadata = fs::symlink_metadata(&path).await.ok();
-                    Ok(Some(PathItem {
-                        root_length: item.root_length,
+                    let path_item = PathItem {
                         path,
                         metadata,
-                    }))
+                        root_length: item.root_length,
+                    };
+                    if ignore(&path_item) {
+                        return Ok(None);
+                    }
+                    Ok(Some(path_item))
                 })
                 .try_collect()
                 .await?;

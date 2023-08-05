@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{BoxConstraint, IntoView, Layout, Tree, View, ViewContext},
+    view::{BoxConstraint, Layout, Tree, View, ViewContext},
     Cell, Face, Glyph, Size, Surface, SurfaceMut, TerminalSurface, TerminalSurfaceExt,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
@@ -295,7 +295,7 @@ impl Haystack for Candidate {
         positions: &crate::Positions,
         theme: &crate::Theme,
         refs: FieldRefs,
-    ) -> Box<dyn surf_n_term::view::View> {
+    ) -> Box<dyn View> {
         Box::new(CandidteView {
             candidate: self.clone(),
             positions: positions.clone(),
@@ -471,8 +471,9 @@ impl<'a> Field<'a> {
     }
 }
 
+/*
 impl<'a> IntoView for Field<'a> {
-    type View = surf_n_term::view::Text<'a>;
+    type View = surf_n_term::view::Text;
 
     fn into_view(self) -> Self::View {
         let mut text = surf_n_term::view::Text::new(self.text);
@@ -485,6 +486,7 @@ impl<'a> IntoView for Field<'a> {
         text
     }
 }
+*/
 
 impl<'a> Default for Field<'a> {
     fn default() -> Self {
@@ -790,6 +792,7 @@ mod tests {
                 height: 1,
                 width: 2,
             },
+            String::new(),
         );
         let face: Face = "bg=#00ff00".parse()?;
         let candidate = Candidate::new(

@@ -262,8 +262,8 @@ impl<H> RankerResult<H> {
     }
 
     /// Scorer used to score items
-    pub fn scorer(&self) -> Arc<dyn Scorer> {
-        self.scorer.clone()
+    pub fn scorer(&self) -> &Arc<dyn Scorer> {
+        &self.scorer
     }
 
     /// Duration of ranking

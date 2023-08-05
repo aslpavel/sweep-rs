@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
-    view::{Container, Flex, IntoView, Text, View, ViewContext},
+    view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
     DecMode, Face, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut,
     SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
     TerminalWaker,
@@ -865,16 +865,29 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
     type View = Flex<'a>;
 
     fn into_view(self) -> Self::View {
-        // update state of the ranker and item list
-        self.ranker.needle_set(self.input.get().collect());
+        // stats view
         let ranker_result = self.ranker.result();
-        let mut stats_text = Text::new(format!(
-            " {}/{} {:.2?}",
-            ranker_result.len(),
-            ranker_result.haystack_len(),
-            ranker_result.duration(),
-        ));
-        let scorer_name = ranker_result.scorer().name().to_string();
+        let stats = Text::new()
+            .set_face(self.theme.separator)
+            .push_str("")
+            .set_face(self.theme.stats)
+            .push_fmt(format_args!(
+                " {}/{} {:.2?}",
+                ranker_result.len(),
+                ranker_result.haystack_len(),
+                ranker_result.duration(),
+            ))
+            .with_face(Default::default(), |text| {
+                let name = ranker_result.scorer().name();
+                match ICONS.get(name) {
+                    Some(glyph) => text.put_glyph(glyph.clone()),
+                    None => text.push_str(name),
+                };
+            })
+            .take();
+
+        // rank new data and update item list if needed
+        self.ranker.needle_set(self.input.get().collect());
         if self.list.items().generation() != ranker_result.generation() {
             // find cursor position of currently pointed item in the new result
             let cursor = if self.list.cursor() == 0 {
@@ -898,26 +911,19 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         }
 
         // prompt
-        let mut prompt = Text::new("").with_face(self.theme.label);
-        match &self.prompt_icon {
-            Some(icon) => prompt.push_text(Text::glyph(icon.clone()).with_text(" ")),
-            None => prompt.push_text(" "),
-        };
-        prompt.push_text(self.prompt.as_str());
-        prompt.push_text(" ");
-        prompt.push_text(Text::new(" ").with_face(self.theme.separator));
-
-        // stats
-        let scorer_repr = format!(" [{scorer_name}] ");
-        let scorer = match ICONS.get(&scorer_name) {
-            Some(glyph) => Text::new(scorer_repr).with_glyph(glyph.clone()),
-            None => Text::new(scorer_repr),
-        };
-        stats_text.push_text(scorer);
-        let stats = Text::new("")
-            .with_face(self.theme.stats)
-            .add_text(Text::new("").with_face(self.theme.separator))
-            .add_text(stats_text);
+        let prompt = Text::new()
+            .set_face(self.theme.label)
+            .with_face(Default::default(), |text| {
+                match &self.prompt_icon {
+                    Some(icon) => text.put_glyph(icon.clone()),
+                    None => text.put_char(' '),
+                };
+            })
+            .push_str(self.prompt.as_str())
+            .put_char(' ')
+            .set_face(self.theme.separator)
+            .push_str(" ")
+            .take();
 
         // header
         let header = Flex::row()
@@ -925,14 +931,19 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             .add_flex_child(1.0, &self.input)
             .add_child(stats);
 
-        // body
+        // list
         let mut body = Flex::row();
         body.push_flex_child(1.0, &self.list);
+        // preview
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
-                body.push_flex_child(preview.flex.unwrap_or(0.0), preview.view);
+                let view = Container::new(preview.view)
+                    .with_vertical(Align::Expand)
+                    .with_face(self.theme.list_selected);
+                body.push_flex_child(preview.flex.unwrap_or(0.0), view);
             }
         }
+        // scroll bar
         body.push_child(self.list.scroll_bar());
 
         Flex::column()

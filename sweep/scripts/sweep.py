@@ -78,6 +78,7 @@ class SweepIcon(NamedTuple):
     view_box: Optional[Tuple[float, float, float, float]] = None
     fill_rule: Optional[str] = None
     size: Optional[Tuple[int, int]] = None
+    fallback: Optional[str] = None
 
     @staticmethod
     def from_str_or_file(str_or_file: str) -> Optional[SweepIcon]:
@@ -108,6 +109,7 @@ class SweepIcon(NamedTuple):
                     view_box=obj.get("view_box"),
                     fill_rule=obj.get("fill_rule"),
                     size=obj.get("size"),
+                    fallback=obj.get("fallback"),
                 )
         elif isinstance(obj, str) and is_path(obj):
             return SweepIcon(obj)
@@ -122,6 +124,8 @@ class SweepIcon(NamedTuple):
             obj["fill_rule"] = self.fill_rule
         if self.size is not None:
             obj["size"] = self.size
+        if self.fallback:
+            obj["fallback"] = self.fallback
         return obj
 
 
