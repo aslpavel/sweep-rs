@@ -1,4 +1,4 @@
-use crate::{Haystack, LockExt, Positions};
+use crate::{Haystack, HaystackPreview, LockExt, Positions, Theme};
 use anyhow::Error;
 use futures::Stream;
 use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize};
@@ -11,42 +11,59 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{Container, Flex, Justify, Text, View},
+    view::{Container, Flex, Justify, Margins, Text, View},
     Face, Glyph,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct CandidateInner {
-    // haystack fields
-    fields: Vec<Field<'static>>,
-    // right aligned fields
-    fields_right: Vec<Field<'static>>,
-    // right aligned fields offset
-    fields_right_offset: usize,
-    // extra fields extracted from candidate object during parsing, this
-    // can be useful when candidate has some additional data associated with it
+    /// Searchable fields shown on left
+    target: Vec<Field<'static>>,
+    /// Fields with additional information show on the right
+    right: Vec<Field<'static>>,
+    /// Amount of space reserved for the right fields
+    right_offset: usize,
+    /// Fields to generate preview [Haystack::preview]
+    preview: Vec<Field<'static>>,
+    /// Preview flex value
+    preview_flex: f64,
+    /// Extra fields extracted from candidate object during parsing, this
+    /// can be useful when candidate has some additional data associated with it
     extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     inner: Arc<CandidateInner>,
 }
 
 impl Candidate {
+    /// Create new candidate entry
+    ///
+    /// ## Arguments:
+    ///  - `target`: Searchable fields shown on left
+    ///  - `extra`: Extra payload
+    ///  - `right`: Fields with additional information show on the right
+    ///  - `right_offset`: Amount of space reserved for the right fields
+    ///  - `preview`: Fields to be shown on preview [Haystack::preview]
+    ///  - `preview_flex`: Preview view flex value
     pub fn new(
-        fields: Vec<Field<'static>>,
+        target: Vec<Field<'static>>,
         extra: Option<HashMap<String, Value>>,
-        fields_right: Vec<Field<'static>>,
-        fields_right_offset: usize,
+        right: Vec<Field<'static>>,
+        right_offset: usize,
+        preview: Vec<Field<'static>>,
+        preview_flex: f64,
     ) -> Self {
         Self {
             inner: Arc::new(CandidateInner {
-                fields,
-                fields_right,
-                fields_right_offset,
+                target,
                 extra: extra.unwrap_or_default(),
+                right,
+                right_offset,
+                preview,
+                preview_flex: preview_flex.max(0.0),
             }),
         }
     }
@@ -73,7 +90,7 @@ impl Candidate {
                 fields
             }
         };
-        Self::new(fields, None, Vec::new(), 0)
+        Self::new(fields, None, Vec::new(), 0, Vec::new(), 0.0)
     }
 
     /// Read batched stream of candidates from `AsyncRead`
@@ -119,30 +136,34 @@ impl Candidate {
         })
     }
 
-    fn fields(&self) -> &[Field<'_>] {
-        &self.inner.fields
+    /// Searchable fields shown on left
+    pub fn target(&self) -> &[Field<'_>] {
+        &self.inner.target
     }
 
+    /// Searchable characters
     fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.inner
-            .fields
+            .target
             .iter()
             .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
             .flatten()
     }
 
-    fn fields_right(&self) -> &[Field<'_>] {
-        &self.inner.fields_right
+    /// Fields with additional information show on the right
+    fn right(&self) -> &[Field<'_>] {
+        &self.inner.right
     }
 
-    fn fields_right_offset(&self) -> usize {
-        self.inner.fields_right_offset
+    /// Amount of space reserved for the right fields
+    fn right_offset(&self) -> usize {
+        self.inner.right_offset
     }
 }
 
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for field in self.inner.fields.iter() {
+        for field in self.inner.target.iter() {
             f.write_str(field.text.as_ref())?;
         }
         Ok(())
@@ -155,15 +176,27 @@ impl Serialize for Candidate {
         S: serde::Serializer,
     {
         let inner = &self.inner;
-        if inner.extra.is_empty() && inner.fields.len() == 1 && inner.fields[0].active {
+        if inner.extra.is_empty() && inner.target.len() == 1 && inner.target[0].active {
             self.to_string().serialize(serializer)
         } else {
             let mut map = serializer.serialize_map(Some(1 + inner.extra.len()))?;
-            map.serialize_entry("fields", &inner.fields)?;
-            map.serialize_entry("right", &inner.fields_right)?;
-            map.serialize_entry("offset", &inner.fields_right_offset)?;
             for (key, value) in inner.extra.iter() {
                 map.serialize_entry(key, value)?;
+            }
+            if !inner.target.is_empty() {
+                map.serialize_entry("target", &inner.target)?;
+            }
+            if !inner.right.is_empty() {
+                map.serialize_entry("right", &inner.right)?;
+            }
+            if inner.right_offset != 0 {
+                map.serialize_entry("offset", &inner.right_offset)?;
+            }
+            if !inner.preview.is_empty() {
+                map.serialize_entry("preview", &inner.preview)?;
+            }
+            if inner.preview_flex != 0.0 {
+                map.serialize_entry("preview_flex", &inner.preview_flex)?;
             }
             map.end()
         }
@@ -189,40 +222,49 @@ impl<'de> Deserialize<'de> for Candidate {
                 E: de::Error,
             {
                 let fields = vec![Field::from(v.to_owned())];
-                Ok(Candidate::new(fields, None, Vec::new(), 0))
+                Ok(Candidate::new(fields, None, Vec::new(), 0, Vec::new(), 0.0))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
             where
                 A: de::MapAccess<'de>,
             {
-                let mut fields = None;
-                let mut fields_right = None;
-                let mut fields_right_offset = 0;
+                let mut target = None;
                 let mut extra = HashMap::new();
+                let mut right = None;
+                let mut right_offset = 0;
+                let mut preview = None;
+                let mut preview_flex = 0.0;
+
                 while let Some(name) = map.next_key::<Cow<'de, str>>()? {
                     match name.as_ref() {
-                        "entry" | "fields" => {
-                            fields.replace(map.next_value()?);
+                        "entry" | "fields" | "target" => {
+                            target.replace(map.next_value()?);
                         }
                         "right" => {
-                            fields_right.replace(map.next_value()?);
+                            right.replace(map.next_value()?);
                         }
                         "right_offset" | "offset" => {
-                            fields_right_offset = map.next_value()?;
+                            right_offset = map.next_value()?;
+                        }
+                        "preview" => {
+                            preview = map.next_value()?;
+                        }
+                        "preview_flex" => {
+                            preview_flex = map.next_value()?;
                         }
                         _ => {
                             extra.insert(name.into_owned(), map.next_value()?);
                         }
                     }
                 }
-                let fields = fields.ok_or_else(|| de::Error::missing_field("entry or fields"))?;
-                let fields_right = fields_right.unwrap_or_default();
                 Ok(Candidate::new(
-                    fields,
+                    target.ok_or_else(|| de::Error::missing_field("entry or fields"))?,
                     (!extra.is_empty()).then_some(extra),
-                    fields_right,
-                    fields_right_offset,
+                    right.unwrap_or_default(),
+                    right_offset,
+                    preview.unwrap_or_default(),
+                    preview_flex,
                 ))
             }
         }
@@ -289,16 +331,11 @@ impl Haystack for Candidate {
         self.chars().for_each(scope);
     }
 
-    fn view(
-        &self,
-        positions: &crate::Positions,
-        theme: &crate::Theme,
-        refs: FieldRefs,
-    ) -> Box<dyn View> {
+    fn view(&self, positions: &Positions, theme: &Theme, refs: FieldRefs) -> Box<dyn View> {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
-            self.fields(),
+            self.target(),
             positions,
             &mut positions_offset,
             &refs,
@@ -309,7 +346,7 @@ impl Haystack for Candidate {
 
         // right side
         let right = fields_view(
-            self.fields_right(),
+            self.right(),
             &Positions::new(0),
             &mut positions_offset,
             &refs,
@@ -322,17 +359,41 @@ impl Haystack for Candidate {
             .justify(Justify::SpaceBetween)
             .add_flex_child(1.0, left);
         if !right.is_empty() {
-            if self.fields_right_offset() > 0 {
+            if self.right_offset() > 0 {
                 view.push_child(
                     Container::new(right)
                         .with_horizontal(surf_n_term::view::Align::Start)
-                        .with_width(self.fields_right_offset()),
+                        .with_width(self.right_offset()),
                 )
             } else {
                 view.push_child(right);
             };
         }
         view.boxed()
+    }
+
+    fn preview(&self, theme: &Theme, refs: FieldRefs) -> Option<HaystackPreview> {
+        if self.inner.preview.is_empty() {
+            return None;
+        }
+        let preview = fields_view(
+            &self.inner.preview,
+            &Positions::new(0),
+            &mut 0,
+            &refs,
+            theme.list_text,
+            theme.list_highlight,
+            theme.list_inactive,
+        );
+        Some(HaystackPreview::new(
+            Container::new(preview)
+                .with_margins(Margins {
+                    left: 1,
+                    ..Default::default()
+                })
+                .boxed(),
+            Some(self.inner.preview_flex),
+        ))
     }
 }
 
@@ -353,7 +414,7 @@ pub fn fields_view(
         let field_face = field.face.unwrap_or_default();
 
         if field.active && field.glyph.is_none() {
-            // active field
+            // active field non glyph
             let face_highlight = face_highlight.overlay(&field_face);
             let face_default = face_default.overlay(&field_face);
             for c in field.text.chars() {
@@ -365,13 +426,15 @@ pub fn fields_view(
                 *positions_offset += 1;
             }
         } else {
-            // inactive field
-            text.with_face(face_inactive.overlay(&field_face), |text| {
-                match field.glyph {
-                    Some(glyph) => text.put_glyph(glyph.clone()),
-                    None => text.push_str(&field.text),
-                };
-            });
+            // inactive field or glyph
+            match field.glyph {
+                Some(glyph) => text
+                    .set_face(face_default.overlay(&field_face))
+                    .put_glyph(glyph.clone()),
+                None => text
+                    .set_face(face_inactive.overlay(&field_face))
+                    .push_str(&field.text),
+            };
         }
     }
     text
@@ -769,6 +832,11 @@ mod tests {
                 ..Field::default()
             }],
             7,
+            vec![Field {
+                text: "preview".into(),
+                ..Field::default()
+            }],
+            1.0,
         );
         let value = json!({
             "fields": [
@@ -778,6 +846,8 @@ mod tests {
                 {"text": "", "active": false, "glyph": glyph}
             ],
             "right": [{"face": "bg=#00ff00"}],
+            "preview": [{"text": "preview"}],
+            "preview_flex": 1.0,
             "offset": 7usize,
             "extra": 127i32
         });
@@ -805,7 +875,7 @@ mod tests {
             serde_json::to_value(serde_json::from_value::<Candidate>(value)?).unwrap()
         );
 
-        let candidate = Candidate::new(vec!["four".into()], None, Vec::new(), 0);
+        let candidate = Candidate::new(vec!["four".into()], None, Vec::new(), 0, Vec::new(), 0.0);
         assert_eq!(candidate, serde_json::from_str("\"four\"")?);
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 

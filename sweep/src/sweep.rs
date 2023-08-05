@@ -685,7 +685,7 @@ where
     fn preview(&self) -> Option<HaystackPreview> {
         self.list
             .current()
-            .and_then(|item| item.result.haystack.preview(&self.theme))
+            .and_then(|item| item.result.haystack.preview(&self.theme, self.refs.clone()))
     }
 
     fn theme_set(&mut self, theme: Theme) {
@@ -844,6 +844,8 @@ where
                     Some(extra),
                     Vec::new(),
                     0,
+                    Vec::new(),
+                    0.0,
                 )
             })
             .collect();
@@ -937,10 +939,14 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // preview
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
-                let view = Container::new(preview.view)
+                let flex = preview.flex.unwrap_or(0.0);
+                let mut view = Container::new(preview.view)
                     .with_vertical(Align::Expand)
                     .with_face(self.theme.list_selected);
-                body.push_flex_child(preview.flex.unwrap_or(0.0), view);
+                if flex > 0.0 {
+                    view = view.with_horizontal(Align::Expand);
+                }
+                body.push_flex_child(flex, view);
             }
         }
         // scroll bar

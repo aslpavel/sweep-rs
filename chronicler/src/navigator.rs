@@ -46,11 +46,11 @@ impl Haystack for NavigatorItem {
         }
     }
 
-    fn preview(&self, theme: &sweep::Theme) -> Option<HaystackPreview> {
+    fn preview(&self, theme: &sweep::Theme, refs: sweep::FieldRefs) -> Option<HaystackPreview> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.preview(theme),
-            History(history) => history.preview(theme),
+            Path(path) => path.preview(theme, refs),
+            History(history) => history.preview(theme, refs),
         }
     }
 }

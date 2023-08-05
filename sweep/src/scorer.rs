@@ -23,7 +23,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     }
 
     /// Large preview of pointed item
-    fn preview(&self, _theme: &Theme) -> Option<HaystackPreview> {
+    fn preview(&self, _theme: &Theme, _refs: FieldRefs) -> Option<HaystackPreview> {
         None
     }
 }

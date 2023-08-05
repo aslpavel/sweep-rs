@@ -17,6 +17,7 @@ from asyncio.subprocess import Process
 from asyncio.tasks import Task
 from collections import deque
 from functools import partial
+from dataclasses import dataclass
 from typing import (
     Any,
     AsyncGenerator,
@@ -39,7 +40,16 @@ from typing import (
     cast,
 )
 
-__all__ = ["Sweep", "SweepSelect", "SweepBind", "SweepEvent", "SweepIcon", "sweep"]
+__all__ = [
+    "Sweep",
+    "SweepSelect",
+    "SweepBind",
+    "SweepEvent",
+    "SweepIcon",
+    "sweep",
+    "Candidate",
+    "Field",
+]
 
 # ------------------------------------------------------------------------------
 # Sweep
@@ -56,6 +66,7 @@ class SweepBind(NamedTuple):
         return f'SweepBind("{self.tag}")'
 
 
+@dataclass
 class SweepSelect(Generic[I]):
     """Event generated on item select"""
 
@@ -63,9 +74,6 @@ class SweepSelect(Generic[I]):
 
     def __init__(self, item: Optional[I]):
         self.item = item
-
-    def __repr__(self) -> str:
-        return f'SweepSelect("{self.item}")'
 
 
 class SweepIcon(NamedTuple):
@@ -129,6 +137,175 @@ class SweepIcon(NamedTuple):
         return obj
 
 
+@dataclass
+class Field:
+    text: str = ""
+    active: bool = True
+    glyph: Optional[SweepIcon] = None
+    face: Optional[str] = None
+    ref: Optional[int] = None
+
+    def __repr__(self) -> str:
+        attrs: List[str] = []
+        if self.text:
+            attrs.append(f"text={repr(self.text)}")
+        if not self.active:
+            attrs.append(f"active={self.active}")
+        if self.glyph is not None:
+            attrs.append(f"glyph={self.glyph}")
+        if self.face is not None:
+            attrs.append(f"face={self.face}")
+        if self.ref is not None:
+            attrs.append(f"ref={self.ref}")
+        return f'Field({", ".join(attrs)})'
+
+    def to_json(self) -> Dict[str, Any]:
+        obj: Dict[str, Any] = dict(text=self.text)
+        if not self.active:
+            obj["active"] = False
+        if self.glyph:
+            obj["glyph"] = self.glyph.to_json()
+        if self.face:
+            obj["face"] = self.face
+        if self.ref is not None:
+            obj["ref"] = self.ref
+        return obj
+
+    @staticmethod
+    def from_json(obj: Any) -> Optional[Field]:
+        if not isinstance(obj, dict):
+            return
+        obj = cast(Dict[str, Any], obj)
+        active = obj.get("active")
+        return Field(
+            text=obj.get("text") or "",
+            active=True if active is None else active,
+            glyph=SweepIcon.from_json(obj.get("glyph")),
+            face=obj.get("face"),
+            ref=obj.get("ref"),
+        )
+
+
+@dataclass
+class Candidate:
+    target: Optional[List[Field]] = None
+    extra: Optional[Dict[str, Any]] = None
+    right: Optional[List[Field]] = None
+    right_offset: int = 0
+    preview: Optional[List[Any]] = None
+    preview_flex: float = 0.0
+
+    def target_push(
+        self,
+        text: str = "",
+        active: bool = True,
+        glyph: Optional[SweepIcon] = None,
+        face: Optional[str] = None,
+        ref: Optional[int] = None,
+    ) -> Candidate:
+        if self.target is None:
+            self.target = []
+        self.target.append(Field(text, active, glyph, face, ref))
+        return self
+
+    def right_push(
+        self,
+        text: str = "",
+        active: bool = True,
+        glyph: Optional[SweepIcon] = None,
+        face: Optional[str] = None,
+        ref: Optional[int] = None,
+    ) -> Candidate:
+        if self.right is None:
+            self.right = []
+        self.right.append(Field(text, active, glyph, face, ref))
+        return self
+
+    def right_offset_set(self, offset: int) -> Candidate:
+        self.right_offset = offset
+        return self
+
+    def preview_push(
+        self,
+        text: str = "",
+        active: bool = True,
+        glyph: Optional[SweepIcon] = None,
+        face: Optional[str] = None,
+        ref: Optional[int] = None,
+    ) -> Candidate:
+        if self.preview is None:
+            self.preview = []
+        self.preview.append(Field(text, active, glyph, face, ref))
+        return self
+
+    def preview_flex_set(self, flex: float) -> Candidate:
+        self.preview_flex = flex
+        return self
+
+    def __repr__(self) -> str:
+        attrs: List[str] = []
+        if self.target is not None:
+            attrs.append(f"target={self.target}")
+        if self.extra is not None:
+            attrs.append(f"extra={self.extra}")
+        if self.right is not None:
+            attrs.append(f"right={self.right}")
+        if self.right_offset != 0:
+            attrs.append(f"right_offset={self.right_offset}")
+        if self.preview is not None:
+            attrs.append(f"preview={self.preview}")
+        if self.preview_flex != 0.0:
+            attrs.append(f"preview_flex={self.preview_flex}")
+        return f'Candidate({", ".join(attrs)})'
+
+    def to_json(self) -> Dict[str, Any]:
+        obj: Dict[str, Any] = self.extra.copy() if self.extra else {}
+        if self.target:
+            obj["target"] = [field.to_json() for field in self.target]
+        if self.right:
+            obj["right"] = [field.to_json() for field in self.right]
+        if self.right_offset:
+            obj["offset"] = self.right_offset
+        if self.preview:
+            obj["preview"] = [field.to_json() for field in self.preview]
+        if self.preview_flex != 0.0:
+            obj["preview_flex"] = self.preview_flex
+        return obj
+
+    @staticmethod
+    def from_json(obj: Any) -> Optional[Candidate]:
+        if isinstance(obj, str):
+            return Candidate().target_push(obj)
+        if not isinstance(obj, dict):
+            return
+
+        def fields_from_json(fields_obj: Any) -> Optional[List[Field]]:
+            if not isinstance(fields_obj, list):
+                return None
+            fields: List[Field] = []
+            for field_obj in cast(List[Any], fields_obj):
+                field = Field.from_json(field_obj)
+                if field is None:
+                    continue
+                fields.append(field)
+            return fields or None
+
+        obj = cast(Dict[str, Any], obj)
+        target = fields_from_json(obj.pop("target", None))
+        right = fields_from_json(obj.pop("right", None))
+        right_offset = obj.pop("offset", None) or 0
+        preview = fields_from_json(obj.pop("preview", None))
+        preview_flex = obj.pop("preview_flex", None) or 0.0
+        return Candidate(
+            target=target,
+            extra=obj or None,
+            right=right,
+            right_offset=right_offset,
+            preview=preview,
+            preview_flex=preview_flex,
+        )
+
+
 SweepEvent = Union[SweepBind, SweepSelect[I]]
 
 
@@ -168,13 +345,21 @@ class Sweep(Generic[I]):
         - specify log file
     """
 
-    __slots__ = ["_args", "_proc", "_io_sock", "_peer", "_tmp_socket"]
+    __slots__ = [
+        "_args",
+        "_proc",
+        "_io_sock",
+        "_peer",
+        "_tmp_socket",
+        "_seen_candidate",
+    ]
 
     _args: List[str]
     _proc: Optional[Process]
     _io_sock: Optional[socket.socket]
     _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
+    _seen_candidate: bool
 
     def __init__(
         self,
@@ -228,6 +413,7 @@ class Sweep(Generic[I]):
         self._io_sock = None
         self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
+        self._seen_candidate = False
 
     async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
@@ -282,7 +468,11 @@ class Sweep(Generic[I]):
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
-                    yield SweepSelect(event.params.get("item"))
+                    if self._seen_candidate:
+                        item = event.params.get("item")
+                        yield SweepSelect(cast(I, Candidate.from_json(item)) or item)
+                    else:
+                        yield SweepSelect(event.params.get("item"))
                 elif event.method == "bind":
                     yield SweepBind(event.params.get("tag", ""))
 
@@ -299,15 +489,21 @@ class Sweep(Generic[I]):
             await proc.wait()
 
     async def field_register(self, field: Any) -> int:
-        return await self._peer.field_register(field)
+        return await self._peer.field_register(
+            field.to_json() if isinstance(field, Field) else field
+        )
 
     async def items_extend(self, items: Iterable[I]) -> None:
         """Extend list of searchable items"""
         time_start = time.monotonic()
         time_limit = 0.05
-        batch: List[I] = []
+        batch: List[I | Dict[str, Any]] = []
         for item in items:
-            batch.append(item)
+            if isinstance(item, Candidate):
+                batch.append(item.to_json())
+                self._seen_candidate = True
+            else:
+                batch.append(item)
 
             time_now = time.monotonic()
             if time_now - time_start >= time_limit:
@@ -325,7 +521,10 @@ class Sweep(Generic[I]):
     async def items_current(self) -> Optional[I]:
         """Get currently selected item if any"""
         item: Optional[I] = await self._peer.items_current()
-        return item
+        if self._seen_candidate:
+            return cast(I, Candidate.from_json(item))
+        else:
+            return item
 
     async def query_set(self, query: str) -> None:
         """Set query string used to filter items"""

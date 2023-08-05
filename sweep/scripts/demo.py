@@ -67,67 +67,79 @@ async def main():
     ) as sweep:
         await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)
         ref_backpack = await sweep.field_register(
-            {
-                "glyph": ICON_BACKPACK.to_json(),
-                "face": "bg=#076678,fg=#ebdbb2",
-            }
+            Field(glyph=ICON_BACKPACK, face="fg=#076678")
         )
-        ref_cocktail = await sweep.field_register(
-            {
-                "glyph": ICON_COCKTAIL.to_json(),
-                "face": "fg=#427b58",
-            }
-        )
+        ref_cocktail = await sweep.field_register(Field(glyph=ICON_COCKTAIL))
         await sweep.bind("ctrl+q", "ctrl+q was pressed")
-
-        # keep more readable formatting
-        # fmt: off
 
         # simple fields
         await sweep.items_extend(
             [
-                "simple string entry",
-                {"entry": [{"text": "disabled text: ", "active": False}, "enabled text"]},
+                Candidate().target_push("Simple string entry"),
+                Candidate()
+                .target_push("Disabled text: ", active=False)
+                .target_push("Enabled text"),
             ]
         )
 
         # colored text
         await sweep.items_extend(
-            [{"entry": [
-                {"text": "colored", "face": "fg=#8f3f71,bold,underline"},
-                " ",
-                {"text": "text", "face": "fg=#fbf1c7,bg=#79740e,italic"}
-            ]}]
+            [
+                Candidate()
+                .target_push("Colored", face="fg=#8f3f71,bold,underline")
+                .target_push(" ")
+                .target_push("Text", face="fg=#fbf1c7,bg=#79740e,italic"),
+            ]
         )
 
         # multi line entry
-        await sweep.items_extend(["muli line\n    second line"])
+        await sweep.items_extend(
+            [Candidate().target_push("Muli line entry\n - Second Line")]
+        )
 
         # direct glyph icon usage example
         await sweep.items_extend(
-            [{"entry": [
-                {"glyph": ICON_BEER.to_json(), "face": "fg=#cc241d"},
-                {"text": "<- direct icon usage ", "active": False},
-            ]}]
+            [
+                Candidate()
+                .target_push("Entry with beer icon: ")
+                .target_push(glyph=ICON_BEER, face="fg=#cc241d")
+            ]
         )
 
         # glyph icon used from reference
         await sweep.items_extend(
-            [{"entry": [
-                "reference icon usage -> ",
-                {"ref": ref_backpack},
-            ]}]
+            [
+                Candidate()
+                .target_push("Entry with reference to backpack: ")
+                .target_push(ref=ref_backpack)
+            ]
         )
 
         # right text
         await sweep.items_extend(
-            [{
-                "fields": ["right text ->"],
-                "right": [{"ref": ref_cocktail}, "cocktail"],
-                "offset": 12,
-            }]
+            [
+                Candidate()
+                .target_push("Entry with additional data to the right")
+                .right_push(ref=ref_cocktail, face="fg=#427b58")
+                .right_push(" Have a cocktail")
+            ]
         )
-        # fmt: on
+
+        # has preview
+        await sweep.items_extend(
+            [
+                Candidate()
+                .target_push("Point to this item (has preview)")
+                .preview_push("This an awesome item preview: \n")
+                .preview_push(ref=ref_cocktail)
+                .preview_push(" - cocktail\n")
+                .preview_push(glyph=ICON_BEER)
+                .preview_push(" - beer\n")
+                .preview_push(glyph=ICON_BACKPACK)
+                .preview_push(" - backpack")
+                # .preview_flex_set(0.5)
+            ]
+        )
 
         async for event in sweep:
             return event

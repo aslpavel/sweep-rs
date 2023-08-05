@@ -41,7 +41,11 @@ impl Haystack for PathItem {
         }
     }
 
-    fn preview(&self, _theme: &sweep::Theme) -> Option<sweep::HaystackPreview> {
+    fn preview(
+        &self,
+        _theme: &sweep::Theme,
+        _refs: sweep::FieldRefs,
+    ) -> Option<sweep::HaystackPreview> {
         Some(sweep::HaystackPreview::new(
             format!("{:?}", self.metadata.as_ref()?).boxed(),
             Some(1.0),

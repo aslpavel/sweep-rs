@@ -69,7 +69,7 @@ impl Haystack for HistoryEntry {
         }
     }
 
-    fn preview(&self, theme: &Theme) -> Option<HaystackPreview> {
+    fn preview(&self, theme: &Theme, _refs: sweep::FieldRefs) -> Option<HaystackPreview> {
         let mut text = Text::new();
         text.set_face(theme.list_selected);
         (|| {
