@@ -25,6 +25,7 @@ use std::{
     time::Duration,
 };
 use surf_n_term::{
+    encoder::ColorDepth,
     view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
     DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
     Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
@@ -762,7 +763,7 @@ where
             }
             SweepAction::PreviewToggle => self.theme_set(Theme {
                 show_preview: !self.theme.show_preview,
-                ..self.theme
+                ..self.theme.clone()
             }),
         }
         Nothing
@@ -822,7 +823,7 @@ where
             ranker,
             Theme {
                 show_preview: true,
-                ..self.theme
+                ..self.theme.clone()
             },
             FieldRefs::default(),
             self.scorers.clone(),
@@ -837,7 +838,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // stats view
         let ranker_result = self.ranker.result();
         let stats = Text::new()
-            .push_str("", Some(self.theme.separator))
+            .push_text(&self.theme.separator_left)
             .set_face(self.theme.stats)
             .push_fmt(format_args!(
                 " {}/{} {:.2?}",
@@ -889,7 +890,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             })
             .push_str(self.prompt.as_str(), None)
             .put_char(' ')
-            .push_str(" ", Some(self.theme.separator))
+            .push_text(&self.theme.separator_right)
             .take();
 
         // header
@@ -924,7 +925,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
 }
 
 fn sweep_ui_worker<H>(
-    options: SweepOptions,
+    mut options: SweepOptions,
     mut term: SystemTerminal,
     ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
@@ -949,8 +950,13 @@ where
             mode: DecMode::AltScreen,
         })?;
     }
-    if false {
-        term.duplicate_output("/tmp/sweep.log")?;
+
+    // Force dumb four color theme for dumb terminal
+    if ColorDepth::Gray == term.capabilities().depth {
+        options.theme = Theme {
+            show_preview: options.theme.show_preview,
+            ..Theme::dumb()
+        }
     }
 
     // find current row offset
@@ -1037,7 +1043,7 @@ where
                             };
                             state.theme_set(Theme {
                                 show_preview,
-                                ..state.theme
+                                ..state.theme.clone()
                             });
                         }
                     }

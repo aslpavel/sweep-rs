@@ -139,6 +139,8 @@ class SweepIcon(NamedTuple):
 
 @dataclass
 class Field:
+    """Filed structure used to construct `Candidate`"""
+
     text: str = ""
     active: bool = True
     glyph: Optional[SweepIcon] = None
@@ -160,6 +162,7 @@ class Field:
         return f'Field({", ".join(attrs)})'
 
     def to_json(self) -> Dict[str, Any]:
+        """Convert field to JSON"""
         obj: Dict[str, Any] = dict(text=self.text)
         if not self.active:
             obj["active"] = False
@@ -173,6 +176,7 @@ class Field:
 
     @staticmethod
     def from_json(obj: Any) -> Optional[Field]:
+        """Create field from JSON object"""
         if not isinstance(obj, dict):
             return
         obj = cast(Dict[str, Any], obj)
@@ -188,6 +192,8 @@ class Field:
 
 @dataclass
 class Candidate:
+    """Convenient sweep item implementation"""
+
     target: Optional[List[Field]] = None
     extra: Optional[Dict[str, Any]] = None
     right: Optional[List[Field]] = None
@@ -203,6 +209,7 @@ class Candidate:
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
+        """Add field to the target (matchable left side text)"""
         if self.target is None:
             self.target = []
         self.target.append(Field(text, active, glyph, face, ref))
@@ -216,12 +223,14 @@ class Candidate:
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
+        """Add field to the right (unmatchable right side text)"""
         if self.right is None:
             self.right = []
         self.right.append(Field(text, active, glyph, face, ref))
         return self
 
     def right_offset_set(self, offset: int) -> Candidate:
+        """Set offset for the right side text"""
         self.right_offset = offset
         return self
 
@@ -233,13 +242,22 @@ class Candidate:
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
+        """Add field to the preview (text shown when item is highlighted)"""
         if self.preview is None:
             self.preview = []
         self.preview.append(Field(text, active, glyph, face, ref))
         return self
 
     def preview_flex_set(self, flex: float) -> Candidate:
+        """Set preview flex value"""
         self.preview_flex = flex
+        return self
+
+    def extra_update(self, **entries: Any) -> Candidate:
+        """Add entries to extra field"""
+        if self.extra is None:
+            self.extra = {}
+        self.extra.update(entries)
         return self
 
     def __repr__(self) -> str:
@@ -259,6 +277,7 @@ class Candidate:
         return f'Candidate({", ".join(attrs)})'
 
     def to_json(self) -> Dict[str, Any]:
+        """Convert candidate to JSON object"""
         obj: Dict[str, Any] = self.extra.copy() if self.extra else {}
         if self.target:
             obj["target"] = [field.to_json() for field in self.target]
@@ -274,6 +293,7 @@ class Candidate:
 
     @staticmethod
     def from_json(obj: Any) -> Optional[Candidate]:
+        """Construct candidate from JSON object"""
         if isinstance(obj, str):
             return Candidate().target_push(obj)
         if not isinstance(obj, dict):
@@ -1059,8 +1079,8 @@ class Event(Generic[E]):
 # Main
 # ------------------------------------------------------------------------------
 async def main() -> None:
-    import argparse
     import shlex
+    import argparse
 
     parser = argparse.ArgumentParser(description="Sweep is a command line fuzzy finder")
     parser.add_argument(

@@ -1,7 +1,4 @@
-use std::{
-    cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, io::Write,
-    str::FromStr,
-};
+use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, str::FromStr};
 use surf_n_term::{
     common::clamp,
     view::{
@@ -23,6 +20,7 @@ pub struct Theme {
     pub input: Face,
     pub list_default: Face,
     pub list_selected: Face,
+    pub list_selected_indicator: Text,
     pub list_text: Face,
     pub list_highlight: Face,
     pub list_inactive: Face,
@@ -31,6 +29,8 @@ pub struct Theme {
     pub stats: Face,
     pub label: Face,
     pub separator: Face,
+    pub separator_right: Text,
+    pub separator_left: Text,
     pub show_preview: bool,
 }
 
@@ -52,6 +52,9 @@ impl Theme {
             Some(bg.blend_over(fg.with_alpha(0.1))),
             FaceAttrs::EMPTY,
         );
+        let list_selected_indicator = Text::new()
+            .push_str(" ● ", Some(Face::default().with_fg(Some(accent))))
+            .take();
         let list_text = Face::default().with_fg(list_selected.fg);
         let list_highlight = cursor;
         let list_inactive = Face::default().with_fg(Some(bg.blend_over(fg.with_alpha(0.6))));
@@ -64,6 +67,8 @@ impl Theme {
         );
         let label = stats.with_attrs(FaceAttrs::BOLD);
         let separator = Face::new(Some(accent), input.bg, FaceAttrs::EMPTY);
+        let separator_right = Text::new().push_str(" ", Some(separator)).take();
+        let separator_left = Text::new().push_str("", Some(separator)).take();
         Self {
             fg,
             bg,
@@ -72,6 +77,7 @@ impl Theme {
             input,
             list_default,
             list_selected,
+            list_selected_indicator,
             list_text,
             list_highlight,
             list_inactive,
@@ -80,10 +86,13 @@ impl Theme {
             stats,
             label,
             separator,
+            separator_right,
+            separator_left,
             show_preview: true,
         }
     }
 
+    /// Light gruvbox theme
     pub fn light() -> Self {
         Self::from_palette(
             "#3c3836".parse().unwrap(),
@@ -92,12 +101,55 @@ impl Theme {
         )
     }
 
+    /// Dark gruvbox theme
     pub fn dark() -> Self {
         Self::from_palette(
             "#ebdbb2".parse().unwrap(),
             "#282828".parse().unwrap(),
             "#d3869b".parse().unwrap(),
         )
+    }
+
+    /// Theme used by dumb terminal with only four colors
+    pub fn dumb() -> Self {
+        let color0 = RGBA::new(0, 0, 0, 255);
+        let color1 = RGBA::new(84, 84, 84, 255);
+        let color2 = RGBA::new(168, 168, 168, 255);
+        let color3 = RGBA::new(255, 255, 255, 255);
+
+        let fg = color3;
+        let bg = color0;
+        let accent = color2;
+        let default = Face::new(Some(fg), Some(bg), FaceAttrs::EMPTY);
+        let input = default;
+        let cursor = Face::new(Some(color0), Some(color2), FaceAttrs::EMPTY);
+        let stats = Face::new(Some(bg), Some(accent), FaceAttrs::EMPTY);
+        let list_selected = Face::new(Some(fg), Some(color1), FaceAttrs::EMPTY);
+        let list_selected_indicator = Text::new()
+            .push_str("> ", Some(Face::default().with_fg(Some(accent))))
+            .take();
+        let list_text = Face::default().with_fg(list_selected.fg);
+        Self {
+            fg,
+            bg,
+            accent,
+            cursor,
+            input,
+            list_default: default,
+            list_selected,
+            list_selected_indicator,
+            list_text,
+            list_highlight: cursor,
+            list_inactive: Face::default().with_fg(Some(color2)),
+            scrollbar_on: Face::new(None, Some(color2), FaceAttrs::EMPTY),
+            scrollbar_off: Face::new(None, Some(color1), FaceAttrs::EMPTY),
+            stats,
+            label: stats.with_attrs(FaceAttrs::BOLD),
+            separator: Face::new(Some(accent), input.bg, FaceAttrs::EMPTY),
+            separator_right: Text::new().push_str(" ", Some(default)).take(),
+            separator_left: Text::new(),
+            show_preview: true,
+        }
     }
 }
 
@@ -115,6 +167,7 @@ impl FromStr for Theme {
                 "accent" | "base" => Theme::from_palette(theme.fg, theme.bg, value.parse()?),
                 "light" => Theme::light(),
                 "dark" => Theme::dark(),
+                "dumb" => Theme::dumb(),
                 _ => return Err(Error::ParseError("Theme", string.to_string())),
             };
             Ok(theme)
@@ -717,8 +770,7 @@ where
             if item_data.pointed {
                 let mut surf = surf.view_mut(row..row + height, ..);
                 surf.erase(self.theme.list_selected);
-                let cursor_face = Face::default().with_fg(Some(self.theme.accent));
-                write!(surf.writer().face_set(cursor_face), " ● ")?;
+                surf.draw_view(ctx, &self.theme.list_selected_indicator)?;
             }
 
             item_data
@@ -730,9 +782,13 @@ where
     }
 
     fn layout(&self, ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        // indicator (tag on the left side of the highlighted item)
+        let indicator_layout = self.theme.list_selected_indicator.layout(ctx, ct);
+        let indicator_width = indicator_layout.size().width;
+
         let height = ct.max().height;
         let width = ct.max().width;
-        if height < 1 || width < 5 {
+        if height < 1 || width < indicator_width {
             return Tree::leaf(Layout::new());
         }
 
@@ -812,7 +868,7 @@ where
         // compute view offsets
         let mut view_offset = 0;
         for layout in layouts.iter_mut() {
-            layout.set_pos(Position::new(view_offset, 3));
+            layout.set_pos(Position::new(view_offset, indicator_width));
             view_offset += layout.size().height;
         }
 

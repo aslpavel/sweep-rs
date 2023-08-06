@@ -60,6 +60,7 @@ HISTORY_ICON = SweepIcon(
     "H3M16,11A5,5 0 0,0 11,16A5,5 0 0,0 16,21A5,5 0 0,0 21,16A5,5 0 0,0 16,11Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback=" ",
 )
 
 # folder-search-outline (Material Design)
@@ -72,6 +73,7 @@ SEARCH_ICON = SweepIcon(
     "H9L11,6H19A2,2 0 0,1 21,8V11.81C20.42,11.26 19.75,10.81 19,10.5V8Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback=" ",
 )
 
 
@@ -275,11 +277,11 @@ KEY_LIST = "path.search_in_directory"
 KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
 KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
-KEY_ALL: Dict[str, List[str]] = {
-    KEY_LIST: ["ctrl+i", "tab"],
-    KEY_PARENT: ["backspace"],
-    KEY_HISTORY: ["alt+."],
-    KEY_OPEN: ["ctrl+o"],
+KEY_ALL: Dict[str, Tuple[List[str], str]] = {
+    KEY_LIST: (["ctrl+i", "tab"], "Navigate to currently pointed path"),
+    KEY_PARENT: (["backspace"], "Go to the parent directory"),
+    KEY_HISTORY: (["alt+."], "Open path history"),
+    KEY_OPEN: (["ctrl+o"], "Return current item"),
 }
 
 
@@ -357,9 +359,9 @@ class PathSelector:
 
         If path is provided it will start in path mode otherwise in history mode
         """
-        for name, keys in KEY_ALL.items():
+        for name, (keys, desc) in KEY_ALL.items():
             for key in keys:
-                await self.sweep.bind(key, name)
+                await self.sweep.bind(key, name, desc)
 
         if path and path.is_dir():
             self.path = path

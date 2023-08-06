@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 import asyncio
+import argparse
 from typing import Any
 from sweep import *
 import os
@@ -58,12 +59,17 @@ ICON_BACKPACK = SweepIcon(
 
 
 async def main():
+    args = argparse.ArgumentParser("Demo that uses python sweep API")
+    args.add_argument("--theme", default=None, help="color theme used")
+    opts = args.parse_args()
+
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
     async with Sweep[Any](
         tty="/dev/tty",  # use different tty obtained with tty call "/dev/pts/0",
         sweep=["cargo", "run", "--bin=sweep", "--"],
         log="/tmp/sweep.log",  # nosec
+        theme=opts.theme,
     ) as sweep:
         await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)
         ref_backpack = await sweep.field_register(

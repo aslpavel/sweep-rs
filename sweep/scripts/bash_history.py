@@ -7,11 +7,12 @@ from pathlib import Path
 import argparse
 import asyncio
 import re
+import shlex
 import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import SweepIcon, sweep
+from sweep import SweepIcon, sweep, Candidate
 
 BASH_HISTORY_FILE = "~/.bash_history"
 DATE_RE = re.compile(r"^#(\d+)$")
@@ -22,6 +23,7 @@ TERM_ICON = SweepIcon(
     "H5.59L9.58,13Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
+    fallback=" ",
 )
 
 
@@ -63,17 +65,15 @@ async def main() -> None:
     candidates: List[Any] = []
     for date, entry in history(opts.history_file):
         candidates.append(
-            {
-                "fields": [entry],
-                "right": [date.strftime(" %F %T")],
-                "offset": 21,
-                "item": entry,
-            }
+            Candidate()
+            .target_push(entry)
+            .right_push(date.strftime(" %F %T"), active=False)
+            .extra_update(item=entry)
         )
 
     result = await sweep(
         candidates,
-        sweep=[opts.sweep],
+        sweep=shlex.split(opts.sweep),
         prompt="HISTORY",
         prompt_icon=TERM_ICON,
         query=opts.query,
@@ -85,7 +85,7 @@ async def main() -> None:
     )
 
     if result is not None:
-        print(result["item"], end="")
+        print(result.extra.get("item", ""), end="")
 
 
 if __name__ == "__main__":
