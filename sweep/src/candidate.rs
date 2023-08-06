@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
-    view::{Container, Flex, Justify, Margins, Text, View},
+    view::{Align, Container, Flex, Justify, Margins, Text, View},
     Face, Glyph,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
@@ -176,7 +176,12 @@ impl Serialize for Candidate {
         S: serde::Serializer,
     {
         let inner = &self.inner;
-        if inner.extra.is_empty() && inner.target.len() == 1 && inner.target[0].active {
+        if inner.extra.is_empty()
+            && inner.target.len() == 1
+            && inner.target[0].active
+            && inner.right.is_empty()
+            && inner.preview.is_empty()
+        {
             self.to_string().serialize(serializer)
         } else {
             let mut map = serializer.serialize_map(Some(1 + inner.extra.len()))?;
@@ -362,7 +367,7 @@ impl Haystack for Candidate {
             if self.right_offset() > 0 {
                 view.push_child(
                     Container::new(right)
-                        .with_horizontal(surf_n_term::view::Align::Start)
+                        .with_horizontal(Align::Start)
                         .with_width(self.right_offset()),
                 )
             } else {
@@ -431,9 +436,7 @@ pub fn fields_view(
                 Some(glyph) => text
                     .set_face(face_default.overlay(&field_face))
                     .put_glyph(glyph.clone()),
-                None => text
-                    .set_face(face_inactive.overlay(&field_face))
-                    .push_str(&field.text),
+                None => text.push_str(&field.text, Some(face_inactive.overlay(&field_face))),
             };
         }
     }
@@ -467,7 +470,50 @@ pub struct Field<'a> {
 }
 
 impl<'a> Field<'a> {
-    /// resolve reference in the field
+    /// Create text field
+    pub fn text(text: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            text: text.into(),
+            active: true,
+            glyph: None,
+            face: Default::default(),
+            field_ref: None,
+        }
+    }
+
+    /// Create glyph field
+    pub fn glyph(glyph: Glyph) -> Self {
+        Self {
+            text: Cow::Borrowed(""),
+            active: true,
+            glyph: Some(glyph),
+            face: Default::default(),
+            field_ref: None,
+        }
+    }
+
+    /// Create new field with specified face
+    pub fn face(self, face: Face) -> Self {
+        Self {
+            face: Some(face),
+            ..self
+        }
+    }
+
+    /// Create new field with specified active
+    pub fn active(self, active: bool) -> Self {
+        Self { active, ..self }
+    }
+
+    /// Create new field with specified field reference
+    pub fn reference(self, field_ref: FieldRef) -> Self {
+        Self {
+            field_ref: Some(field_ref),
+            ..self
+        }
+    }
+
+    /// Resolve reference in the field
     pub fn resolve(&'a self, refs: &FieldRefs) -> Field<'a> {
         let Some(field_ref) = self.field_ref else {
             return self.borrow()
@@ -488,6 +534,7 @@ impl<'a> Field<'a> {
         }
     }
 
+    /// Borrow field
     pub fn borrow(&'a self) -> Field<'a> {
         Self {
             text: Cow::Borrowed(&self.text),

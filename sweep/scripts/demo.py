@@ -70,7 +70,11 @@ async def main():
             Field(glyph=ICON_BACKPACK, face="fg=#076678")
         )
         ref_cocktail = await sweep.field_register(Field(glyph=ICON_COCKTAIL))
-        await sweep.bind("ctrl+q", "ctrl+q was pressed")
+        await sweep.bind(
+            "ctrl+q",
+            "user.custom.action",
+            "My awesome custom user action",
+        )
 
         # simple fields
         await sweep.items_extend(

@@ -3,7 +3,7 @@ use crate::{
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
-    widgets::{Input, InputAction, List, ListAction, ListItems, Theme},
+    widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
     Candidate, Field, FieldRef, Haystack, HaystackPreview, LockExt, Ranker, RankerResult,
     ScoreResult, ScorerBuilder,
 };
@@ -18,7 +18,6 @@ use futures::{
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    fmt::Write as _,
     mem,
     ops::Deref,
     sync::Arc,
@@ -27,9 +26,8 @@ use std::{
 };
 use surf_n_term::{
     view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
-    DecMode, Face, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt,
-    TerminalWaker,
+    DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
+    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -110,7 +108,11 @@ enum SweepRequest<H> {
     NeedleSet(String),
     NeedleGet(oneshot::Sender<String>),
     PromptSet(Option<String>, Option<Glyph>),
-    Bind(Vec<Key>, String),
+    Bind {
+        chord: Vec<Key>,
+        tag: String,
+        desc: String,
+    },
     Terminate,
     Current(oneshot::Sender<Option<H>>),
     PeerSet(mpsc::UnboundedSender<SweepEvent<H>>),
@@ -250,8 +252,8 @@ where
     /// will be generated, note if tag is empty string the binding will be removed
     /// and no event will be generated. Tag can also be one of the standard actions
     /// list of which is available with `ctrl+h`
-    pub fn bind(&self, chord: Vec<Key>, tag: String) {
-        self.send_request(SweepRequest::Bind(chord, tag))
+    pub fn bind(&self, chord: Vec<Key>, tag: String, desc: String) {
+        self.send_request(SweepRequest::Bind { chord, tag, desc })
     }
 
     /// Wait for single event in the asynchronous context
@@ -460,8 +462,9 @@ impl Sweep<Candidate> {
                 async move {
                     let key: String = params.take(0, "key")?;
                     let tag: String = params.take(1, "tag")?;
+                    let desc: Option<String> = params.take_opt(3, "desc")?;
                     let chord = Key::chord(key).map_err(Error::from)?;
-                    sweep.bind(chord, tag);
+                    sweep.bind(chord, tag, desc.unwrap_or_default());
                     Ok(Value::Null)
                 }
             }
@@ -514,7 +517,11 @@ impl Sweep<Candidate> {
 /// User bindable actions
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SweepAction {
-    User(String),
+    User {
+        chord: Vec<Key>,
+        tag: String,
+        desc: String,
+    },
     Select,
     Quit,
     Help,
@@ -522,6 +529,85 @@ enum SweepAction {
     PreviewToggle,
     Input(InputAction),
     List(ListAction),
+}
+
+impl SweepAction {
+    fn description(&self) -> ActionDesc {
+        use SweepAction::*;
+        match self {
+            User { chord, tag, desc } => ActionDesc {
+                chords: vec![chord.clone()],
+                name: tag.clone(),
+                description: desc.clone(),
+            },
+            Select => ActionDesc {
+                chords: vec![
+                    vec![Key {
+                        name: KeyName::Char('m'),
+                        mode: KeyMod::CTRL,
+                    }],
+                    vec![Key {
+                        name: KeyName::Char('j'),
+                        mode: KeyMod::CTRL,
+                    }],
+                    vec![Key {
+                        name: KeyName::Enter,
+                        mode: KeyMod::EMPTY,
+                    }],
+                ],
+                name: "sweep.select".to_owned(),
+                description: "Select item pointed by cursor".to_owned(),
+            },
+            Quit => ActionDesc {
+                chords: vec![
+                    vec![Key {
+                        name: KeyName::Char('c'),
+                        mode: KeyMod::CTRL,
+                    }],
+                    vec![Key {
+                        name: KeyName::Esc,
+                        mode: KeyMod::EMPTY,
+                    }],
+                ],
+                name: "sweep.quit".to_string(),
+                description: "Close sweep".to_string(),
+            },
+            Help => ActionDesc {
+                chords: vec![vec![Key {
+                    name: KeyName::Char('h'),
+                    mode: KeyMod::CTRL,
+                }]],
+                name: "sweep.help".to_owned(),
+                description: "Show help menu".to_owned(),
+            },
+            ScorerNext => ActionDesc {
+                chords: vec![vec![Key {
+                    name: KeyName::Char('s'),
+                    mode: KeyMod::CTRL,
+                }]],
+                name: "sweep.scorer.next".to_owned(),
+                description: "Switch to next available scorer".to_owned(),
+            },
+            PreviewToggle => ActionDesc {
+                chords: vec![vec![Key {
+                    name: KeyName::Char('p'),
+                    mode: KeyMod::ALT,
+                }]],
+                name: "sweep.preview.toggle".to_owned(),
+                description: "Toggle preview for an item".to_owned(),
+            },
+            Input(input_action) => input_action.description(),
+            List(list_action) => list_action.description(),
+        }
+    }
+
+    fn all() -> impl Iterator<Item = SweepAction> {
+        use SweepAction::*;
+        [Select, Quit, Help, ScorerNext, PreviewToggle]
+            .into_iter()
+            .chain(InputAction::all().map(Input))
+            .chain(ListAction::all().map(List))
+    }
 }
 
 /// Object representing current state of the sweep worker
@@ -539,7 +625,7 @@ struct SweepState<H> {
     // action key map
     key_map: KeyMap<SweepAction>,
     // action name to sweep action
-    key_actions: HashMap<&'static str, SweepAction>,
+    key_actions: HashMap<String, SweepAction>,
     // theme
     theme: Theme,
     // input widget
@@ -575,88 +661,13 @@ where
         // key map
         let mut key_map = KeyMap::new();
         let mut key_actions = HashMap::new();
-        // input
-        for desc in InputAction::description() {
-            let action = SweepAction::Input(desc.action);
+        for action in SweepAction::all() {
+            let desc = action.description();
             key_actions.insert(desc.name, action.clone());
-            for chord in desc.chord {
-                key_map.register(chord, action.clone());
+            for chord in desc.chords {
+                key_map.register(chord.as_slice(), action.clone());
             }
         }
-        // list
-        for desc in ListAction::description() {
-            let action = SweepAction::List(desc.action);
-            key_actions.insert(desc.name, action.clone());
-            for chord in desc.chord {
-                key_map.register(chord, action.clone());
-            }
-        }
-        // help
-        key_actions.insert("sweep.help", SweepAction::Help);
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('h'),
-                mode: KeyMod::CTRL,
-            }],
-            SweepAction::Help,
-        );
-        // next scorer
-        key_actions.insert("sweep.scorer.next", SweepAction::ScorerNext);
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('s'),
-                mode: KeyMod::CTRL,
-            }],
-            SweepAction::ScorerNext,
-        );
-        // preview toggle
-        key_actions.insert("sweep.preview.toggle", SweepAction::PreviewToggle);
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('p'),
-                mode: KeyMod::ALT,
-            }],
-            SweepAction::PreviewToggle,
-        );
-        // quit
-        key_actions.insert("sweep.quit", SweepAction::Quit);
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('c'),
-                mode: KeyMod::CTRL,
-            }],
-            SweepAction::Quit,
-        );
-        key_map.register(
-            &[Key {
-                name: KeyName::Esc,
-                mode: KeyMod::EMPTY,
-            }],
-            SweepAction::Quit,
-        );
-        // select
-        key_actions.insert("sweep.select", SweepAction::Select);
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('m'),
-                mode: KeyMod::CTRL,
-            }],
-            SweepAction::Select,
-        );
-        key_map.register(
-            &[Key {
-                name: KeyName::Char('j'),
-                mode: KeyMod::CTRL,
-            }],
-            SweepAction::Select,
-        );
-        key_map.register(
-            &[Key {
-                name: KeyName::Enter,
-                mode: KeyMod::EMPTY,
-            }],
-            SweepAction::Select,
-        );
 
         // widgets
         let input = Input::new(theme.clone());
@@ -728,7 +739,7 @@ where
         match action {
             SweepAction::Input(action) => self.input.apply(action),
             SweepAction::List(action) => self.list.apply(action),
-            SweepAction::User(tag) => {
+            SweepAction::User { tag, .. } => {
                 if !tag.is_empty() {
                     return Event(SweepEvent::Bind(tag));
                 }
@@ -785,78 +796,34 @@ where
     }
 
     /// Crate sweep states which renders help view
-    fn help_state(&self, term_waker: TerminalWaker) -> SweepState<Candidate> {
-        let mut bindings = BTreeMap::new(); // action -> (name, key_binding)
-        for (name, action) in self.key_actions.iter() {
-            bindings.insert(action.clone(), (name.to_string(), String::new()));
-        }
+    fn help_state(&self, term_waker: TerminalWaker) -> SweepState<ActionDesc> {
+        // Tag -> ActionDesc
+        let mut descriptions: BTreeMap<String, ActionDesc> = BTreeMap::new();
         self.key_map.for_each(|chord, action| {
-            let (_, keys) = bindings.entry(action.clone()).or_insert_with(|| {
-                let name = match action {
-                    SweepAction::User(tag) if !tag.is_empty() => tag.clone(),
-                    _ => String::new(),
-                };
-                (name, String::new())
-            });
-            // format key binding
-            (|| {
-                write!(keys, "\"")?;
-                for (index, key) in chord.iter().enumerate() {
-                    if index != 0 {
-                        write!(keys, " ")?;
-                    }
-                    write!(keys, "{}", key)?;
-                }
-                write!(keys, "\" ")?;
-                Ok::<_, Error>(())
-            })()
-            .expect("in memory write failed");
+            let mut desc = action.description();
+            descriptions
+                .entry(desc.name.clone())
+                .and_modify(|desc_curr| desc_curr.chords.push(chord.to_owned()))
+                .or_insert_with(|| {
+                    desc.chords.clear();
+                    desc.chords.push(chord.to_owned());
+                    desc
+                });
         });
-        let name_len = bindings
-            .values()
-            .map(|(name, _)| name.len())
-            .max()
-            .unwrap_or(0);
-        let user_binding = Face::default().with_fg(Some(self.theme.accent));
-        let candidates = bindings
-            .into_iter()
-            .map(|(action, (name, chrod))| {
-                let mut extra = HashMap::with_capacity(1);
-                extra.insert("name".to_owned(), name.clone().into());
-                let face = matches!(action, SweepAction::User(_)).then_some(user_binding);
-                Candidate::new(
-                    vec![
-                        Field {
-                            text: format!("{0:<1$}", name, name_len).into(),
-                            face,
-                            ..Field::default()
-                        },
-                        Field {
-                            text: " │ ".to_owned().into(),
-                            active: false,
-                            ..Field::default()
-                        },
-                        Field {
-                            text: chrod.into(),
-                            ..Field::default()
-                        },
-                    ],
-                    Some(extra),
-                    Vec::new(),
-                    0,
-                    Vec::new(),
-                    0.0,
-                )
-            })
-            .collect();
+        let mut entries: Vec<_> = descriptions.into_values().collect();
+        entries.sort_by_key(|desc| self.key_actions.get(&desc.name));
+
         let ranker = Ranker::new(move |_| term_waker.wake().is_ok());
         ranker.keep_order(Some(true));
-        ranker.haystack_extend(candidates);
+        ranker.haystack_extend(entries);
         SweepState::new(
             "BINDINGS".to_owned(),
             Some(KEYBOARD_ICON.clone()),
             ranker,
-            self.theme.clone(),
+            Theme {
+                show_preview: true,
+                ..self.theme
+            },
             FieldRefs::default(),
             self.scorers.clone(),
         )
@@ -870,8 +837,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // stats view
         let ranker_result = self.ranker.result();
         let stats = Text::new()
-            .set_face(self.theme.separator)
-            .push_str("")
+            .push_str("", Some(self.theme.separator))
             .set_face(self.theme.stats)
             .push_fmt(format_args!(
                 " {}/{} {:.2?}",
@@ -883,7 +849,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
                 let name = ranker_result.scorer().name();
                 match ICONS.get(name) {
                     Some(glyph) => text.put_glyph(glyph.clone()),
-                    None => text.push_str(name),
+                    None => text.push_str(name, None),
                 };
             })
             .take();
@@ -921,10 +887,9 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
                     None => text.put_char(' '),
                 };
             })
-            .push_str(self.prompt.as_str())
+            .push_str(self.prompt.as_str(), None)
             .put_char(' ')
-            .set_face(self.theme.separator)
-            .push_str(" ")
+            .push_str(" ", Some(self.theme.separator))
             .take();
 
         // header
@@ -1009,7 +974,7 @@ where
         options.scorers,
     );
     let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
-    let mut state_help: Option<SweepState<Candidate>> = None;
+    let mut state_help: Option<SweepState<ActionDesc>> = None;
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
@@ -1032,7 +997,7 @@ where
                             mem::drop(resolve.send(state.input.get().collect()));
                         }
                         Terminate => return Ok(TerminalAction::Quit(())),
-                        Bind(chord, tag) => match *chord.as_slice() {
+                        Bind { chord, tag, desc } => match *chord.as_slice() {
                             [Key {
                                 name: KeyName::Backspace,
                                 mode: KeyMod::EMPTY,
@@ -1040,10 +1005,15 @@ where
                                 state.key_empty_backspace.replace(tag);
                             }
                             _ => {
-                                let action = match state.key_actions.get(tag.as_str()) {
-                                    Some(action) => action.clone(),
-                                    None => SweepAction::User(tag),
-                                };
+                                let action = state
+                                    .key_actions
+                                    .entry(tag.clone())
+                                    .or_insert_with(|| SweepAction::User {
+                                        chord: chord.clone(),
+                                        tag,
+                                        desc,
+                                    })
+                                    .clone();
                                 state.key_map.register(chord.as_ref(), action);
                             }
                         },
@@ -1081,20 +1051,14 @@ where
                             state_help.take();
                             SweepKeyEvent::Nothing
                         }
-                        SweepKeyEvent::Event(SweepEvent::Select(Some(bind))) => {
-                            let name = bind
-                                .extra()
-                                .get("name")
-                                .unwrap_or(&Value::Null)
-                                .as_str()
-                                .map_or_else(String::new, ToOwned::to_owned);
-                            let action = state
-                                .key_actions
-                                .get(name.as_str())
-                                .cloned()
-                                .unwrap_or(SweepAction::User(name));
+                        SweepKeyEvent::Event(SweepEvent::Select(Some(action_desc))) => {
                             state_help.take();
-                            state.apply(action)
+                            if let Some(action) = state.key_actions.get(&action_desc.name).cloned()
+                            {
+                                state.apply(action)
+                            } else {
+                                SweepKeyEvent::Nothing
+                            }
                         }
                         _ => SweepKeyEvent::Nothing,
                     },

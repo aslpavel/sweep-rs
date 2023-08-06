@@ -553,9 +553,9 @@ class Sweep(Generic[I]):
         """Whether to show preview associated with the current item"""
         await self._peer.preview_set(value=value)
 
-    async def bind(self, key: str, tag: str) -> None:
+    async def bind(self, key: str, tag: str, desc: str = "") -> None:
         """Assign new key binding"""
-        await self._peer.bind(key=key, tag=tag)
+        await self._peer.bind(key=key, tag=tag, desc=desc)
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:

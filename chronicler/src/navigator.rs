@@ -237,10 +237,10 @@ impl Navigator {
     }
 }
 
-const CMD_GOTO_PARENT: &str = "path.goto.parent";
-const CMD_COMPLETE: &str = "path.complete";
-const CMD_PATH_HISTORY: &str = "path.history";
-const CMD_COMMAND_HISTORY: &str = "cmd.hisotory";
+const CMD_GOTO_PARENT: &str = "chronicler.path.goto.parent";
+const CMD_COMPLETE: &str = "chronicler.path.complete";
+const CMD_PATH_HISTORY: &str = "chronicler.path.history";
+const CMD_COMMAND_HISTORY: &str = "chronicler.cmd.history";
 
 enum NavigatorBind {
     GotoParent,
@@ -251,11 +251,31 @@ enum NavigatorBind {
 
 impl NavigatorBind {
     fn bind(sweep: &Sweep<NavigatorItem>) -> Result<(), Error> {
-        sweep.bind(vec!["backspace".parse()?], CMD_GOTO_PARENT.to_string());
-        sweep.bind(vec!["tab".parse()?], CMD_COMPLETE.to_string());
-        sweep.bind(vec!["ctrl+i".parse()?], CMD_COMPLETE.to_string());
-        sweep.bind(vec!["ctrl+r".parse()?], CMD_COMMAND_HISTORY.to_string());
-        sweep.bind(vec!["ctrl+f".parse()?], CMD_PATH_HISTORY.to_string());
+        sweep.bind(
+            vec!["backspace".parse()?],
+            CMD_GOTO_PARENT.to_owned(),
+            "Go to parent directory".to_owned(),
+        );
+        sweep.bind(
+            vec!["tab".parse()?],
+            CMD_COMPLETE.to_owned(),
+            "Complete string or follow directory".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+i".parse()?],
+            CMD_COMPLETE.to_owned(),
+            "Complete string or follow directory".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+r".parse()?],
+            CMD_COMMAND_HISTORY.to_owned(),
+            "Switch to command history view".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+f".parse()?],
+            CMD_PATH_HISTORY.to_owned(),
+            "Switch to path history view".to_owned(),
+        );
         Ok(())
     }
 }

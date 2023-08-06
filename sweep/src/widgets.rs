@@ -1,10 +1,18 @@
-use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, io::Write, str::FromStr};
+use std::{
+    cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, io::Write,
+    str::FromStr,
+};
 use surf_n_term::{
     common::clamp,
-    view::{Axis, BoxConstraint, IntoView, Layout, ScrollBar, Tree, View, ViewContext},
+    view::{
+        Axis, BoxConstraint, Container, Flex, IntoView, Justify, Layout, Margins, ScrollBar, Text,
+        Tree, View, ViewContext,
+    },
     Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, SurfaceMut,
     TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
+
+use crate::{haystack_default_view, FieldRefs, Haystack, HaystackPreview, Positions};
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -72,7 +80,7 @@ impl Theme {
             stats,
             label,
             separator,
-            show_preview: false,
+            show_preview: true,
         }
     }
 
@@ -115,16 +123,62 @@ impl FromStr for Theme {
 }
 
 /// Action description with default binding
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ActionDesc<A> {
-    /// action
-    pub action: A,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ActionDesc {
     /// default binding
-    pub chord: &'static [&'static [Key]],
+    pub chords: Vec<Vec<Key>>,
     /// action name
-    pub name: &'static str,
+    pub name: String,
     /// action description
-    pub description: &'static str,
+    pub description: String,
+}
+
+impl Haystack for ActionDesc {
+    fn haystack_scope<S>(&self, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.name.chars().for_each(scope);
+    }
+
+    fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
+        let mut chords_text = Text::new();
+        for chord in self.chords.iter() {
+            (|| {
+                chords_text
+                    .set_face(Face::default().with_attrs(FaceAttrs::UNDERLINE | FaceAttrs::BOLD));
+                for (index, key) in chord.iter().enumerate() {
+                    if index != 0 {
+                        write!(chords_text, " ")?;
+                    }
+                    write!(chords_text, "{}", key)?;
+                }
+                chords_text.set_face(Face::default());
+                write!(chords_text, " ")?;
+                Ok::<_, Error>(())
+            })()
+            .expect("In memory write failed");
+        }
+        Flex::row()
+            .justify(Justify::SpaceBetween)
+            .add_flex_child(1.0, haystack_default_view(self, positions, theme))
+            .add_child(chords_text)
+            .boxed()
+    }
+
+    fn preview(&self, _theme: &Theme, _refs: FieldRefs) -> Option<HaystackPreview> {
+        let desc = Text::new().push_str(&self.description, None).take();
+        Some(HaystackPreview::new(
+            Container::new(desc)
+                .with_margins(Margins {
+                    left: 1,
+                    right: 1,
+                    ..Default::default()
+                })
+                .boxed(),
+            Some(0.6),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,90 +196,102 @@ pub enum InputAction {
 }
 
 impl InputAction {
-    pub fn description() -> &'static [ActionDesc<Self>] {
-        &[
-            ActionDesc {
-                action: InputAction::CursorForward,
-                chord: &[&[Key {
+    pub fn description(&self) -> ActionDesc {
+        use InputAction::*;
+        match self {
+            Insert(_) => ActionDesc {
+                chords: Vec::new(),
+                name: "input.insert.char".to_owned(),
+                description: "Insert character to the input field".to_owned(),
+            },
+            CursorForward => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Right,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.move.forward",
-                description: "Move cursor forward in the input field",
+                name: "input.move.forward".to_owned(),
+                description: "Move cursor forward in the input field".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::CursorBackward,
-                chord: &[&[Key {
+            CursorBackward => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Left,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.move.backward",
-                description: "Move cursor backward in the input field",
+                name: "input.move.backward".to_owned(),
+                description: "Move cursor backward in the input field".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::CursorEnd,
-                chord: &[&[Key {
+            CursorEnd => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Char('e'),
                     mode: KeyMod::CTRL,
                 }]],
-                name: "input.move.end",
-                description: "Move cursor to the end of the input",
+                name: "input.move.end".to_owned(),
+                description: "Move cursor to the end of the input".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::CursorStart,
-                chord: &[&[Key {
+            CursorStart => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Char('a'),
                     mode: KeyMod::CTRL,
                 }]],
-                name: "input.move.start",
-                description: "Move cursor to the start of the input",
+                name: "input.move.start".to_owned(),
+                description: "Move cursor to the start of the input".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::CursorNextWord,
-                chord: &[&[Key {
+            CursorNextWord => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Char('f'),
                     mode: KeyMod::ALT,
                 }]],
-                name: "input.move.next_word",
-                description: "Move cursor to the end of the current word",
+                name: "input.move.next_word".to_owned(),
+                description: "Move cursor to the end of the current word".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::CursorPrevWord,
-                chord: &[&[Key {
+            CursorPrevWord => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Char('b'),
                     mode: KeyMod::ALT,
                 }]],
-                name: "input.move.prev_word",
-                description: "Move cursor to the start of the word",
+                name: "input.move.prev_word".to_owned(),
+                description: "Move cursor to the start of the word".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::DeleteBackward,
-                chord: &[&[Key {
+            DeleteBackward => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Backspace,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.delete.backward",
-                description: "Delete previous char",
+                name: "input.delete.backward".to_owned(),
+                description: "Delete previous char".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::DeleteForward,
-                chord: &[&[Key {
+            DeleteForward => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Delete,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "input.delete.forward",
-                description: "Delete next char",
+                name: "input.delete.forward".to_owned(),
+                description: "Delete next char".to_owned(),
             },
-            ActionDesc {
-                action: InputAction::DeleteEnd,
-                chord: &[&[Key {
+            DeleteEnd => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Char('k'),
                     mode: KeyMod::CTRL,
                 }]],
-                name: "input.delete.end",
-                description: "Delete all input after cursor",
+                name: "input.delete.end".to_owned(),
+                description: "Delete all input after cursor".to_owned(),
             },
+        }
+    }
+    pub fn all() -> impl Iterator<Item = InputAction> {
+        use InputAction::*;
+        [
+            CursorForward,
+            CursorBackward,
+            CursorEnd,
+            CursorStart,
+            CursorNextWord,
+            CursorPrevWord,
+            DeleteBackward,
+            DeleteForward,
+            DeleteEnd,
         ]
+        .into_iter()
     }
 }
 
@@ -414,75 +480,75 @@ pub enum ListAction {
 }
 
 impl ListAction {
-    pub fn description() -> &'static [ActionDesc<Self>] {
-        &[
-            ActionDesc {
-                action: ListAction::ItemNext,
-                chord: &[
-                    &[Key {
+    pub fn description(&self) -> ActionDesc {
+        use ListAction::*;
+        match self {
+            ItemNext => ActionDesc {
+                chords: vec![
+                    vec![Key {
                         name: KeyName::Down,
                         mode: KeyMod::EMPTY,
                     }],
-                    &[Key {
+                    vec![Key {
                         name: KeyName::Char('n'),
                         mode: KeyMod::CTRL,
                     }],
                 ],
-                name: "list.item.next",
-                description: "Move to the next item in the list",
+                name: "list.item.next".to_owned(),
+                description: "Move to the next item in the list".to_owned(),
             },
-            ActionDesc {
-                action: ListAction::ItemPrev,
-                chord: &[
-                    &[Key {
+            ItemPrev => ActionDesc {
+                chords: vec![
+                    vec![Key {
                         name: KeyName::Up,
                         mode: KeyMod::EMPTY,
                     }],
-                    &[Key {
+                    vec![Key {
                         name: KeyName::Char('p'),
                         mode: KeyMod::CTRL,
                     }],
                 ],
-                name: "list.item.prev",
-                description: "Move to the previous item in the list",
+                name: "list.item.prev".to_owned(),
+                description: "Move to the previous item in the list".to_owned(),
             },
-            ActionDesc {
-                action: ListAction::PageNext,
-                chord: &[&[Key {
+            PageNext => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::PageDown,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "list.page.next",
-                description: "Move one page down in the list",
+                name: "list.page.next".to_owned(),
+                description: "Move one page down in the list".to_owned(),
             },
-            ActionDesc {
-                action: ListAction::PagePrev,
-                chord: &[&[Key {
+            PagePrev => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::PageUp,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "list.page.prev",
-                description: "Move one page up in the list",
+                name: "list.page.prev".to_owned(),
+                description: "Move one page up in the list".to_owned(),
             },
-            ActionDesc {
-                action: ListAction::Home,
-                chord: &[&[Key {
+            Home => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::Home,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "list.home",
-                description: "Move to the beginning of the list",
+                name: "list.home".to_owned(),
+                description: "Move to the beginning of the list".to_owned(),
             },
-            ActionDesc {
-                action: ListAction::End,
-                chord: &[&[Key {
+            End => ActionDesc {
+                chords: vec![vec![Key {
                     name: KeyName::End,
                     mode: KeyMod::EMPTY,
                 }]],
-                name: "list.end",
-                description: "Move to the end of the list",
+                name: "list.end".to_owned(),
+                description: "Move to the end of the list".to_owned(),
             },
-        ]
+        }
+    }
+
+    pub fn all() -> impl Iterator<Item = ListAction> {
+        use ListAction::*;
+        [ItemNext, ItemPrev, PageNext, PagePrev, Home, End].into_iter()
     }
 }
 

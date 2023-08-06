@@ -46,7 +46,7 @@ pub fn haystack_default_view(
     haystack: &impl Haystack,
     positions: &Positions,
     theme: &Theme,
-) -> impl View {
+) -> Text {
     let mut text = Text::new();
     let mut index = 0;
     haystack.haystack_scope(|char| {
