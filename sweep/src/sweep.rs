@@ -26,7 +26,7 @@ use std::{
 };
 use surf_n_term::{
     encoder::ColorDepth,
-    view::{Align, Container, Flex, IntoView, Text, View, ViewContext},
+    view::{Align, Container, Flex, IntoView, Margins, Text, View, ViewContext},
     DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
     Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
@@ -43,19 +43,6 @@ lazy_static::lazy_static! {
         .expect("failed to get prompt default icon");
     static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
         .expect("failed to get keyboard icon");
-    static ref INDICATOR_ICON: Glyph = {
-        use surf_n_term::{Size, rasterize::{PathBuilder, BBox}};
-        Glyph::new(
-            PathBuilder::new()
-                .move_to((50.0, 50.0))
-                .circle(25.0)
-                .build(),
-            Default::default(),
-            Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
-            Size::new(1, 3),
-            " ● ".to_owned(),
-        )
-    };
 }
 
 pub struct SweepOptions {
@@ -919,9 +906,13 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
                 let flex = preview.flex.unwrap_or(0.0);
-                let mut view = Container::new(preview.view)
-                    .with_vertical(Align::Expand)
-                    .with_face(self.theme.list_selected);
+                let mut view = Container::new(Container::new(preview.view).with_margins(Margins {
+                    left: 1,
+                    right: 1,
+                    ..Default::default()
+                }))
+                .with_vertical(Align::Expand)
+                .with_face(self.theme.list_selected);
                 if flex > 0.0 {
                     view = view.with_horizontal(Align::Expand);
                 }

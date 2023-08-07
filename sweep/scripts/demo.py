@@ -116,7 +116,7 @@ async def main():
                 Candidate()
                 .target_push("Muli line entry\n - Second Line")
                 .right_push(glyph=PANEL_RIGHT)
-                .right_push("right text filled ")
+                .right_push("right text filled")
                 .right_face_set("bg=#b1628620")
             ]
         )
@@ -145,7 +145,7 @@ async def main():
                 Candidate()
                 .target_push("Entry with additional data to the right")
                 .right_push(ref=ref_cocktail, face="fg=#427b58")
-                .right_push(" Have a cocktail ")
+                .right_push(" Have a cocktail")
             ]
         )
 

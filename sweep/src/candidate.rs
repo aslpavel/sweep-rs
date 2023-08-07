@@ -392,14 +392,17 @@ impl Haystack for Candidate {
             .justify(Justify::SpaceBetween)
             .add_flex_child(1.0, left);
         if !right.is_empty() {
-            let right_view = if self.right_offset() > 0 {
-                Container::new(right)
+            let mut right = Container::new(right).with_margins(Margins {
+                left: 1,
+                right: 1,
+                ..Default::default()
+            });
+            if self.right_offset() > 0 {
+                right = right
                     .with_horizontal(Align::Start)
-                    .with_width(self.right_offset())
-            } else {
-                Container::new(right)
-            };
-            view.push_child_ext(right_view, None, self.right_face(), Align::Start);
+                    .with_width(self.right_offset());
+            }
+            view.push_child_ext(right, None, self.right_face(), Align::Start);
         }
         view.boxed()
     }
@@ -418,12 +421,7 @@ impl Haystack for Candidate {
             theme.list_inactive,
         );
         Some(HaystackPreview::new(
-            Container::new(preview)
-                .with_margins(Margins {
-                    left: 1,
-                    ..Default::default()
-                })
-                .boxed(),
+            preview.boxed(),
             Some(self.inner.preview_flex),
         ))
     }

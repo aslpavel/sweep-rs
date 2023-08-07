@@ -4,8 +4,8 @@ use surf_n_term::{
     common::clamp,
     rasterize::PathBuilder,
     view::{
-        Axis, BoxConstraint, Container, Flex, IntoView, Justify, Layout, Margins, ScrollBar, Text,
-        Tree, View, ViewContext,
+        Axis, BoxConstraint, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text, Tree,
+        View, ViewContext,
     },
     BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
     SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
@@ -238,13 +238,7 @@ impl Haystack for ActionDesc {
     fn preview(&self, _theme: &Theme, _refs: FieldRefs) -> Option<HaystackPreview> {
         let desc = Text::new().push_str(&self.description, None).take();
         Some(HaystackPreview::new(
-            Container::new(desc)
-                .with_margins(Margins {
-                    left: 1,
-                    right: 1,
-                    ..Default::default()
-                })
-                .boxed(),
+            Container::new(desc).boxed(),
             Some(0.6),
         ))
     }
