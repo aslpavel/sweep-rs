@@ -39,10 +39,23 @@ lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =
         serde_json::from_str(include_str!("./icons.json"))
             .expect("invalid icons.json file");
-    static ref DEFAULT_ICON: &'static Glyph = ICONS.get("broom")
-        .expect("failed to get default icon");
+    static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("broom")
+        .expect("failed to get prompt default icon");
     static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
         .expect("failed to get keyboard icon");
+    static ref INDICATOR_ICON: Glyph = {
+        use surf_n_term::{Size, rasterize::{PathBuilder, BBox}};
+        Glyph::new(
+            PathBuilder::new()
+                .move_to((50.0, 50.0))
+                .circle(25.0)
+                .build(),
+            Default::default(),
+            Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
+            Size::new(1, 3),
+            " ● ".to_owned(),
+        )
+    };
 }
 
 pub struct SweepOptions {
@@ -66,7 +79,7 @@ impl Default for SweepOptions {
         Self {
             height: 11,
             prompt: "INPUT".to_string(),
-            prompt_icon: Some(DEFAULT_ICON.clone()),
+            prompt_icon: Some(PROMPT_DEFAULT_ICON.clone()),
             theme: Theme::light(),
             keep_order: false,
             tty_path: "/dev/tty".to_string(),

@@ -24,6 +24,8 @@ struct CandidateInner {
     right: Vec<Field<'static>>,
     /// Amount of space reserved for the right fields
     right_offset: usize,
+    /// Face used to fill right fields
+    right_face: Option<Face>,
     /// Fields to generate preview [Haystack::preview]
     preview: Vec<Field<'static>>,
     /// Preview flex value
@@ -46,6 +48,7 @@ impl Candidate {
     ///  - `extra`: Extra payload
     ///  - `right`: Fields with additional information show on the right
     ///  - `right_offset`: Amount of space reserved for the right fields
+    ///  - `right_face`: Default face for right fields
     ///  - `preview`: Fields to be shown on preview [Haystack::preview]
     ///  - `preview_flex`: Preview view flex value
     pub fn new(
@@ -53,6 +56,7 @@ impl Candidate {
         extra: Option<HashMap<String, Value>>,
         right: Vec<Field<'static>>,
         right_offset: usize,
+        right_face: Option<Face>,
         preview: Vec<Field<'static>>,
         preview_flex: f64,
     ) -> Self {
@@ -62,16 +66,19 @@ impl Candidate {
                 extra: extra.unwrap_or_default(),
                 right,
                 right_offset,
+                right_face,
                 preview,
                 preview_flex: preview_flex.max(0.0),
             }),
         }
     }
 
+    /// Extra data passed with candidate
     pub fn extra(&self) -> &HashMap<String, Value> {
         &self.inner.extra
     }
 
+    /// Construct from string
     pub fn from_string(
         string: String,
         delimiter: char,
@@ -90,7 +97,7 @@ impl Candidate {
                 fields
             }
         };
-        Self::new(fields, None, Vec::new(), 0, Vec::new(), 0.0)
+        Self::new(fields, None, Vec::new(), 0, None, Vec::new(), 0.0)
     }
 
     /// Read batched stream of candidates from `AsyncRead`
@@ -159,6 +166,11 @@ impl Candidate {
     fn right_offset(&self) -> usize {
         self.inner.right_offset
     }
+
+    /// Face used to fill right fields
+    fn right_face(&self) -> Option<Face> {
+        self.inner.right_face
+    }
 }
 
 impl fmt::Display for Candidate {
@@ -195,7 +207,10 @@ impl Serialize for Candidate {
                 map.serialize_entry("right", &inner.right)?;
             }
             if inner.right_offset != 0 {
-                map.serialize_entry("offset", &inner.right_offset)?;
+                map.serialize_entry("right_offset", &inner.right_offset)?;
+            }
+            if let Some(face) = inner.right_face {
+                map.serialize_entry("right_face", &face)?;
             }
             if !inner.preview.is_empty() {
                 map.serialize_entry("preview", &inner.preview)?;
@@ -227,7 +242,15 @@ impl<'de> Deserialize<'de> for Candidate {
                 E: de::Error,
             {
                 let fields = vec![Field::from(v.to_owned())];
-                Ok(Candidate::new(fields, None, Vec::new(), 0, Vec::new(), 0.0))
+                Ok(Candidate::new(
+                    fields,
+                    None,
+                    Vec::new(),
+                    0,
+                    None,
+                    Vec::new(),
+                    0.0,
+                ))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -238,6 +261,7 @@ impl<'de> Deserialize<'de> for Candidate {
                 let mut extra = HashMap::new();
                 let mut right = None;
                 let mut right_offset = 0;
+                let mut right_face = None;
                 let mut preview = None;
                 let mut preview_flex = 0.0;
 
@@ -251,6 +275,9 @@ impl<'de> Deserialize<'de> for Candidate {
                         }
                         "right_offset" | "offset" => {
                             right_offset = map.next_value()?;
+                        }
+                        "right_face" => {
+                            right_face.replace(map.next_value()?);
                         }
                         "preview" => {
                             preview = map.next_value()?;
@@ -268,6 +295,7 @@ impl<'de> Deserialize<'de> for Candidate {
                     (!extra.is_empty()).then_some(extra),
                     right.unwrap_or_default(),
                     right_offset,
+                    right_face,
                     preview.unwrap_or_default(),
                     preview_flex,
                 ))
@@ -364,15 +392,14 @@ impl Haystack for Candidate {
             .justify(Justify::SpaceBetween)
             .add_flex_child(1.0, left);
         if !right.is_empty() {
-            if self.right_offset() > 0 {
-                view.push_child(
-                    Container::new(right)
-                        .with_horizontal(Align::Start)
-                        .with_width(self.right_offset()),
-                )
+            let right_view = if self.right_offset() > 0 {
+                Container::new(right)
+                    .with_horizontal(Align::Start)
+                    .with_width(self.right_offset())
             } else {
-                view.push_child(right);
+                Container::new(right)
             };
+            view.push_child_ext(right_view, None, self.right_face(), Align::Start);
         }
         view.boxed()
     }
@@ -879,6 +906,7 @@ mod tests {
                 ..Field::default()
             }],
             7,
+            None,
             vec![Field {
                 text: "preview".into(),
                 ..Field::default()
@@ -922,7 +950,15 @@ mod tests {
             serde_json::to_value(serde_json::from_value::<Candidate>(value)?).unwrap()
         );
 
-        let candidate = Candidate::new(vec!["four".into()], None, Vec::new(), 0, Vec::new(), 0.0);
+        let candidate = Candidate::new(
+            vec!["four".into()],
+            None,
+            Vec::new(),
+            0,
+            None,
+            Vec::new(),
+            0.0,
+        );
         assert_eq!(candidate, serde_json::from_str("\"four\"")?);
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 

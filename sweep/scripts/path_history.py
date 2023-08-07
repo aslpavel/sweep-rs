@@ -28,7 +28,7 @@ from typing import (
 from dataclasses import dataclass
 
 sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Sweep, SweepBind, SweepIcon, SweepSelect
+from sweep import Sweep, SweepBind, Icon, SweepSelect
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -38,6 +38,7 @@ DEFAULT_IGNORE = re.compile(
         [
             "\\.git",
             "\\.hg",
+            "\\.venv",
             "__pycache__",
             "\\.DS_Store",
             "\\.mypy_cache",
@@ -52,7 +53,7 @@ DEFAULT_IGNORE = re.compile(
 )
 
 # folder-clock-outline (Material Design)
-HISTORY_ICON = SweepIcon(
+HISTORY_ICON = Icon(
     path="M15,12H16.5V16.25L19.36,17.94L18.61,19.16L15,17V12M19,8H3V18H9.29"
     "C9.1,17.37 9,16.7 9,16A7,7 0 0,1 16,9C17.07,9 18.09,9.24 19,9.67V8"
     "M3,20C1.89,20 1,19.1 1,18V6A2,2 0 0,1 3,4H9L11,6H19A2,2 0 0,1 21,8"
@@ -64,7 +65,7 @@ HISTORY_ICON = SweepIcon(
 )
 
 # folder-search-outline (Material Design)
-SEARCH_ICON = SweepIcon(
+SEARCH_ICON = Icon(
     path="M16.5,12C19,12 21,14 21,16.5C21,17.38 20.75,18.21 20.31,18.9L23.39,22"
     "L22,23.39L18.88,20.32C18.19,20.75 17.37,21 16.5,21C14,21 12,19 12,16.5"
     "C12,14 14,12 16.5,12M16.5,14A2.5,2.5 0 0,0 14,16.5A2.5,2.5 0 0,0 16.5,19"
@@ -281,7 +282,7 @@ KEY_ALL: Dict[str, Tuple[List[str], str]] = {
     KEY_LIST: (["ctrl+i", "tab"], "Navigate to currently pointed path"),
     KEY_PARENT: (["backspace"], "Go to the parent directory"),
     KEY_HISTORY: (["alt+."], "Open path history"),
-    KEY_OPEN: (["ctrl+o"], "Return current item"),
+    KEY_OPEN: (["ctrl+o"], "Return currently listed directory"),
 }
 
 

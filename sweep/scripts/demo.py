@@ -9,7 +9,7 @@ from typing import Any
 from sweep import *
 import os
 
-ICON_BEER = SweepIcon(
+ICON_BEER = Icon(
     path="M8.5 10A.75.75 0 0 0 7 10v7a.75.75 0 0 0 1.5 0v-7ZM11.5 10a.75.75 0 0 "
     "0-1.5 0v7a.75.75 0 0 0 1.5 0v-7ZM14.5 10a.75.75 0 0 0-1.5 0v7a.75.75 0 0 0 "
     "1.5 0v-7ZM4 5.25A3.25 3.25 0 0 1 7.25 2h7a3.25 3.25 0 0 1 3.25 3.25V6h1.25"
@@ -22,9 +22,7 @@ ICON_BEER = SweepIcon(
     size=(1, 3),
     fallback="[P]",
 )
-
-
-ICON_COCKTAIL = SweepIcon(
+ICON_COCKTAIL = Icon(
     path="M19.873 3.49a.75.75 0 1 0-.246-1.48l-6 1a.75.75 0 0 0-.613.593L12.736 "
     "5H5.75a.75.75 0 0 0-.75.75v4a3.25 3.25 0 0 0 3 3.24v.51c0 1.953 1.4 3.579 "
     "3.25 3.93v3.07h-2.5a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-2.5v-3.07A4.001"
@@ -37,9 +35,7 @@ ICON_COCKTAIL = SweepIcon(
     size=(1, 3),
     fallback="[C]",
 )
-
-
-ICON_BACKPACK = SweepIcon(
+ICON_BACKPACK = Icon(
     path="M12 2a3.75 3.75 0 0 0-3.736 3.424A7.999 7.999 0 0 0 4 12.5v6.25A3.25 3.25"
     " 0 0 0 7.25 22h5.56a6.518 6.518 0 0 1-1.078-1.5H7.25a1.75 1.75 0 0 1-1.75-1.75"
     "v-3.036H8v1.536a.75.75 0 0 0 1.5 0v-1.536h1.748c.175-.613.438-1.19.774-1.714"
@@ -55,6 +51,18 @@ ICON_BACKPACK = SweepIcon(
     view_box=(0, 0, 24, 24),
     size=(1, 3),
     fallback="[B]",
+)
+PANEL_RIGHT = Icon(
+    view_box=(0, 0, 128, 128),
+    size=(1, 3),
+    fallback="[P]",
+    path="M37.73 26.48L90.27 26.48Q96.79 26.48 101.41 31.11Q106.04 35.73 106.04 42.25"
+    "L106.04 42.25L106.04 79.03Q106.04 85.54 101.41 90.17Q96.79 94.79 90.27 94.79"
+    "L90.27 94.79L37.73 94.79Q31.21 94.79 26.59 90.17Q21.96 85.54 21.96 79.03"
+    "L21.96 79.03L21.96 42.25Q21.96 35.73 26.59 31.11Q31.21 26.48 37.73 26.48"
+    "L37.73 26.48ZM71.99 31.74L37.73 31.74Q33.31 31.74 30.27 34.78"
+    "Q27.22 37.83 27.22 42.25L27.22 42.25L27.22 79.03Q27.22 83.44 30.27 86.49"
+    "Q33.31 89.54 37.73 89.54L37.73 89.54L71.99 89.54L71.99 31.74Z",
 )
 
 
@@ -85,7 +93,7 @@ async def main():
         # simple fields
         await sweep.items_extend(
             [
-                Candidate().target_push("Simple string entry"),
+                "Simple string entry",
                 Candidate()
                 .target_push("Disabled text: ", active=False)
                 .target_push("Enabled text"),
@@ -104,7 +112,13 @@ async def main():
 
         # multi line entry
         await sweep.items_extend(
-            [Candidate().target_push("Muli line entry\n - Second Line")]
+            [
+                Candidate()
+                .target_push("Muli line entry\n - Second Line")
+                .right_push(glyph=PANEL_RIGHT)
+                .right_push("right text filled ")
+                .right_face_set("bg=#b1628620")
+            ]
         )
 
         # direct glyph icon usage example
@@ -131,7 +145,7 @@ async def main():
                 Candidate()
                 .target_push("Entry with additional data to the right")
                 .right_push(ref=ref_cocktail, face="fg=#427b58")
-                .right_push(" Have a cocktail")
+                .right_push(" Have a cocktail ")
             ]
         )
 

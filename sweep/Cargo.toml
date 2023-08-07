@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2021"
 name = "sweep"
-version = "0.11.3"
+version = "0.11.4"
 include = ["**/*.rs", "src/icons.json", "Cargo.toml", "Cargo.lock", "README.md"]
 
 [lib]
@@ -29,7 +29,7 @@ lazy_static = "^1.1"
 mimalloc = { version = "^0.1", default-features = false }
 smallvec = "1.9.0"
 
-surf_n_term = "^0.8.4"
+surf_n_term = "^0.8.6"
 # surf_n_term = { path = "../../surf-n-term" }
 # surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
 

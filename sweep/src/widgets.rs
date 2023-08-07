@@ -1,15 +1,15 @@
+use crate::{haystack_default_view, FieldRefs, Haystack, HaystackPreview, Positions};
 use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, str::FromStr};
 use surf_n_term::{
     common::clamp,
+    rasterize::PathBuilder,
     view::{
         Axis, BoxConstraint, Container, Flex, IntoView, Justify, Layout, Margins, ScrollBar, Text,
         Tree, View, ViewContext,
     },
-    Cell, Color, Error, Face, FaceAttrs, Key, KeyMod, KeyName, Position, Size, SurfaceMut,
-    TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
+    SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
-
-use crate::{haystack_default_view, FieldRefs, Haystack, HaystackPreview, Positions};
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -36,8 +36,10 @@ pub struct Theme {
 
 impl Theme {
     pub fn from_palette(fg: RGBA, bg: RGBA, accent: RGBA) -> Self {
+        let theme_is_light = bg.luma() > fg.luma();
+
         let cursor = {
-            let cursor_bg = bg.blend_over(accent.with_alpha(0.8));
+            let cursor_bg = bg.blend_over(accent.with_alpha(0.5));
             let cursor_fg = cursor_bg.best_contrast(bg, fg);
             Face::new(Some(cursor_fg), Some(cursor_bg), FaceAttrs::EMPTY)
         };
@@ -49,11 +51,25 @@ impl Theme {
         );
         let list_selected = Face::new(
             Some(fg),
-            Some(bg.blend_over(fg.with_alpha(0.1))),
+            if theme_is_light {
+                Some(bg.blend_over(fg.with_alpha(0.1)))
+            } else {
+                Some(bg.blend_over(fg.with_alpha(0.05)))
+            },
             FaceAttrs::EMPTY,
         );
         let list_selected_indicator = Text::new()
-            .push_str(" ● ", Some(Face::default().with_fg(Some(accent))))
+            .set_face(Face::default().with_fg(Some(accent)))
+            .put_glyph(Glyph::new(
+                PathBuilder::new()
+                    .move_to((50.0, 50.0))
+                    .circle(20.0)
+                    .build(),
+                Default::default(),
+                Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
+                Size::new(1, 3),
+                " ● ".to_owned(),
+            ))
             .take();
         let list_text = Face::default().with_fg(list_selected.fg);
         let list_highlight = cursor;
@@ -807,7 +823,10 @@ where
         };
 
         // create view and calculate layout for all visible items
-        let child_ct = BoxConstraint::new(Size::new(0, width - 4), Size::new(height, width - 4));
+        let child_ct = BoxConstraint::new(
+            Size::new(0, width - indicator_width),
+            Size::new(height, width - indicator_width),
+        );
         let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
         let mut children_height = 0;
         let mut children_removed = 0;

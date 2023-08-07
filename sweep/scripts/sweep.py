@@ -45,7 +45,7 @@ __all__ = [
     "SweepSelect",
     "SweepBind",
     "SweepEvent",
-    "SweepIcon",
+    "Icon",
     "sweep",
     "Candidate",
     "Field",
@@ -76,7 +76,7 @@ class SweepSelect(Generic[I]):
         self.item = item
 
 
-class SweepIcon(NamedTuple):
+class Icon(NamedTuple):
     """SVG icon"""
 
     # only these characters are allowed to be in the svg path
@@ -89,22 +89,22 @@ class SweepIcon(NamedTuple):
     fallback: Optional[str] = None
 
     @staticmethod
-    def from_str_or_file(str_or_file: str) -> Optional[SweepIcon]:
+    def from_str_or_file(str_or_file: str) -> Optional[Icon]:
         """Create sweep icon either by reading it from file or parsing from string"""
         if os.path.exists(str_or_file):
             with open(str_or_file, "r") as file:
                 str_or_file = file.read()
         try:
-            return SweepIcon.from_json(json.loads(str_or_file))
+            return Icon.from_json(json.loads(str_or_file))
         except json.JSONDecodeError:
-            return SweepIcon.from_json(str_or_file)
+            return Icon.from_json(str_or_file)
 
     @staticmethod
-    def from_json(obj: Any) -> Optional[SweepIcon]:
+    def from_json(obj: Any) -> Optional[Icon]:
         """Create icon from JSON object"""
 
         def is_path(path: str) -> bool:
-            if set(path) - SweepIcon.PATH_CHARS:
+            if set(path) - Icon.PATH_CHARS:
                 return False
             return True
 
@@ -112,7 +112,7 @@ class SweepIcon(NamedTuple):
             obj = cast(Dict[str, Any], obj)
             path = obj.get("path")
             if isinstance(path, str) and is_path(path):
-                return SweepIcon(
+                return Icon(
                     path=path,
                     view_box=obj.get("view_box"),
                     fill_rule=obj.get("fill_rule"),
@@ -120,7 +120,7 @@ class SweepIcon(NamedTuple):
                     fallback=obj.get("fallback"),
                 )
         elif isinstance(obj, str) and is_path(obj):
-            return SweepIcon(obj)
+            return Icon(obj)
         return None
 
     def to_json(self) -> Dict[str, Any]:
@@ -143,7 +143,7 @@ class Field:
 
     text: str = ""
     active: bool = True
-    glyph: Optional[SweepIcon] = None
+    glyph: Optional[Icon] = None
     face: Optional[str] = None
     ref: Optional[int] = None
 
@@ -153,8 +153,8 @@ class Field:
             attrs.append(f"text={repr(self.text)}")
         if not self.active:
             attrs.append(f"active={self.active}")
-        if self.glyph is not None:
-            attrs.append(f"glyph={self.glyph}")
+        if self.glyph is not None and self.glyph.fallback:
+            attrs.append(f"glyph={self.glyph.fallback}")
         if self.face is not None:
             attrs.append(f"face={self.face}")
         if self.ref is not None:
@@ -184,7 +184,7 @@ class Field:
         return Field(
             text=obj.get("text") or "",
             active=True if active is None else active,
-            glyph=SweepIcon.from_json(obj.get("glyph")),
+            glyph=Icon.from_json(obj.get("glyph")),
             face=obj.get("face"),
             ref=obj.get("ref"),
         )
@@ -198,6 +198,7 @@ class Candidate:
     extra: Optional[Dict[str, Any]] = None
     right: Optional[List[Field]] = None
     right_offset: int = 0
+    right_face: Optional[str] = None
     preview: Optional[List[Any]] = None
     preview_flex: float = 0.0
 
@@ -205,7 +206,7 @@ class Candidate:
         self,
         text: str = "",
         active: bool = True,
-        glyph: Optional[SweepIcon] = None,
+        glyph: Optional[Icon] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
@@ -219,7 +220,7 @@ class Candidate:
         self,
         text: str = "",
         active: bool = True,
-        glyph: Optional[SweepIcon] = None,
+        glyph: Optional[Icon] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
@@ -234,11 +235,16 @@ class Candidate:
         self.right_offset = offset
         return self
 
+    def right_face_set(self, face: str) -> Candidate:
+        """Set face used to fill right side text"""
+        self.right_face = face
+        return self
+
     def preview_push(
         self,
         text: str = "",
         active: bool = True,
-        glyph: Optional[SweepIcon] = None,
+        glyph: Optional[Icon] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
@@ -270,6 +276,8 @@ class Candidate:
             attrs.append(f"right={self.right}")
         if self.right_offset != 0:
             attrs.append(f"right_offset={self.right_offset}")
+        if self.right_face:
+            attrs.append(f"right_face={self.right_face}")
         if self.preview is not None:
             attrs.append(f"preview={self.preview}")
         if self.preview_flex != 0.0:
@@ -284,7 +292,9 @@ class Candidate:
         if self.right:
             obj["right"] = [field.to_json() for field in self.right]
         if self.right_offset:
-            obj["offset"] = self.right_offset
+            obj["right_offset"] = self.right_offset
+        if self.right_face:
+            obj["right_face"] = self.right_face
         if self.preview:
             obj["preview"] = [field.to_json() for field in self.preview]
         if self.preview_flex != 0.0:
@@ -314,6 +324,7 @@ class Candidate:
         target = fields_from_json(obj.pop("target", None))
         right = fields_from_json(obj.pop("right", None))
         right_offset = obj.pop("offset", None) or 0
+        right_face = obj.pop("right_face", None)
         preview = fields_from_json(obj.pop("preview", None))
         preview_flex = obj.pop("preview_flex", None) or 0.0
         return Candidate(
@@ -321,6 +332,7 @@ class Candidate:
             extra=obj or None,
             right=right,
             right_offset=right_offset,
+            right_face=right_face,
             preview=preview,
             preview_flex=preview_flex,
         )
@@ -331,7 +343,7 @@ SweepEvent = Union[SweepBind, SweepSelect[I]]
 
 async def sweep(
     items: Iterable[I],
-    prompt_icon: Optional[SweepIcon | str] = None,
+    prompt_icon: Optional[Icon | str] = None,
     **options: Any,
 ) -> Optional[I]:
     """Convenience wrapper around `Sweep`
@@ -339,8 +351,8 @@ async def sweep(
     Useful when you only need to select one candidate from a list of items
     """
     async with Sweep[I](**options) as sweep:
-        if not isinstance(prompt_icon, (SweepIcon, type(None))):
-            icon = SweepIcon.from_str_or_file(prompt_icon)
+        if not isinstance(prompt_icon, (Icon, type(None))):
+            icon = Icon.from_str_or_file(prompt_icon)
             if icon is None:
                 raise ValueError(f"invalid prompt icon: {prompt_icon}")
             prompt_icon = icon
@@ -558,7 +570,7 @@ class Sweep(Generic[I]):
     async def prompt_set(
         self,
         prompt: Optional[str] = None,
-        icon: Optional[SweepIcon] = None,
+        icon: Optional[Icon] = None,
     ) -> None:
         """Set prompt label and icon"""
         attrs: Dict[str, Any] = {}
