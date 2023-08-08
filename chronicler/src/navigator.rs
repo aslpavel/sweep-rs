@@ -216,7 +216,7 @@ impl Navigator {
 
     pub async fn run(&mut self) -> Result<Option<NavigatorItem>, Error> {
         self.switch_mode(self.state.clone(), None).await?;
-        while let Some(event) = self.sweep.event().await {
+        while let Some(event) = self.sweep.next_event().await {
             match event {
                 SweepEvent::Select(result) => return Ok(result),
                 SweepEvent::Bind(bind) => match bind.parse()? {

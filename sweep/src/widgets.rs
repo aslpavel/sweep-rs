@@ -52,7 +52,7 @@ impl Theme {
         let list_selected = Face::new(
             Some(fg),
             if theme_is_light {
-                Some(bg.blend_over(fg.with_alpha(0.1)))
+                Some(bg.blend_over(fg.with_alpha(0.12)))
             } else {
                 Some(bg.blend_over(fg.with_alpha(0.05)))
             },

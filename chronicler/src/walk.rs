@@ -1,3 +1,4 @@
+use super::DATE_FORMAT;
 use anyhow::Error;
 use futures::{
     ready,
@@ -8,11 +9,16 @@ use std::{
     collections::VecDeque,
     fs::Metadata,
     future::Future,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::Arc,
     task::Poll,
 };
-use sweep::{surf_n_term::view::View, Haystack};
+use sweep::{
+    surf_n_term::view::{Text, View},
+    Haystack,
+};
+use time::OffsetDateTime;
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
@@ -46,10 +52,36 @@ impl Haystack for PathItem {
         _theme: &sweep::Theme,
         _refs: sweep::FieldRefs,
     ) -> Option<sweep::HaystackPreview> {
-        Some(sweep::HaystackPreview::new(
-            format!("{:?}", self.metadata.as_ref()?).boxed(),
-            Some(1.0),
-        ))
+        let metadata = self.metadata.as_ref()?;
+        let mut text = Text::new()
+            .push_fmt(format_args!(
+                "Mode:     {}\n",
+                unix_mode::to_string(metadata.mode())
+            ))
+            .push_fmt(format_args!(
+                "Size:     {:.2}\n",
+                SizeDisplay::new(metadata.len())
+            ))
+            .take();
+        if let Ok(created) = metadata.created() {
+            text.push_fmt(format_args!(
+                "Created:  {}\n",
+                OffsetDateTime::from(created).format(&DATE_FORMAT).ok()?,
+            ));
+        }
+        if let Ok(modified) = metadata.modified() {
+            text.push_fmt(format_args!(
+                "Modified: {}\n",
+                OffsetDateTime::from(modified).format(&DATE_FORMAT).ok()?,
+            ));
+        }
+        if let Ok(accessed) = metadata.accessed() {
+            text.push_fmt(format_args!(
+                "Accessed: {}\n",
+                OffsetDateTime::from(accessed).format(&DATE_FORMAT).ok()?,
+            ));
+        }
+        Some(sweep::HaystackPreview::new(text.boxed(), None))
     }
 }
 
@@ -126,6 +158,34 @@ fn path_sort_key(item: &PathItem) -> (bool, bool, &Path) {
         .as_ref()
         .map_or_else(|| false, |meta| meta.is_dir());
     (hidden, !is_dir, &item.path)
+}
+
+/// Format size in a human readable form
+pub struct SizeDisplay {
+    size: u64,
+}
+
+impl SizeDisplay {
+    pub fn new(size: u64) -> Self {
+        Self { size }
+    }
+}
+
+impl std::fmt::Display for SizeDisplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.size < 1024 {
+            return write!(f, "{}B", self.size);
+        }
+        let mut size = self.size as f64;
+        let precision = f.precision().unwrap_or(1);
+        for mark in "KMGTP".chars() {
+            size /= 1024.0;
+            if size < 1024.0 {
+                return write!(f, "{0:.1$}{2}", size, precision, mark);
+            }
+        }
+        write!(f, "{0:.1$}P", size, precision)
+    }
 }
 
 /// Similar to unfold but runs unfold function in parallel with the specified

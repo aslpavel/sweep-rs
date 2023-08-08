@@ -7,6 +7,7 @@ use anyhow::Error;
 use history::History;
 use navigator::{Navigator, NavigatorState};
 use sweep::{SweepOptions, Theme};
+use time::{format_description::FormatItem, macros::format_description};
 
 use std::{io::Read, path::PathBuf};
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
@@ -15,6 +16,9 @@ const HISTORY_DB: &str = "chronicler/history.db";
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+const DATE_FORMAT: &[FormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

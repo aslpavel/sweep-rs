@@ -1,3 +1,4 @@
+use super::DATE_FORMAT;
 use anyhow::{Context, Error};
 use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -12,10 +13,6 @@ use sweep::{
     surf_n_term::view::{Align, Container, Flex, Justify, Text, View},
     Haystack, HaystackPreview, Theme,
 };
-use time::{format_description::FormatItem, macros::format_description};
-
-const DATE_FORMAT: &[FormatItem<'_>] =
-    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
 
 #[derive(Clone, Debug, FromRow)]
 pub struct HistoryEntry {
@@ -73,19 +70,14 @@ impl Haystack for HistoryEntry {
         let mut text = Text::new();
         text.set_face(theme.list_selected);
         (|| {
-            writeln!(&mut text)?;
-            writeln!(&mut text, "  status   : {}", self.status)?;
+            writeln!(&mut text, "Status   : {}", self.status)?;
             if let Ok(date) = self.start_dt() {
-                writeln!(&mut text, "  date     : {}", date.format(&DATE_FORMAT)?)?;
+                writeln!(&mut text, "Date     : {}", date.format(&DATE_FORMAT)?)?;
             }
-            writeln!(
-                &mut text,
-                "  duration : {:.3}s",
-                self.end_ts - self.start_ts
-            )?;
-            writeln!(&mut text, "  cwd      : {}", self.cwd)?;
-            writeln!(&mut text, "  user     : {}", self.user)?;
-            writeln!(&mut text, "  hostname : {}", self.hostname)?;
+            writeln!(&mut text, "Duration : {:.3}s", self.end_ts - self.start_ts)?;
+            writeln!(&mut text, "Directory: {}", self.cwd)?;
+            writeln!(&mut text, "User     : {}", self.user)?;
+            writeln!(&mut text, "Hostname : {}", self.hostname)?;
             Ok::<_, anyhow::Error>(())
         })()
         .expect("in memory write failed");
