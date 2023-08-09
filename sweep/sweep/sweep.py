@@ -1105,7 +1105,7 @@ class Event(Generic[E]):
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
-async def main() -> None:
+async def main(args: Optional[List[str]] = None) -> None:
     import shlex
     import argparse
 
@@ -1172,39 +1172,39 @@ async def main() -> None:
         type=int,
         help="borders on the side of the sweep view",
     )
-    args = parser.parse_args()
+    opts = parser.parse_args(args)
 
     candidates: List[Any]
-    if args.json:
-        candidates = json.load(args.input)
+    if opts.json:
+        candidates = json.load(opts.input)
     else:
         candidates = []
-        for line in args.input:
+        for line in opts.input:
             candidates.append(line.strip())
 
     result = await sweep(
         candidates,
-        sweep=shlex.split(args.sweep),
-        prompt=args.prompt,
-        prompt_icon=args.prompt_icon,
-        query=args.query,
-        nth=args.nth,
-        height=args.height or 11,
-        delimiter=args.delimiter,
-        theme=args.theme,
-        scorer=args.scorer,
-        tty=args.tty,
-        keep_order=args.keep_order,
-        no_match=args.no_match,
-        altscreen=args.altscreen,
-        tmp_socket=args.tmp_socket,
-        log=args.log,
-        border=args.border,
+        sweep=shlex.split(opts.sweep),
+        prompt=opts.prompt,
+        prompt_icon=opts.prompt_icon,
+        query=opts.query,
+        nth=opts.nth,
+        height=opts.height or 11,
+        delimiter=opts.delimiter,
+        theme=opts.theme,
+        scorer=opts.scorer,
+        tty=opts.tty,
+        keep_order=opts.keep_order,
+        no_match=opts.no_match,
+        altscreen=opts.altscreen,
+        tmp_socket=opts.tmp_socket,
+        log=opts.log,
+        border=opts.border,
     )
 
     if result is None:
         pass
-    elif args.json:
+    elif opts.json:
         json.dump(result, sys.stdout)
     else:
         print(result)

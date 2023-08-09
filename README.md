@@ -9,7 +9,7 @@ Sweep is a tool used to interactively search through a list of entries. It is in
 - Beautiful
 - Easily customizable color palette by specifying only three main colors from which all other colors are derived.
 - JSON-RPC protocol can be used to communicate with sweep process.
-- Includes asyncio [python binding](sweep/scripts/sweep.py)
+- Includes asyncio [python binding](sweep/sweep/sweep.py)
 - Configurable key bindings
 - Support for rendering custom icons/glyphs from SVG path (requires kitty-image or sixel protocol support)
 
@@ -89,7 +89,7 @@ Current key bindings can be viewed by pressing `ctrl+h`.
 
 ### Bash history integration
 
-Copy [`bash_history.py`](sweep/scripts/bash_history.py) [`path_history.py`](sweep/scripts/path_history.py) and [`sweep.py`](sweep/scripts/sweep.py) somewhere in your `$PATH`.
+Copy [`sweep/sweep`](sweep/sweep/apps/bash_history.py) directory somewhere in your `PYTHONPATH`
 
 <details>
   <summary>Add this to your <code>~/.bashrc</code></summary>
@@ -97,7 +97,7 @@ Copy [`bash_history.py`](sweep/scripts/bash_history.py) [`path_history.py`](swee
 ```bash
 # bash history lookup
 __sweep_history__() {
-    READLINE_LINE=$(bash_history.py --history-file=$HISTFILE --query "$READLINE_LINE")
+    READLINE_LINE=$(python -msweep bash_history --history-file=$HISTFILE --query "$READLINE_LINE")
     READLINE_MARK=0
     READLINE_POINT=${#READLINE_LINE}
 }
@@ -105,13 +105,13 @@ bind -x '"\C-r": __sweep_history__'
 
 # complete path
 __sweep_path_complete__() {
-    eval $(path_history.py select --readline)
+    eval $(python -msweep path_history select --readline)
 }
 bind -x '"\C-t": __sweep_path_complete__'
 
 # open
 __sweep_open__() {
-    path=$(path_history select --theme="light,base=$__sweep_color" --query "$READLINE_LINE")
+    path=$(python -msweep path_history select --theme="light,base=$__sweep_color" --query "$READLINE_LINE")
     path_escape=$(printf "%q" "${path}")
     if [ -d "$path" ];  then
         READLINE_LINE="cd $path_escape"
@@ -142,7 +142,7 @@ bind -x '"\C-f": __sweep_open__'
 __sweep_path_add__() {
     if [ ! "$__sweep_path_prev__" = "$(pwd)" ]; then
         __sweep_path_prev__="$(pwd)"
-        path_history add
+        python -msweep path_history add
     fi
 }
 __sweep_path_prev__="$(pwd)"
@@ -160,13 +160,13 @@ This will result in the following key binding in your bash session
 
 ### Sway run command integration
 
-There is [sweep_kitty.py](scripts/sweep_kitty.py) which creates separate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
+There is [kitty.py](sweep/sweep/apps/kitty.py) app which creates separate kitty window. I use it to run commands in sway window manager. It requires [j4-dmenu-desktop](https://github.com/enkore/j4-dmenu-desktop) and [kitty](https://github.com/kovidgoyal/kitty) to be present.
 
 <details>
   <summary>Add this to your sway config</summary>
 
 ```
-set $run_menu j4-dmenu-desktop --display-binary --no-generic --term=kitty --dmenu='sweep-kitty --no-match=input --theme=dark --prompt="Run"' --wrapper "swaymsg -t command exec --"
+set $run_menu j4-dmenu-desktop --display-binary --no-generic --term=kitty --dmenu='python -msweep kitty --no-match=input --theme=dark --prompt="Run"' --wrapper "swaymsg -t command exec --"
 for_window [app_id="kitty" title="sweep-menu"] {
     floating enable
     sticky enable
@@ -209,7 +209,7 @@ And here is how it looks
 
 ![demo](resources/demo.gif)
 
-You can also run [`sweep/scripts/demo.py`](sweep/scripts/demo.py) to see different formatting and icon usage. Note that to render icons terminal needs to support support kitty-image or sixel.
+You can also run [`python -msweep demo`](sweep/sweep/apps/demo.py) to see different formatting and icon usage. Note that to render icons terminal needs to support support kitty-image or sixel.
 ![demo icons](resources/demo.png)
 
 ## JSON-RPC

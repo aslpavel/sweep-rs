@@ -1317,9 +1317,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c3ba0f0f74459f26b11976197b63a13bb7a8d0d70a16ca4e99b9474a6495294"
+checksum = "51dbc843da9078dc0a6213336fae7c98012e4295df2127faa7dca12e8a3d9a6a"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1919,9 +1919,9 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "surf_n_term"
-version = "0.8.6"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bab02908055b8be5fad5c8cd4c2418ae21cfff5f7518af45b9cf4d4dea45f20"
+checksum = "c187b3d4d5cb54709f718845dc2d279a74565e8c7656cce554cdd255a7860d8a"
 dependencies = [
  "flate2",
  "fnv",

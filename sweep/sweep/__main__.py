@@ -5,6 +5,7 @@ import asyncio
 import sys
 import importlib
 from .apps import ALL_APPS
+from .sweep import main as sweep_main
 
 
 async def main():
@@ -12,6 +13,7 @@ async def main():
         app_name = sys.argv[1]
         app = importlib.import_module(f".apps.{app_name}", package=__package__)
         return await app.main(sys.argv[2:])
+    return await sweep_main(sys.argv[1:])
 
 
 if __name__ == "__main__":
