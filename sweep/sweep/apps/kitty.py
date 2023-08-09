@@ -49,7 +49,6 @@ async def main(args: Optional[List[str]] = None) -> None:
         "--keep-order",
         help="keep order of elements (do not use ranking score)",
     )
-    parser.add_argument("--sweep", default="sweep", help="sweep binary")
     opts = parser.parse_args(args)
 
     candidates: List[Any]
