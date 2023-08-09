@@ -6,14 +6,16 @@ import argparse
 import asyncio
 import json
 import sys
+import shlex
 from typing import Any, List, Optional
-from ..sweep import sweep
+from .. import sweep, sweep_default_cmd
 
 
 async def main(args: Optional[List[str]] = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Run sweep inside a newly create kitty window"
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--theme", help="sweep theme")
+    parser.add_argument("--sweep", help="path to the sweep command")
+    parser.add_argument("--tty", help="path to the tty")
     parser.add_argument("--class", help="kitty window class/app_id")
     parser.add_argument("--title", help="kitty window title")
     parser.add_argument(
@@ -32,7 +34,6 @@ async def main(args: Optional[List[str]] = None) -> None:
         help="comma-seprated list of fields for limiting search",
     )
     parser.add_argument("--delimiter", help="filed delimiter")
-    parser.add_argument("--theme", help="theme as a list of comma separated attributes")
     parser.add_argument("--scorer", help="default scorer")
     parser.add_argument(
         "--json",
@@ -66,13 +67,17 @@ async def main(args: Optional[List[str]] = None) -> None:
 
     result = await sweep(
         candidates,
-        sweep=[*kitty_args, opts.sweep],
+        sweep=[
+            *kitty_args,
+            *(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd()),
+        ],
+        tty=opts.tty,
+        theme=opts.theme or "dark",
         prompt=opts.prompt,
         prompt_icon=opts.prompt_icon,
         nth=opts.nth,
         height=1024,
         delimiter=opts.delimiter,
-        theme=opts.theme,
         scorer=opts.scorer,
         keep_order=opts.keep_order,
         no_match=opts.no_match,

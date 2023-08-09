@@ -9,7 +9,7 @@ import asyncio
 import re
 import shlex
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from ..sweep import Icon, sweep, Candidate
+from .. import Icon, sweep, Candidate, sweep_default_cmd
 
 BASH_HISTORY_FILE = "~/.bash_history"
 DATE_RE = re.compile(r"^#(\d+)$")
@@ -50,13 +50,13 @@ def history(history_file: Optional[str] = None) -> Iterable[Tuple[datetime, str]
 
 async def main(args: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--theme", help="sweep theme (see sweep help)")
+    parser.add_argument("--theme", help="sweep theme")
+    parser.add_argument("--sweep", help="path to the sweep command")
+    parser.add_argument("--tty", help="path to the tty")
+    parser.add_argument("--query", help="initial query")
     parser.add_argument(
         "--history-file", default=BASH_HISTORY_FILE, help="path to history file"
     )
-    parser.add_argument("--sweep", default="sweep", help="path to the sweep command")
-    parser.add_argument("--tty", help="path to the tty")
-    parser.add_argument("--query", help="initial query")
     opts = parser.parse_args(args)
 
     candidates: List[Any] = []
@@ -70,7 +70,7 @@ async def main(args: Optional[List[str]] = None) -> None:
 
     result = await sweep(
         candidates,
-        sweep=shlex.split(opts.sweep),
+        sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         prompt="HISTORY",
         prompt_icon=TERM_ICON,
         query=opts.query,

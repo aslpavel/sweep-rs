@@ -5,8 +5,9 @@
 from __future__ import annotations
 import asyncio
 import argparse
+import shlex
 from typing import Any, List, Optional
-from ..sweep import Icon, Candidate, Sweep, Field
+from .. import Icon, Candidate, Sweep, Field, sweep_default_cmd
 import os
 
 ICON_BEER = Icon(
@@ -68,16 +69,19 @@ PANEL_RIGHT = Icon(
 
 async def main(args: Optional[List[str]] = None):
     parser = argparse.ArgumentParser(description="Demo that uses python sweep API")
-    parser.add_argument("--theme", default=None, help="color theme used")
+    parser.add_argument("--theme", help="sweep theme")
+    parser.add_argument("--sweep", help="path to the sweep command")
+    parser.add_argument("--tty", help="path to the tty")
+
     opts = parser.parse_args(args)
 
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
     async with Sweep[Any](
-        tty="/dev/tty",  # use different tty obtained with tty call "/dev/pts/0",
-        sweep=["cargo", "run", "--bin=sweep", "--"],
-        log="/tmp/sweep.log",  # nosec
+        sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
+        tty=opts.tty,
         theme=opts.theme,
+        log="/tmp/sweep-demo.log",  # nosec
     ) as sweep:
         await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)
         ref_backpack = await sweep.field_register(

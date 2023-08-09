@@ -11,7 +11,7 @@ import asyncio
 import shlex
 from typing import Any, List, NamedTuple, cast, Optional
 from gi.repository import Gio  # type: ignore
-from ..sweep import Candidate, Icon, sweep
+from .. import Candidate, Icon, sweep, sweep_default_cmd
 
 ICON = Icon(
     view_box=(0, 0, 128, 128),
@@ -62,14 +62,15 @@ async def main(args: Optional[List[str]] = None) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__,
     )
+    parser.add_argument("--theme", help="sweep theme")
+    parser.add_argument("--sweep", help="path to the sweep command")
+    parser.add_argument("--tty", help="path to the tty")
     parser.add_argument(
         "--action",
         choices=["print", "launch"],
         default="print",
         help="what to do with selected desktop entry",
     )
-    parser.add_argument("--theme", help="theme as a list of comma separated attributes")
-    parser.add_argument("--sweep", default="sweep", help="sweep binary")
     opts = parser.parse_args(args)
 
     entry = await sweep(
@@ -80,12 +81,13 @@ async def main(args: Optional[List[str]] = None) -> None:
             "Sweep Launcher",
             "--class",
             "org.sweep.launcher",
-            *shlex.split(opts.sweep or "sweep"),
+            *(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd()),
         ],
+        tty=opts.tty,
+        theme=opts.theme or "dark",
         prompt="Launcher",
         prompt_icon=ICON,
         height=1024,
-        theme=opts.theme or "dark",
         altscreen=True,
         tmp_socket=True,
         border=0,

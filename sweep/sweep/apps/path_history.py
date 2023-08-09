@@ -24,7 +24,7 @@ from typing import (
     TypedDict,
 )
 from dataclasses import dataclass
-from ..sweep import Sweep, SweepBind, Icon, SweepSelect
+from .. import Sweep, SweepBind, Icon, SweepSelect, sweep_default_cmd
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -489,14 +489,10 @@ async def main(args: Optional[List[str]] = None) -> None:
     parser_select = subparsers.add_parser(
         "select", help="interactively select path from the history or its subpaths"
     )
-    parser_select.add_argument(
-        "--theme", help="sweep theme, see sweep help from more info"
-    )
-    parser_select.add_argument(
-        "--sweep", default="sweep", help="path to the sweep command"
-    )
-    parser_select.add_argument("--query", help="initial query")
+    parser_select.add_argument("--theme", help="sweep theme")
+    parser_select.add_argument("--sweep", help="path to the sweep command")
     parser_select.add_argument("--tty", help="path to the tty")
+    parser_select.add_argument("--query", help="initial query")
     parser_select.add_argument("--log", help="path to the log file")
     parser_select.add_argument(
         "--readline",
@@ -539,10 +535,10 @@ async def main(args: Optional[List[str]] = None) -> None:
 
         result = None
         async with Sweep[PathItem](
-            sweep=shlex.split(opts.sweep),
+            sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
+            tty=opts.tty,
             theme=opts.theme,
             title="path history",
-            tty=opts.tty,
             query=query,
             log=opts.log,
         ) as sweep:
