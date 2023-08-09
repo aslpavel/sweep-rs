@@ -116,8 +116,8 @@ async def main():
                 Candidate()
                 .target_push("Muli line entry\n - Second Line")
                 .right_push(glyph=PANEL_RIGHT)
-                .right_push("right text filled")
-                .right_face_set("bg=#b1628620")
+                .right_push("right text field")
+                .right_face_set("bg=#b1628650")
             ]
         )
 
@@ -153,7 +153,7 @@ async def main():
         await sweep.items_extend(
             [
                 Candidate()
-                .target_push("Point to this item (has preview)")
+                .target_push("Point to this item (it has a preview)")
                 .preview_push("This an awesome item preview: \n")
                 .preview_push(ref=ref_cocktail)
                 .preview_push(" - cocktail\n")

@@ -4,8 +4,8 @@ use crate::{
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
-    Candidate, Field, FieldRef, Haystack, HaystackPreview, LockExt, Ranker, RankerResult,
-    ScoreResult, ScorerBuilder,
+    Field, FieldRef, Haystack, HaystackPreview, LockExt, Ranker, RankerResult, ScoreResult,
+    ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -15,6 +15,7 @@ use futures::{
     stream::TryStreamExt,
     FutureExt, Stream,
 };
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -322,7 +323,10 @@ where
     }
 }
 
-impl Sweep<Candidate> {
+impl<H> Sweep<H>
+where
+    H: Haystack + Serialize + DeserializeOwned,
+{
     pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -349,7 +353,7 @@ impl Sweep<Candidate> {
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let items: Vec<Candidate> = params.take(0, "items")?;
+                    let items: Vec<H> = params.take(0, "items")?;
                     sweep.items_extend(items);
                     Ok(Value::Null)
                 }
@@ -463,6 +467,18 @@ impl Sweep<Candidate> {
         async move {
             let serve = peer.serve(read, write);
             let events = async move {
+                // ready event
+                peer.notify_with_value(
+                    "ready",
+                    json!({
+                        "version": [
+                            env!("CARGO_PKG_VERSION_MAJOR"),
+                            env!("CARGO_PKG_VERSION_MINOR"),
+                            env!("CARGO_PKG_VERSION_PATCH"),
+                        ]
+                    }),
+                )?;
+
                 tokio::pin!(recv);
                 while let Some(event) = recv.recv().await {
                     match event {

@@ -33,12 +33,16 @@ async fn main() -> Result<(), Error> {
         return Ok(());
     }
 
-    let appnder = tracing_appender::rolling::never("/tmp", "hist.log");
-    tracing_subscriber::fmt()
-        .with_span_events(FmtSpan::CLOSE)
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_writer(appnder)
-        .init();
+    // setup log
+    if let Some(mut cache_dir) = dirs::cache_dir() {
+        cache_dir.push("chronicler");
+        let appnder = tracing_appender::rolling::never(cache_dir, "chronicler.log");
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::CLOSE)
+            .with_env_filter(EnvFilter::from_default_env())
+            .with_writer(appnder)
+            .init();
+    }
 
     let db_path = args
         .db
@@ -57,7 +61,7 @@ async fn main() -> Result<(), Error> {
             let entry = navigator.run().await?;
             std::mem::drop(navigator);
             if let Some(entry) = entry {
-                println!("{}", entry);
+                print!("{}", entry);
             }
         }
         ArgsSubcommand::Update(_args) => {
@@ -78,7 +82,7 @@ async fn main() -> Result<(), Error> {
             let entry = navigator.run().await?;
             std::mem::drop(navigator);
             if let Some(entry) = entry {
-                println!("{}", entry);
+                print!("{}", entry);
             }
         }
     }

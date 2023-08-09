@@ -60,7 +60,12 @@ impl Haystack for HistoryEntry {
                 .start_dt()
                 .and_then(|date| Ok(date.format(DATE_FORMAT)?))
             {
-                view.push_child(date);
+                view.push_child(
+                    Text::new()
+                        .push_str(&date, Some(theme.list_inactive))
+                        .put_char(' ')
+                        .take(),
+                );
             }
             view.boxed()
         }

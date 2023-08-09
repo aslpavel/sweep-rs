@@ -187,7 +187,7 @@ pub struct Args {
     #[argh(option, short = 'p', default = "\"INPUT\".to_string()")]
     pub prompt: String,
 
-    /// start sweep with the given query
+    /// initial query string
     #[argh(option, default = "String::new()")]
     pub query: String,
 
@@ -203,11 +203,11 @@ pub struct Args {
     #[argh(option, long = "delimiter", short = 'd', default = "' '")]
     pub field_delimiter: char,
 
-    /// keep order (don't use ranking score)
+    /// keep order of items, that is only filter and do not sort
     #[argh(switch, long = "keep-order")]
     pub keep_order: bool,
 
-    /// default scorer to rank candidates
+    /// default scorer to rank items
     #[argh(option, from_str_fn(scorer_arg), default = "\"fuzzy\".to_string()")]
     pub scorer: String,
 
@@ -236,15 +236,15 @@ pub struct Args {
     #[argh(switch)]
     pub altscreen: bool,
 
-    /// expect candidates in JSON format
+    /// expect candidates in JSON format (uses the same item format as RPC)
     #[argh(switch)]
     pub json: bool,
 
-    /// path/descriptor of the unix socket used to communicate instead of stdio/stdin
+    /// path or file descriptor of the unix socket used to communicate instead of stdio/stdin
     #[argh(option)]
     pub io_socket: Option<String>,
 
-    /// read input from file (ignored if --io-socket is used)
+    /// read input from the file instead of stdin, ignored if --io-socket is used
     #[argh(option)]
     pub input: Option<String>,
 
@@ -252,7 +252,7 @@ pub struct Args {
     #[argh(switch)]
     pub version: bool,
 
-    /// enable logging into specified file path configured with RUST_LOG
+    /// enable logging into specified file path, logging verbosity is configure with RUST_LOG
     #[argh(option)]
     pub log: Option<String>,
 
@@ -260,7 +260,7 @@ pub struct Args {
     #[argh(option, default = "1")]
     pub border: usize,
 
-    /// whether show preview by default
+    /// whether to show item preview by default or not
     #[argh(option, default = "true")]
     pub preview: bool,
 }
