@@ -2,18 +2,15 @@
 """Run sweep inside a newly create kitty window
 """
 from __future__ import annotations
-from pathlib import Path
 import argparse
 import asyncio
 import json
 import sys
-from typing import Any, List
-
-sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import sweep
+from typing import Any, List, Optional
+from ..sweep import sweep
 
 
-async def main() -> None:
+async def main(args: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run sweep inside a newly create kitty window"
     )
@@ -52,39 +49,39 @@ async def main() -> None:
         help="keep order of elements (do not use ranking score)",
     )
     parser.add_argument("--sweep", default="sweep", help="sweep binary")
-    args = parser.parse_args()
+    opts = parser.parse_args(args)
 
     candidates: List[Any]
-    if args.json:
+    if opts.json:
         candidates = json.load(sys.stdin)
     else:
         candidates = []
         for line in sys.stdin:
             candidates.append(line.strip())
 
-    kitty_args = ["kitty", "--title", args.title or "sweep-menu"]
-    kitty_class = getattr(args, "class", None)
+    kitty_args = ["kitty", "--title", opts.title or "sweep-menu"]
+    kitty_class = getattr(opts, "class", None)
     if kitty_class:
         kitty_args.extend(["--class", kitty_class])
 
     result = await sweep(
         candidates,
-        sweep=[*kitty_args, args.sweep],
-        prompt=args.prompt,
-        prompt_icon=args.prompt_icon,
-        nth=args.nth,
+        sweep=[*kitty_args, opts.sweep],
+        prompt=opts.prompt,
+        prompt_icon=opts.prompt_icon,
+        nth=opts.nth,
         height=1024,
-        delimiter=args.delimiter,
-        theme=args.theme,
-        scorer=args.scorer,
-        keep_order=args.keep_order,
-        no_match=args.no_match,
+        delimiter=opts.delimiter,
+        theme=opts.theme,
+        scorer=opts.scorer,
+        keep_order=opts.keep_order,
+        no_match=opts.no_match,
         altscreen=True,
         tmp_socket=True,
         border=0,
     )
 
-    if args.json:
+    if opts.json:
         json.dump(result, sys.stdout)
     else:
         print(result)

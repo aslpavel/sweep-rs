@@ -33,11 +33,13 @@ from typing import (
     List,
     NamedTuple,
     Optional,
+    Protocol,
     Set,
     Tuple,
     TypeVar,
     Union,
     cast,
+    runtime_checkable,
 )
 
 __all__ = [
@@ -190,6 +192,12 @@ class Field:
         )
 
 
+@runtime_checkable
+class ToCandidate(Protocol):
+    def to_candidate(self) -> Candidate:
+        ...
+
+
 @dataclass
 class Candidate:
     """Convenient sweep item implementation"""
@@ -201,6 +209,9 @@ class Candidate:
     right_face: Optional[str] = None
     preview: Optional[List[Any]] = None
     preview_flex: float = 0.0
+
+    def to_candidate(self):
+        return self
 
     def target_push(
         self,
@@ -383,7 +394,7 @@ class Sweep(Generic[I]):
         "_io_sock",
         "_peer",
         "_tmp_socket",
-        "_seen_candidate",
+        "_items",
     ]
 
     _args: List[str]
@@ -391,7 +402,7 @@ class Sweep(Generic[I]):
     _io_sock: Optional[socket.socket]
     _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
-    _seen_candidate: bool
+    _items: List[I]
 
     def __init__(
         self,
@@ -445,7 +456,7 @@ class Sweep(Generic[I]):
         self._io_sock = None
         self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
-        self._seen_candidate = False
+        self._items = []
 
     async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
@@ -488,6 +499,15 @@ class Sweep(Generic[I]):
         )
         return await io_sock_accept
 
+    def _item_get(self, item: Any) -> I:
+        """Return stored item if it was converted to Candidate"""
+        if isinstance(item, dict):
+            item_dict = cast(Dict[str, Any], item)
+            item_index: Optional[int] = item_dict.get("_sweep_item_index")
+            if item_index is not None and item_index < len(self._items):
+                return self._items[item_index]
+        return cast(I, item)
+
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
         await self.terminate()
         if isinstance(ev, CancelledError):
@@ -500,11 +520,7 @@ class Sweep(Generic[I]):
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
-                    if self._seen_candidate:
-                        item = event.params.get("item")
-                        yield SweepSelect(cast(I, Candidate.from_json(item)) or item)
-                    else:
-                        yield SweepSelect(event.params.get("item"))
+                    yield SweepSelect(self._item_get(event.params.get("item")))
                 elif event.method == "bind":
                     yield SweepBind(event.params.get("tag", ""))
 
@@ -531,9 +547,11 @@ class Sweep(Generic[I]):
         time_limit = 0.05
         batch: List[I | Dict[str, Any]] = []
         for item in items:
-            if isinstance(item, Candidate):
-                batch.append(item.to_json())
-                self._seen_candidate = True
+            if isinstance(item, ToCandidate):
+                candidate = item.to_candidate()
+                candidate.extra_update(_sweep_item_index=len(self._items))
+                batch.append(candidate.to_json())
+                self._items.append(item)
             else:
                 batch.append(item)
 
@@ -548,15 +566,12 @@ class Sweep(Generic[I]):
 
     async def items_clear(self) -> None:
         """Clear list of searchable items"""
+        self._items.clear()
         await self._peer.items_clear()
 
     async def items_current(self) -> Optional[I]:
         """Get currently selected item if any"""
-        item: Optional[I] = await self._peer.items_current()
-        if self._seen_candidate:
-            return cast(I, Candidate.from_json(item))
-        else:
-            return item
+        return self._item_get(await self._peer.items_current())
 
     async def query_set(self, query: str) -> None:
         """Set query string used to filter items"""

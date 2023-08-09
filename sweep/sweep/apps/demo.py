@@ -5,8 +5,8 @@
 from __future__ import annotations
 import asyncio
 import argparse
-from typing import Any
-from sweep import *
+from typing import Any, List, Optional
+from ..sweep import Icon, Candidate, Sweep, Field
 import os
 
 ICON_BEER = Icon(
@@ -66,10 +66,10 @@ PANEL_RIGHT = Icon(
 )
 
 
-async def main():
-    args = argparse.ArgumentParser("Demo that uses python sweep API")
-    args.add_argument("--theme", default=None, help="color theme used")
-    opts = args.parse_args()
+async def main(args: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser(description="Demo that uses python sweep API")
+    parser.add_argument("--theme", default=None, help="color theme used")
+    opts = parser.parse_args(args)
 
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 

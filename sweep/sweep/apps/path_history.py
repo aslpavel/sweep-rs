@@ -8,12 +8,10 @@ from pathlib import Path
 import argparse
 import asyncio
 import fcntl
-import inspect
 import io
 import os
 import re
 import shlex
-import sys
 import time
 from typing import (
     Callable,
@@ -26,9 +24,7 @@ from typing import (
     TypedDict,
 )
 from dataclasses import dataclass
-
-sys.path.insert(0, str(Path(__file__).expanduser().resolve().parent))
-from sweep import Sweep, SweepBind, Icon, SweepSelect
+from ..sweep import Sweep, SweepBind, Icon, SweepSelect
 
 
 PATH_HISTORY_FILE = "~/.path_history"
@@ -477,9 +473,9 @@ class ReadLine:
         return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\nREADLINE_MARK={mark}\n'
 
 
-async def main() -> None:
+async def main(args: Optional[List[str]] = None) -> None:
     """Maintain and navigate visited path history"""
-    parser = argparse.ArgumentParser(description=inspect.getdoc(main))
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--history-file",
         default=PATH_HISTORY_FILE,
@@ -507,7 +503,7 @@ async def main() -> None:
         action="store_true",
         help="complete based on readline variable",
     )
-    opts = parser.parse_args()
+    opts = parser.parse_args(args)
 
     path_history = PathHistoryStore(opts.history_file)
 
