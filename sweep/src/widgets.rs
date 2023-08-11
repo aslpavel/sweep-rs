@@ -54,7 +54,7 @@ impl Theme {
             if theme_is_light {
                 Some(bg.blend_over(fg.with_alpha(0.12)))
             } else {
-                Some(bg.blend_over(fg.with_alpha(0.05)))
+                Some(bg.blend_over(fg.with_alpha(0.04)))
             },
             FaceAttrs::EMPTY,
         );

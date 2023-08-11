@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
-# pyright: strict
 """Application launcher
 
 Lists all available desktop entries on the system
 """
+# pyright: strict
 from __future__ import annotations
 
 import argparse
@@ -11,7 +10,8 @@ import asyncio
 import shlex
 from typing import Any, List, NamedTuple, cast, Optional
 from gi.repository import Gio  # type: ignore
-from .. import Candidate, Icon, sweep, sweep_default_cmd
+from .. import Candidate, Icon, sweep
+from . import sweep_default_cmd
 
 
 ICON = Icon(

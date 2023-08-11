@@ -1,14 +1,15 @@
-#!/usr/bin/env python3
-# pyright: strict
 """Demo program that shows different functionality
 """
+# pyright: strict
 from __future__ import annotations
 import asyncio
 import argparse
 import shlex
-from typing import Any, List, Optional
-from .. import Icon, Candidate, Sweep, Field, sweep_default_cmd
 import os
+from typing import Any, List, Optional
+from .. import Icon, Candidate, Sweep, Field
+from . import sweep_default_cmd
+
 
 ICON_BEER = Icon(
     path="M8.5 10A.75.75 0 0 0 7 10v7a.75.75 0 0 0 1.5 0v-7ZM11.5 10a.75.75 0 0 "

@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 """Run sweep inside a newly create kitty window
 """
+# pyright: strict
 from __future__ import annotations
 import argparse
 import asyncio
@@ -8,7 +8,8 @@ import json
 import sys
 import shlex
 from typing import Any, List, Optional
-from .. import sweep, sweep_default_cmd
+from .. import sweep
+from . import sweep_default_cmd
 
 
 async def main(args: Optional[List[str]] = None) -> None:

@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 """Simple tool to maintain and navigate visited path history
 """
+# pyright: strict
 from __future__ import annotations
 from collections import deque
 from datetime import datetime
@@ -24,7 +24,8 @@ from typing import (
     TypedDict,
 )
 from dataclasses import dataclass
-from .. import Sweep, SweepBind, Icon, SweepSelect, sweep_default_cmd
+from .. import Sweep, SweepBind, Icon, SweepSelect
+from . import sweep_default_cmd
 
 
 PATH_HISTORY_FILE = "~/.path_history"

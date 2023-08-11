@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
 """Interactively choose entry from bash history
 """
+# pyright: strict
 from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +9,8 @@ import asyncio
 import re
 import shlex
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from .. import Icon, sweep, Candidate, sweep_default_cmd
+from .. import Icon, sweep, Candidate
+from . import sweep_default_cmd
 
 BASH_HISTORY_FILE = "~/.bash_history"
 DATE_RE = re.compile(r"^#(\d+)$")
