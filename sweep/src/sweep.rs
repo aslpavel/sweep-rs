@@ -28,8 +28,8 @@ use std::{
 use surf_n_term::{
     encoder::ColorDepth,
     view::{Align, Container, Flex, IntoView, Margins, Text, View, ViewContext},
-    DecMode, Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal,
-    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
+    Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal, Terminal,
+    TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -929,16 +929,12 @@ where
     tracing::debug!(?options.theme);
 
     // initialize terminal
-    term.execute(TerminalCommand::DecModeSet {
-        enable: false,
-        mode: DecMode::VisibleCursor,
-    })?;
-    term.execute(TerminalCommand::Title(options.title.clone()))?;
+    term.execute_many([
+        TerminalCommand::visible_cursor_set(false),
+        TerminalCommand::Title(options.title.clone()),
+    ])?;
     if options.altscreen {
-        term.execute(TerminalCommand::DecModeSet {
-            enable: true,
-            mode: DecMode::AltScreen,
-        })?;
+        term.execute(TerminalCommand::altscreen_set(true))?;
     }
 
     // Force dumb four color theme for dumb terminal
@@ -1106,10 +1102,7 @@ where
         col: 0,
     }))?;
     if options.altscreen {
-        term.execute(TerminalCommand::DecModeSet {
-            enable: false,
-            mode: DecMode::AltScreen,
-        })?;
+        term.execute(TerminalCommand::altscreen_set(false))?;
     }
     term.poll(Some(Duration::new(0, 0)))?;
     std::mem::drop(term);

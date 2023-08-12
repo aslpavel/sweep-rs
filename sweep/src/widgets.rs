@@ -495,7 +495,7 @@ impl Input {
 impl<'a> View for &'a Input {
     fn render<'b>(
         &self,
-        _ctx: &ViewContext,
+        ctx: &ViewContext,
         surf: &'b mut TerminalSurface<'b>,
         layout: &Tree<Layout>,
     ) -> Result<(), Error> {
@@ -505,14 +505,17 @@ impl<'a> View for &'a Input {
         let mut surf = layout.apply_to(surf);
         surf.erase(self.theme.input);
 
-        let mut writer = surf.writer().face(self.theme.input);
+        let mut writer = surf.writer(ctx).with_face(self.theme.input);
         for c in self.before[self.offset()..].iter() {
-            writer.put(Cell::new_char(self.theme.input, Some(*c)));
+            writer.put(Cell::new_char(self.theme.input, *c));
         }
         let mut iter = self.after.iter().rev();
-        writer.put(Cell::new_char(self.theme.cursor, iter.next().copied()));
+        writer.put(Cell::new_char(
+            self.theme.cursor,
+            iter.next().copied().unwrap_or(' '),
+        ));
         for c in iter {
-            writer.put(Cell::new_char(self.theme.input, Some(*c)));
+            writer.put(Cell::new_char(self.theme.input, *c));
         }
 
         Ok(())
