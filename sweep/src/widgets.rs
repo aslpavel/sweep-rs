@@ -142,7 +142,7 @@ impl Theme {
         let stats = Face::new(Some(bg), Some(accent), FaceAttrs::EMPTY);
         let list_selected = Face::new(Some(fg), Some(color1), FaceAttrs::EMPTY);
         let list_selected_indicator = Text::new()
-            .push_str("> ", Some(Face::default().with_fg(Some(accent))))
+            .push_str(" > ", Some(Face::default().with_fg(Some(accent))))
             .take();
         let list_text = Face::default().with_fg(list_selected.fg);
         Self {
