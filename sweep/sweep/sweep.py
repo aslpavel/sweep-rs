@@ -230,7 +230,7 @@ class Candidate:
     def right_push(
         self,
         text: str = "",
-        active: bool = True,
+        active: bool = False,
         glyph: Optional[Icon] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
@@ -254,7 +254,7 @@ class Candidate:
     def preview_push(
         self,
         text: str = "",
-        active: bool = True,
+        active: bool = False,
         glyph: Optional[Icon] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
@@ -505,7 +505,7 @@ class Sweep(Generic[I]):
             item_dict = cast(Dict[str, Any], item)
             item_index: Optional[int] = item_dict.get("_sweep_item_index")
             if item_index is not None and item_index < len(self._items):
-                return self._items[item_index]
+                return self._items[item_index] # type: ignore
         return cast(I, item)
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:

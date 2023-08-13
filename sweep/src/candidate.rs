@@ -30,6 +30,8 @@ struct CandidateInner {
     preview: Vec<Field<'static>>,
     /// Preview flex value
     preview_flex: f64,
+    /// Preview haystack position (offset in [Position] to preview match)
+    preview_haystack_position: usize,
     /// Extra fields extracted from candidate object during parsing, this
     /// can be useful when candidate has some additional data associated with it
     extra: HashMap<String, Value>,
@@ -60,6 +62,9 @@ impl Candidate {
         preview: Vec<Field<'static>>,
         preview_flex: f64,
     ) -> Self {
+        let preview_haystack_position = fields_haystack(&target)
+            .chain(fields_haystack(&right))
+            .count();
         Self {
             inner: Arc::new(CandidateInner {
                 target,
@@ -69,6 +74,7 @@ impl Candidate {
                 right_face,
                 preview,
                 preview_flex: preview_flex.max(0.0),
+                preview_haystack_position,
             }),
         }
     }
@@ -149,12 +155,10 @@ impl Candidate {
     }
 
     /// Searchable characters
-    fn chars(&self) -> impl Iterator<Item = char> + '_ {
-        self.inner
-            .target
-            .iter()
-            .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
-            .flatten()
+    fn haystack(&self) -> impl Iterator<Item = char> + '_ {
+        fields_haystack(&self.inner.target)
+            .chain(fields_haystack(&self.inner.right))
+            .chain(fields_haystack(&self.inner.preview))
     }
 
     /// Fields with additional information show on the right
@@ -361,7 +365,7 @@ impl Haystack for Candidate {
     where
         S: FnMut(char),
     {
-        self.chars().for_each(scope);
+        self.haystack().for_each(scope);
     }
 
     fn view(&self, positions: &Positions, theme: &Theme, refs: FieldRefs) -> Box<dyn View> {
@@ -380,12 +384,12 @@ impl Haystack for Candidate {
         // right side
         let right = fields_view(
             self.right(),
-            &Positions::new(0),
+            positions,
             &mut positions_offset,
             &refs,
             theme.list_text,
             theme.list_highlight,
-            theme.list_inactive,
+            theme.list_text,
         );
 
         let mut view = Flex::row()
@@ -407,24 +411,38 @@ impl Haystack for Candidate {
         view.boxed()
     }
 
-    fn preview(&self, theme: &Theme, refs: FieldRefs) -> Option<HaystackPreview> {
+    fn preview(
+        &self,
+        positions: &Positions,
+        theme: &Theme,
+        refs: FieldRefs,
+    ) -> Option<HaystackPreview> {
         if self.inner.preview.is_empty() {
             return None;
         }
+        let mut positions_offset = self.inner.preview_haystack_position;
         let preview = fields_view(
             &self.inner.preview,
-            &Positions::new(0),
-            &mut 0,
+            &positions,
+            &mut positions_offset,
             &refs,
             theme.list_text,
             theme.list_highlight,
-            theme.list_inactive,
+            theme.list_text,
         );
         Some(HaystackPreview::new(
             preview.boxed(),
             Some(self.inner.preview_flex),
         ))
     }
+}
+
+/// Extract searchable character from fields list
+pub fn fields_haystack<'a>(fields: &'a [Field<'_>]) -> impl Iterator<Item = char> + 'a {
+    fields
+        .iter()
+        .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
+        .flatten()
 }
 
 /// Convert fields into [Text] view

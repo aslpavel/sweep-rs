@@ -682,9 +682,11 @@ where
 
     // get preview of the currently pointed haystack item
     fn preview(&self) -> Option<HaystackPreview> {
-        self.list
-            .current()
-            .and_then(|item| item.result.haystack.preview(&self.theme, self.refs.clone()))
+        self.list.current().and_then(|item| {
+            item.result
+                .haystack
+                .preview(&item.result.positions, &self.theme, self.refs.clone())
+        })
     }
 
     fn theme_set(&mut self, theme: Theme) {

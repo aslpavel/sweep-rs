@@ -235,7 +235,12 @@ impl Haystack for ActionDesc {
             .boxed()
     }
 
-    fn preview(&self, _theme: &Theme, _refs: FieldRefs) -> Option<HaystackPreview> {
+    fn preview(
+        &self,
+        _positions: &Positions,
+        _theme: &Theme,
+        _refs: FieldRefs,
+    ) -> Option<HaystackPreview> {
         let desc = Text::new().push_str(&self.description, None).take();
         Some(HaystackPreview::new(
             Container::new(desc).boxed(),
