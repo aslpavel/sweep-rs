@@ -262,7 +262,7 @@ class Candidate:
         """Add field to the preview (text shown when item is highlighted)"""
         if self.preview is None:
             self.preview = []
-        self.preview.append(Field(text, active, glyph, face, ref))
+        self.preview.append(Field(text or "", active, glyph, face, ref))
         return self
 
     def preview_flex_set(self, flex: float) -> Candidate:

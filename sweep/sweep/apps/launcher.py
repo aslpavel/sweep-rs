@@ -8,11 +8,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shlex
+import re
 from typing import Any, List, NamedTuple, cast, Optional
 from gi.repository import Gio  # type: ignore
 from .. import Candidate, Icon, sweep
 from . import sweep_default_cmd
-
 
 ICON = Icon(
     view_box=(0, 0, 24, 24),
@@ -35,10 +35,48 @@ ICON = Icon(
 
 
 class DesktopEntry(NamedTuple):
+    CLEANUP_RE = re.compile("@@[a-zA-Z]?")
+    URL_RE = re.compile("%[uUfF]")
+
     app_info: Any  # Gio.AppInfo https://lazka.github.io/pgi-docs/#Gio-2.0/classes/DesktopAppInfo.html#Gio.DesktopAppInfo
 
+    def commandline(self, path: Optional[str] = None, term: str = "kitty") -> str:
+        """Get command line required to launch app"""
+        cmd: str = self.app_info.get_commandline()
+        cmd = self.CLEANUP_RE.sub("", cmd)
+        cmd = self.URL_RE.sub(path or "", cmd).strip()
+        if self.requires_terminal():
+            return f"{term} {cmd}"
+        return cmd
+
+    def requires_terminal(self) -> bool:
+        """Whether app needs to be run in a terminal"""
+        return self.app_info.get_boolean("Terminal")
+
+    def app_id(self) -> str:
+        """Return app_id"""
+        return self.app_info.get_id().strip().removesuffix(".desktop")
+
+    def description(self) -> str:
+        """Return app description"""
+        return self.app_info.get_description() or ""
+
     def to_candidate(self) -> Candidate:
-        return Candidate().target_push(self.app_info.get_display_name())
+        return (
+            Candidate()
+            .target_push(self.app_info.get_display_name())
+            .preview_flex_set(1.0)
+            .preview_push(f"{self.description() or 'No description'}\n\n")
+            .preview_push(f"cmd     : {self.commandline()}\n")
+            .preview_push(f"icon    : {self.app_info.get_icon()}\n")
+            .preview_push(f"id      : {self.app_id()}\n")
+            .preview_push(f"name    : {self.app_info.get_name()}\n")
+            .preview_push(f"term    : {self.requires_terminal()}\n")
+            .preview_push(f"file    : {self.app_info.get_filename()}\n")
+            .preview_push(f"gname   : {self.app_info.get_generic_name()}\n")
+            .preview_push(f"kw      : {' '.join(self.app_info.get_keywords())}\n")
+            .preview_push(f"actions : {self.app_info.list_actions()}\n")
+        )
 
     @staticmethod
     def get_all() -> List[DesktopEntry]:
