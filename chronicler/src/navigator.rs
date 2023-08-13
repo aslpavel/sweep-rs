@@ -13,7 +13,9 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use sweep::{surf_n_term::Glyph, Haystack, HaystackPreview, Sweep, SweepEvent, SweepOptions};
+use sweep::{
+    surf_n_term::Glyph, Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
+};
 
 #[derive(Debug, Clone)]
 pub enum NavigatorItem {
@@ -46,11 +48,16 @@ impl Haystack for NavigatorItem {
         }
     }
 
-    fn preview(&self, theme: &sweep::Theme, refs: sweep::FieldRefs) -> Option<HaystackPreview> {
+    fn preview(
+        &self,
+        positions: &Positions,
+        theme: &sweep::Theme,
+        refs: sweep::FieldRefs,
+    ) -> Option<HaystackPreview> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.preview(theme, refs),
-            History(history) => history.preview(theme, refs),
+            Path(path) => path.preview(positions, theme, refs),
+            History(history) => history.preview(positions, theme, refs),
         }
     }
 }

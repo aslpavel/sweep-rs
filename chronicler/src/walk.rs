@@ -49,6 +49,7 @@ impl Haystack for PathItem {
 
     fn preview(
         &self,
+        _positions: &sweep::Positions,
         _theme: &sweep::Theme,
         _refs: sweep::FieldRefs,
     ) -> Option<sweep::HaystackPreview> {
