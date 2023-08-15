@@ -47,6 +47,8 @@ __all__ = [
     "SweepSelect",
     "SweepBind",
     "SweepEvent",
+    "Bind",
+    "BindHandler",
     "Icon",
     "sweep",
     "Candidate",
@@ -350,11 +352,36 @@ class Candidate:
 
 
 SweepEvent = Union[SweepBind, SweepSelect[I]]
+BindHandler = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
+
+
+@dataclass
+class Bind(Generic[I]):
+    key: str
+    tag: str
+    desc: str
+    handler: BindHandler[I]
+
+    @staticmethod
+    def decorator(key: str, tag: str, desc: str) -> Callable[[BindHandler[I]], Bind[I]]:
+        """Decorator to easier define binds
+
+        >>> @Bind.decorator("ctrl+c", "my.action", "My awesome action")
+        >>> async def my_action(_sweep, _tag):
+        >>>     pass
+        """
+
+        def bind_decorator(handler: BindHandler[I]) -> Bind[I]:
+            return Bind(key, tag, desc, handler)
+
+        return bind_decorator
 
 
 async def sweep(
     items: Iterable[I],
     prompt_icon: Optional[Icon | str] = None,
+    binds: Optional[List[Bind[I]]] = None,
+    fields: Optional[Dict[int, Any]] = None,
     **options: Any,
 ) -> Optional[I]:
     """Convenience wrapper around `Sweep`
@@ -362,16 +389,30 @@ async def sweep(
     Useful when you only need to select one candidate from a list of items
     """
     async with Sweep[I](**options) as sweep:
+        # setup fields
+        for field_ref, field in (fields or {}).items():
+            await sweep.field_register(field, field_ref)
+
+        # setup binds
+        for bind in binds or []:
+            await sweep.bind(bind.key, bind.tag, bind.desc, bind.handler)
+
+        # setup prompt
         if not isinstance(prompt_icon, (Icon, type(None))):
             icon = Icon.from_str_or_file(prompt_icon)
             if icon is None:
                 raise ValueError(f"invalid prompt icon: {prompt_icon}")
             prompt_icon = icon
         await sweep.prompt_set(prompt=options.get("prompt"), icon=prompt_icon)
+
+        # send items
         await sweep.items_extend(items)
+
+        # wait events
         async for event in sweep:
             if isinstance(event, SweepSelect):
                 return event.item
+
     return None
 
 
@@ -395,6 +436,7 @@ class Sweep(Generic[I]):
         "_peer",
         "_tmp_socket",
         "_items",
+        "_binds",
     ]
 
     _args: List[str]
@@ -403,6 +445,7 @@ class Sweep(Generic[I]):
     _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
     _items: List[I]
+    _binds: Dict[str, BindHandler[I]]
 
     def __init__(
         self,
@@ -457,6 +500,7 @@ class Sweep(Generic[I]):
         self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
         self._items = []
+        self._binds = {}
 
     async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
@@ -505,7 +549,7 @@ class Sweep(Generic[I]):
             item_dict = cast(Dict[str, Any], item)
             item_index: Optional[int] = item_dict.get("_sweep_item_index")
             if item_index is not None and item_index < len(self._items):
-                return self._items[item_index] # type: ignore
+                return self._items[item_index]  # type: ignore
         return cast(I, item)
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
@@ -522,7 +566,14 @@ class Sweep(Generic[I]):
                 if event.method == "select":
                     yield SweepSelect(self._item_get(event.params.get("item")))
                 elif event.method == "bind":
-                    yield SweepBind(event.params.get("tag", ""))
+                    tag = event.params.get("tag", "")
+                    handler = self._binds.get(tag)
+                    if handler is None:
+                        yield SweepBind(event.params.get("tag", ""))
+                    else:
+                        item = await handler(self, tag)
+                        if item is not None:
+                            yield SweepSelect(item)
 
         return event_iter()
 
@@ -536,9 +587,9 @@ class Sweep(Generic[I]):
         if proc is not None:
             await proc.wait()
 
-    async def field_register(self, field: Any) -> int:
+    async def field_register(self, field: Any, ref: Optional[int] = None) -> int:
         return await self._peer.field_register(
-            field.to_json() if isinstance(field, Field) else field
+            field.to_json() if isinstance(field, Field) else field, ref
         )
 
     async def items_extend(self, items: Iterable[I]) -> None:
@@ -600,8 +651,26 @@ class Sweep(Generic[I]):
         """Whether to show preview associated with the current item"""
         await self._peer.preview_set(value=value)
 
-    async def bind(self, key: str, tag: str, desc: str = "") -> None:
-        """Assign new key binding"""
+    async def bind(
+        self,
+        key: str,
+        tag: str,
+        desc: str = "",
+        handler: Optional[BindHandler[I]] = None,
+    ) -> None:
+        """Assign new key binding
+
+        Arguments:
+            - `key` chord combination that triggers the bind
+            - `tag` unique bind identifier if it is empty bind is removed
+            - `description` of the bind shown in sweep help
+            - `handler` callback if it no specified `SweepBind` event is generated
+               otherwise, it called on key press
+        """
+        if tag and handler:
+            self._binds[tag] = handler
+        else:
+            self._binds.pop(tag, None)
         await self._peer.bind(key=key, tag=tag, desc=desc)
 
 
@@ -910,8 +979,11 @@ class RpcPeer:
     def _handle_message(self, message: RpcMessage) -> None:
         """Handle incoming messages"""
         if isinstance(message, RpcRequest):
+            # Events
             if message.id is None:
                 self._events(message)
+
+            # Requests
             handler = self._handlers.get(message.method)
             if handler is not None:
                 create_task(
@@ -924,6 +996,7 @@ class RpcPeer:
                 )
                 self._submit_message(error)
         else:
+            # Responses
             future = self._requests.pop(message.id, None)
             if isinstance(message, RpcError):
                 if message.id is None:

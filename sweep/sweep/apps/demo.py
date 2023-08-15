@@ -8,8 +8,7 @@ import shlex
 import os
 from typing import Any, List, Optional
 
-from sweep import SweepEvent
-from .. import Icon, Candidate, Sweep, Field
+from .. import Icon, Candidate, Field, Bind, sweep
 from . import sweep_default_cmd
 
 
@@ -80,103 +79,70 @@ async def main(args: Optional[List[str]] = None) -> None:
 
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
-    event: Optional[SweepEvent[Any]] = None
-    async with Sweep[Any](
+    @Bind.decorator("ctrl+q", "user.custom.action", "My awesome custom action")
+    async def ctrl_q_action(_sweep: Any, _tag: str) -> Optional[Any]:
+        return ctrl_q_action
+
+    ref_backpack = 1
+    ref_cocktail = 2
+    fields = {
+        ref_backpack: Field(glyph=ICON_BACKPACK, face="fg=#076678"),
+        ref_cocktail: Field(glyph=ICON_COCKTAIL),
+    }
+
+    candidates = [
+        # simple fields
+        "Simple string entry",
+        Candidate()
+        .target_push("Disabled text: ", active=False)
+        .target_push("Enabled text"),
+        # colored text
+        Candidate()
+        .target_push("Colored", face="fg=#8f3f71,bold,underline")
+        .target_push(" ")
+        .target_push("Text", face="fg=#fbf1c7,bg=#79740e,italic"),
+        # multi line entry
+        Candidate()
+        .target_push("Muli line entry\n - Second Line")
+        .right_push(glyph=PANEL_RIGHT)
+        .right_push("right text field")
+        .right_face_set("bg=#b1628650"),
+        # direct glyph icon usage example
+        Candidate()
+        .target_push("Entry with beer icon: ")
+        .target_push(glyph=ICON_BEER, face="fg=#cc241d"),
+        # glyph icon used from reference
+        Candidate()
+        .target_push("Entry with reference to backpack: ")
+        .target_push(ref=ref_backpack),
+        # right text
+        Candidate()
+        .target_push("Entry with additional data to the right")
+        .right_push(ref=ref_cocktail, face="fg=#427b58")
+        .right_push(" Have a cocktail"),
+        # has preview
+        Candidate()
+        .target_push("Point to this item (it has a preview)")
+        .preview_push("This an awesome item preview: \n")
+        .preview_push(ref=ref_cocktail)
+        .preview_push(" - cocktail\n", active=True)
+        .preview_push(glyph=ICON_BEER)
+        .preview_push(" - beer\n", active=True)
+        .preview_push(glyph=ICON_BACKPACK)
+        .preview_push(" - backpack", active=True),
+    ]
+
+    result = await sweep(
+        candidates,
+        binds=[ctrl_q_action],
+        fields=fields,
+        prompt_icon=ICON_COCKTAIL,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         tty=opts.tty,
         theme=opts.theme,
         log="/tmp/sweep-demo.log",  # nosec
-    ) as sweep:
-        await sweep.prompt_set(prompt="Demo", icon=ICON_COCKTAIL)
-        ref_backpack = await sweep.field_register(
-            Field(glyph=ICON_BACKPACK, face="fg=#076678")
-        )
-        ref_cocktail = await sweep.field_register(Field(glyph=ICON_COCKTAIL))
-        await sweep.bind(
-            "ctrl+q",
-            "user.custom.action",
-            "My awesome custom user action",
-        )
-
-        # simple fields
-        await sweep.items_extend(
-            [
-                "Simple string entry",
-                Candidate()
-                .target_push("Disabled text: ", active=False)
-                .target_push("Enabled text"),
-            ]
-        )
-
-        # colored text
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Colored", face="fg=#8f3f71,bold,underline")
-                .target_push(" ")
-                .target_push("Text", face="fg=#fbf1c7,bg=#79740e,italic"),
-            ]
-        )
-
-        # multi line entry
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Muli line entry\n - Second Line")
-                .right_push(glyph=PANEL_RIGHT)
-                .right_push("right text field")
-                .right_face_set("bg=#b1628650")
-            ]
-        )
-
-        # direct glyph icon usage example
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Entry with beer icon: ")
-                .target_push(glyph=ICON_BEER, face="fg=#cc241d")
-            ]
-        )
-
-        # glyph icon used from reference
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Entry with reference to backpack: ")
-                .target_push(ref=ref_backpack)
-            ]
-        )
-
-        # right text
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Entry with additional data to the right")
-                .right_push(ref=ref_cocktail, face="fg=#427b58")
-                .right_push(" Have a cocktail")
-            ]
-        )
-
-        # has preview
-        await sweep.items_extend(
-            [
-                Candidate()
-                .target_push("Point to this item (it has a preview)")
-                .preview_push("This an awesome item preview: \n")
-                .preview_push(ref=ref_cocktail)
-                .preview_push(" - cocktail\n", active=True)
-                .preview_push(glyph=ICON_BEER)
-                .preview_push(" - beer\n", active=True)
-                .preview_push(glyph=ICON_BACKPACK)
-                .preview_push(" - backpack", active=True)
-                # .preview_flex_set(0.5)
-            ]
-        )
-
-
-        async for event in sweep:
-            break
-    print(event)
+    )
+    print(result)
 
 
 if __name__ == "__main__":
