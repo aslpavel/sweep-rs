@@ -1,4 +1,7 @@
-use crate::{Haystack, HaystackPreview, LockExt, Positions, Theme};
+use crate::{
+    rpc::{RpcParams, RpcPeer},
+    Haystack, HaystackPreview, LockExt, Positions, Theme,
+};
 use anyhow::Error;
 use futures::Stream;
 use serde::{
@@ -159,25 +162,44 @@ impl Candidate {
     }
 
     /// Searchable characters
-    fn haystack(&self) -> impl Iterator<Item = char> + '_ {
+    pub fn haystack(&self) -> impl Iterator<Item = char> + '_ {
         fields_haystack(&self.inner.target)
             .chain(fields_haystack(&self.inner.right))
             .chain(fields_haystack(&self.inner.preview))
     }
 
     /// Fields with additional information show on the right
-    fn right(&self) -> &[Field<'_>] {
+    pub fn right(&self) -> &[Field<'_>] {
         &self.inner.right
     }
 
     /// Amount of space reserved for the right fields
-    fn right_offset(&self) -> usize {
+    pub fn right_offset(&self) -> usize {
         self.inner.right_offset
     }
 
     /// Face used to fill right fields
-    fn right_face(&self) -> Option<Face> {
+    pub fn right_face(&self) -> Option<Face> {
         self.inner.right_face
+    }
+
+    /// Candidate setup
+    pub fn setup(peer: RpcPeer, refs: FieldRefs) {
+        // register field
+        peer.register("field_register", {
+            move |mut params: RpcParams| {
+                let refs = refs.clone();
+                async move {
+                    let field: Field = params.take(0, "field")?;
+                    let ref_id_opt: Option<usize> = params.take_opt(1, "id")?;
+                    Ok(refs.with_mut(move |refs| {
+                        let ref_id = ref_id_opt.unwrap_or(refs.len());
+                        refs.insert(FieldRef(ref_id), field);
+                        ref_id
+                    }))
+                }
+            }
+        });
     }
 }
 
@@ -365,6 +387,8 @@ impl<'a> Iterator for SplitInclusive<'a> {
 }
 
 impl Haystack for Candidate {
+    type Context = FieldRefs;
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),
@@ -372,14 +396,14 @@ impl Haystack for Candidate {
         self.haystack().for_each(scope);
     }
 
-    fn view(&self, positions: &Positions, theme: &Theme, refs: FieldRefs) -> Box<dyn View> {
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
             self.target(),
             positions,
             &mut positions_offset,
-            &refs,
+            ctx,
             theme.list_text,
             theme.list_highlight,
             theme.list_inactive,
@@ -390,7 +414,7 @@ impl Haystack for Candidate {
             self.right(),
             positions,
             &mut positions_offset,
-            &refs,
+            ctx,
             theme.list_text,
             theme.list_highlight,
             theme.list_text,
@@ -417,9 +441,9 @@ impl Haystack for Candidate {
 
     fn preview(
         &self,
+        ctx: &Self::Context,
         positions: &Positions,
         theme: &Theme,
-        refs: FieldRefs,
     ) -> Option<HaystackPreview> {
         if self.inner.preview.is_empty() {
             return None;
@@ -429,7 +453,7 @@ impl Haystack for Candidate {
             &self.inner.preview,
             &positions,
             &mut positions_offset,
-            &refs,
+            ctx,
             theme.list_text,
             theme.list_highlight,
             theme.list_text,

@@ -1,4 +1,4 @@
-use crate::{haystack_default_view, FieldRefs, Haystack, HaystackPreview, Positions};
+use crate::{haystack_default_view, Haystack, HaystackPreview, Positions};
 use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, str::FromStr};
 use surf_n_term::{
     common::clamp,
@@ -203,6 +203,8 @@ pub struct ActionDesc {
 }
 
 impl Haystack for ActionDesc {
+    type Context = ();
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),
@@ -210,7 +212,7 @@ impl Haystack for ActionDesc {
         self.name.chars().for_each(scope);
     }
 
-    fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
+    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             (|| {
@@ -237,9 +239,9 @@ impl Haystack for ActionDesc {
 
     fn preview(
         &self,
+        _ctx: &Self::Context,
         _positions: &Positions,
         _theme: &Theme,
-        _refs: FieldRefs,
     ) -> Option<HaystackPreview> {
         let desc = Text::new().push_str(&self.description, None).take();
         Some(HaystackPreview::new(

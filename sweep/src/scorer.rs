@@ -1,4 +1,4 @@
-use crate::{candidate::FieldRefs, Theme};
+use crate::Theme;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -11,6 +11,8 @@ use surf_n_term::view::{Text, View};
 ///
 /// Item that can scored against the needle by the scorer.
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
+    type Context: Clone + Send;
+
     /// Scope function is called with all characters one after another that will
     /// be searchable by [Scorer]
     fn haystack_scope<S>(&self, scope: S)
@@ -18,16 +20,16 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
         S: FnMut(char);
 
     /// Creates haystack view from matched positions and theme
-    fn view(&self, positions: &Positions, theme: &Theme, _refs: FieldRefs) -> Box<dyn View> {
+    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
         haystack_default_view(self, positions, theme).boxed()
     }
 
     /// Large preview of pointed item
     fn preview(
         &self,
+        _ctx: &Self::Context,
         _positions: &Positions,
         _theme: &Theme,
-        _refs: FieldRefs,
     ) -> Option<HaystackPreview> {
         None
     }
@@ -67,6 +69,8 @@ pub fn haystack_default_view(
 }
 
 impl Haystack for String {
+    type Context = ();
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),
@@ -76,6 +80,8 @@ impl Haystack for String {
 }
 
 impl Haystack for &'static str {
+    type Context = ();
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),

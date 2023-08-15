@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use sweep::{Candidate, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme};
+use sweep::{Candidate, FieldRefs, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -91,26 +91,32 @@ async fn main() -> Result<(), Error> {
         }
     };
 
-    let sweep: Sweep<Candidate> = Sweep::new(SweepOptions {
-        height: args.height,
-        prompt: args.prompt.clone(),
-        theme: Theme {
-            show_preview: args.preview,
-            ..args.theme
+    let field_refs = FieldRefs::default();
+    let sweep: Sweep<Candidate> = Sweep::new(
+        field_refs.clone(),
+        SweepOptions {
+            height: args.height,
+            prompt: args.prompt.clone(),
+            theme: Theme {
+                show_preview: args.preview,
+                ..args.theme
+            },
+            keep_order: args.keep_order,
+            tty_path: args.tty_path.clone(),
+            title: args.title.clone(),
+            scorers: VecDeque::new(),
+            altscreen: args.altscreen,
+            border: args.border,
+            ..SweepOptions::default()
         },
-        keep_order: args.keep_order,
-        tty_path: args.tty_path.clone(),
-        title: args.title.clone(),
-        scorers: VecDeque::new(),
-        altscreen: args.altscreen,
-        border: args.border,
-        ..SweepOptions::default()
-    })?;
+    )?;
     sweep.query_set(args.query.clone());
     sweep.scorer_by_name(Some(args.scorer)).await?;
 
     if args.rpc {
-        sweep.serve(input, output).await?;
+        sweep
+            .serve(input, output, |peer| Candidate::setup(peer, field_refs))
+            .await?;
     } else {
         if args.json {
             let mut data: Vec<u8> = Vec::new();

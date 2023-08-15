@@ -1,11 +1,10 @@
 use crate::{
-    candidate::{FieldRefs, VecDeserializeSeed},
+    candidate::VecDeserializeSeed,
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
-    Field, FieldRef, Haystack, HaystackPreview, LockExt, Ranker, RankerResult, ScoreResult,
-    ScorerBuilder,
+    Haystack, HaystackPreview, Ranker, RankerResult, ScoreResult, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -80,13 +79,17 @@ impl Default for SweepOptions {
 }
 
 /// Simple sweep function when you just need to select single entry from the stream of items
-pub async fn sweep<IS, I, E>(items: IS, options: Option<SweepOptions>) -> Result<Option<I>, Error>
+pub async fn sweep<IS, I, E>(
+    items: IS,
+    items_context: I::Context,
+    options: SweepOptions,
+) -> Result<Option<I>, Error>
 where
     IS: Stream<Item = Result<I, E>>,
     I: Haystack,
     Error: From<E>,
 {
-    let sweep: Sweep<I> = Sweep::new(options.unwrap_or_default())?;
+    let sweep: Sweep<I> = Sweep::new(items_context, options)?;
     let collect = sweep.items_extend_stream(items.map_err(Error::from));
     let mut collected = false; // whether all items are send sweep instance
     tokio::pin!(collect);
@@ -148,8 +151,8 @@ impl<H> Sweep<H>
 where
     H: Haystack,
 {
-    pub fn new(options: SweepOptions) -> Result<Self, Error> {
-        let inner = Arc::new(SweepInner::new(options)?);
+    pub fn new(haystack_context: H::Context, options: SweepOptions) -> Result<Self, Error> {
+        let inner = Arc::new(SweepInner::new(options, haystack_context)?);
         Ok(Sweep { inner })
     }
 
@@ -163,15 +166,6 @@ where
     /// Toggle preview associated with the current item
     pub fn preview_set(self, value: Option<bool>) {
         self.send_request(SweepRequest::PreviewSet(value));
-    }
-
-    /// Register new field as reference
-    pub fn field_register(&self, field: Field<'static>, id: Option<usize>) -> FieldRef {
-        self.refs.with_mut(move |refs| {
-            let ref_id = FieldRef(id.unwrap_or(refs.len()));
-            refs.insert(ref_id, field);
-            ref_id
-        })
     }
 
     /// Extend list of searchable items from iterator
@@ -271,11 +265,10 @@ pub struct SweepInner<H: Haystack> {
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
     events: Mutex<mpsc::UnboundedReceiver<SweepEvent<H>>>,
-    refs: FieldRefs,
 }
 
 impl<H: Haystack> SweepInner<H> {
-    pub fn new(mut options: SweepOptions) -> Result<Self, Error> {
+    pub fn new(mut options: SweepOptions, haystack_context: H::Context) -> Result<Self, Error> {
         if options.scorers.is_empty() {
             options.scorers.push_back(fuzzy_scorer());
             options.scorers.push_back(substr_scorer());
@@ -291,11 +284,18 @@ impl<H: Haystack> SweepInner<H> {
         });
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
-        let refs: FieldRefs = Default::default();
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             let ranker = ranker.clone();
-            let refs = refs.clone();
-            move || sweep_ui_worker(options, term, ranker, requests_recv, events_send, refs)
+            move || {
+                sweep_ui_worker(
+                    options,
+                    term,
+                    ranker,
+                    requests_recv,
+                    events_send,
+                    haystack_context,
+                )
+            }
         })?;
         Ok(SweepInner {
             ranker,
@@ -303,7 +303,6 @@ impl<H: Haystack> SweepInner<H> {
             ui_worker: Some(worker),
             requests: requests_send,
             events: Mutex::new(events_recv),
-            refs,
         })
     }
 }
@@ -328,45 +327,35 @@ where
     H: Haystack + Serialize + DeserializeOwned,
 {
     /// Serve RPC endpoint via read/write
-    pub fn serve<'a, R, W>(
+    pub fn serve<'a, R, W, F>(
         &self,
         read: R,
         write: W,
+        setup: F,
     ) -> impl Future<Output = Result<(), RpcError>> + 'a
     where
         R: AsyncRead + 'a,
         W: AsyncWrite + 'a,
+        F: FnOnce(RpcPeer),
     {
-        self.serve_seed(PhantomData::<H>, read, write)
+        self.serve_seed(PhantomData::<H>, read, write, setup)
     }
 
     /// Serve RPC endpoint via read/write with haystack deserialization seed
-    pub fn serve_seed<'de, 'a, S, R, W>(
+    pub fn serve_seed<'de, 'a, S, R, W, F>(
         &self,
         seed: S,
         read: R,
         write: W,
+        setup: F,
     ) -> impl Future<Output = Result<(), RpcError>> + 'a
     where
         S: DeserializeSeed<'de, Value = H> + Clone + Send + Sync + 'static,
         R: AsyncRead + 'a,
         W: AsyncWrite + 'a,
+        F: FnOnce(RpcPeer),
     {
         let peer = RpcPeer::new();
-
-        // register field
-        peer.register("field_register", {
-            let sweep = self.clone();
-            move |mut params: RpcParams| {
-                let sweep = sweep.clone();
-                async move {
-                    let field: Field = params.take(0, "field")?;
-                    let id: Option<usize> = params.take_opt(1, "id")?;
-                    let field_ref = sweep.field_register(field, id);
-                    Ok(field_ref.0)
-                }
-            }
-        });
 
         // items extend
         peer.register("items_extend", {
@@ -481,6 +470,9 @@ where
                 }
             }
         });
+
+        // setup
+        setup(peer.clone());
 
         // set as current peer
         let (send, recv) = mpsc::unbounded_channel();
@@ -621,7 +613,7 @@ impl SweepAction {
 }
 
 /// Object representing current state of the sweep worker
-struct SweepState<H> {
+struct SweepState<H: Haystack> {
     // scorer builder
     scorers: VecDeque<ScorerBuilder>,
     // sweep prompt
@@ -645,7 +637,7 @@ struct SweepState<H> {
     // ranker
     ranker: Ranker<H>,
     // Filed refs (fields that can be used as a base)
-    refs: FieldRefs,
+    haystack_context: H::Context,
 }
 
 /// Event generated by key handling
@@ -665,8 +657,8 @@ where
         prompt_icon: Option<Glyph>,
         ranker: Ranker<H>,
         theme: Theme,
-        refs: FieldRefs,
         scorers: VecDeque<ScorerBuilder>,
+        haystack_context: H::Context,
     ) -> Self {
         // key map
         let mut key_map = KeyMap::new();
@@ -682,7 +674,10 @@ where
         // widgets
         let input = Input::new(theme.clone());
         let list = List::new(
-            SweepItems::new(Arc::new(RankerResult::<H>::default()), Default::default()),
+            SweepItems::new(
+                Arc::new(RankerResult::<H>::default()),
+                haystack_context.clone(),
+            ),
             theme.clone(),
         );
 
@@ -698,16 +693,18 @@ where
             input,
             list,
             ranker,
-            refs,
+            haystack_context,
         }
     }
 
     // get preview of the currently pointed haystack item
     fn preview(&self) -> Option<HaystackPreview> {
         self.list.current().and_then(|item| {
-            item.result
-                .haystack
-                .preview(&item.result.positions, &self.theme, self.refs.clone())
+            item.result.haystack.preview(
+                &self.haystack_context,
+                &item.result.positions,
+                &self.theme,
+            )
         })
     }
 
@@ -839,8 +836,8 @@ where
                 show_preview: true,
                 ..self.theme.clone()
             },
-            FieldRefs::default(),
             self.scorers.clone(),
+            (),
         )
     }
 }
@@ -883,9 +880,10 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
                     .and_then(|haystack_index| ranker_result.find_match_index(haystack_index))
             };
             // update list with new results
-            let old_items = self
-                .list
-                .items_set(SweepItems::new(ranker_result, self.refs.clone()));
+            let old_items = self.list.items_set(SweepItems::new(
+                ranker_result,
+                self.haystack_context.clone(),
+            ));
             if let Some(cursor) = cursor {
                 self.list.cursor_set(cursor);
             }
@@ -948,7 +946,7 @@ fn sweep_ui_worker<H>(
     ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
     events: mpsc::UnboundedSender<SweepEvent<H>>,
-    refs: FieldRefs,
+    haystack_context: H::Context,
 ) -> Result<(), Error>
 where
     H: Haystack,
@@ -989,8 +987,8 @@ where
         options.prompt_icon.clone(),
         ranker,
         options.theme.clone(),
-        refs.clone(),
         options.scorers,
+        haystack_context,
     );
     let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
     let mut state_help: Option<SweepState<ActionDesc>> = None;
@@ -1147,16 +1145,16 @@ where
     result
 }
 
-struct SweepItems<H> {
+struct SweepItems<H: Haystack> {
     ranker_result: Arc<RankerResult<H>>,
-    refs: FieldRefs,
+    haystack_context: H::Context,
 }
 
-impl<H> SweepItems<H> {
-    fn new(ranker_result: Arc<RankerResult<H>>, refs: FieldRefs) -> Self {
+impl<H: Haystack> SweepItems<H> {
+    fn new(ranker_result: Arc<RankerResult<H>>, haystack_context: H::Context) -> Self {
         Self {
             ranker_result,
-            refs,
+            haystack_context,
         }
     }
 
@@ -1176,15 +1174,15 @@ impl<H: Haystack> ListItems for SweepItems<H> {
         self.ranker_result.get(index).map(|result| SweepItem {
             result: result.clone(),
             theme,
-            refs: self.refs.clone(),
+            haystack_context: self.haystack_context.clone(),
         })
     }
 }
 
-struct SweepItem<H> {
+struct SweepItem<H: Haystack> {
     result: ScoreResult<H>,
     theme: Theme,
-    refs: FieldRefs,
+    haystack_context: H::Context,
 }
 
 impl<H: Haystack> IntoView for SweepItem<H> {
@@ -1193,7 +1191,7 @@ impl<H: Haystack> IntoView for SweepItem<H> {
     fn into_view(self) -> Self::View {
         self.result
             .haystack
-            .view(&self.result.positions, &self.theme, self.refs.clone())
+            .view(&self.haystack_context, &self.result.positions, &self.theme)
     }
 }
 
