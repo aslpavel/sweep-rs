@@ -36,6 +36,8 @@ impl HistoryEntry {
 }
 
 impl Haystack for HistoryEntry {
+    type Context = ();
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),
@@ -45,9 +47,9 @@ impl Haystack for HistoryEntry {
 
     fn view(
         &self,
+        _ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &Theme,
-        _refs: sweep::FieldRefs,
     ) -> Box<dyn View> {
         let cmd = haystack_default_view(self, positions, theme);
         if theme.show_preview {
@@ -73,9 +75,9 @@ impl Haystack for HistoryEntry {
 
     fn preview(
         &self,
+        _ctx: &Self::Context,
         _positions: &sweep::Positions,
         theme: &Theme,
-        _refs: sweep::FieldRefs,
     ) -> Option<HaystackPreview> {
         let mut text = Text::new();
         text.set_face(theme.list_selected);

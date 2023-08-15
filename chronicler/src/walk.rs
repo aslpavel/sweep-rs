@@ -33,6 +33,8 @@ pub struct PathItem {
 }
 
 impl Haystack for PathItem {
+    type Context = ();
+
     fn haystack_scope<S>(&self, mut scope: S)
     where
         S: FnMut(char),
@@ -49,9 +51,9 @@ impl Haystack for PathItem {
 
     fn preview(
         &self,
+        _ctx: &Self::Context,
         _positions: &sweep::Positions,
         _theme: &sweep::Theme,
-        _refs: sweep::FieldRefs,
     ) -> Option<sweep::HaystackPreview> {
         let metadata = self.metadata.as_ref()?;
         let mut text = Text::new()

@@ -24,6 +24,8 @@ pub enum NavigatorItem {
 }
 
 impl Haystack for NavigatorItem {
+    type Context = ();
+
     fn haystack_scope<S>(&self, scope: S)
     where
         S: FnMut(char),
@@ -37,27 +39,27 @@ impl Haystack for NavigatorItem {
 
     fn view(
         &self,
+        _ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &sweep::Theme,
-        refs: sweep::FieldRefs,
     ) -> Box<dyn sweep::surf_n_term::view::View> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.view(positions, theme, refs),
-            History(history) => history.view(positions, theme, refs),
+            Path(path) => path.view(&(), positions, theme),
+            History(history) => history.view(&(), positions, theme),
         }
     }
 
     fn preview(
         &self,
+        _ctx: &Self::Context,
         positions: &Positions,
         theme: &sweep::Theme,
-        refs: sweep::FieldRefs,
     ) -> Option<HaystackPreview> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.preview(positions, theme, refs),
-            History(history) => history.preview(positions, theme, refs),
+            Path(path) => path.preview(&(), positions, theme),
+            History(history) => history.preview(&(), positions, theme),
         }
     }
 }
@@ -94,7 +96,7 @@ impl Navigator {
         db_path: impl AsRef<Path>,
         state: NavigatorState,
     ) -> Result<Self, Error> {
-        let sweep = Sweep::new(options)?;
+        let sweep = Sweep::new((), options)?;
         NavigatorBind::bind(&sweep)?;
         Ok(Self {
             sweep,
