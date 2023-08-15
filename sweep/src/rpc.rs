@@ -103,12 +103,12 @@ impl RpcParams {
             .and_then(|kwargs| kwargs.remove(name))
             .ok_or_else(|| RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("missing required keyword argument: {}", name),
+                data: format!("missing required keyword argument: name={}", name),
             })
             .and_then(|param| {
                 seed.deserialize(param).map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
-                    data: format!("[arg_name={}] {}", name, err),
+                    data: format!("[arg_name={}][deserialize] {}", name, err),
                 })
             })
     }
@@ -132,11 +132,11 @@ impl RpcParams {
                 .deserialize(args[index].take())
                 .map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
-                    data: format!("[arg_index={}] {}", index, err),
+                    data: format!("[arg_index={}][deserialize] {}", index, err),
                 }),
             _ => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
-                data: format!("missing required positional argument: {}", index),
+                data: format!("missing required positional argument: index={}", index),
             }),
         }
     }
@@ -166,7 +166,7 @@ impl RpcParams {
             RpcParams::Null => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
                 data: format!(
-                    "missing required argument: index:{} name:{}",
+                    "missing required argument: index={} name={}",
                     index,
                     name.as_ref()
                 ),
@@ -194,10 +194,12 @@ impl RpcParams {
         S: DeserializeSeed<'de>,
     {
         let result = match self {
-            RpcParams::List(attrs) if attrs.len() > index => {
+            RpcParams::List(attrs) if !matches!(attrs.get(index), Some(Value::Null) | None) => {
                 Some(self.take_by_index_seed(seed, index)?)
             }
-            RpcParams::Map(attrs) if attrs.contains_key(name.as_ref()) => {
+            RpcParams::Map(attrs)
+                if !matches!(attrs.get(name.as_ref()), Some(Value::Null) | None) =>
+            {
                 Some(self.take_by_name_seed(seed, name)?)
             }
             _ => None,
@@ -1146,6 +1148,71 @@ mod tests {
         assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected[1..], serde_json::to_string(&request)?);
         assert_eq!(request, serde_json::from_str::<RpcRequest>(expected)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpc_params() -> Result<(), RpcError> {
+        // list params
+        let mut list_params = RpcParams::try_from(json!([1, null, "3", 4, 5]))?;
+
+        // success
+        let first: usize = list_params.take_by_index(0)?;
+        assert_eq!(first, 1);
+        let second: Option<i32> = list_params.take_opt(1, "second")?;
+        assert_eq!(second, None);
+        let third: String = list_params.take(2, "third")?;
+        assert_eq!(third, "3".to_owned());
+        let fourth: Option<usize> = list_params.take_opt(3, "fourth")?;
+        assert_eq!(fourth, Some(4));
+        let fourth: Option<usize> = list_params.take_opt(3, "fourth")?;
+        assert_eq!(fourth, None); // already taken
+
+        // errors
+        let fifth_error: Result<String, _> = list_params.take_by_index(4);
+        assert!(fifth_error.is_err()); // type error
+        let six_error: Result<String, _> = list_params.take_by_index(5);
+        assert!(six_error.is_err()); // out of range
+        let seven_error: Result<String, _> = list_params.take_by_name("bla");
+        assert!(seven_error.is_err()); // named parameter on a list
+
+        // dict params
+        let mut dict_params = RpcParams::try_from(json!({
+            "first": 1,
+            "second": Value::Null,
+            "third": "3",
+            "fourth": 4,
+            "fifth": 5,
+        }))?;
+
+        // success
+        let first: usize = dict_params.take_by_name("first")?;
+        assert_eq!(first, 1);
+        let second: Option<i32> = dict_params.take_opt(1, "second")?;
+        assert_eq!(second, None);
+        let third: String = dict_params.take(2, "third")?;
+        assert_eq!(third, "3".to_owned());
+        let fourth: Option<usize> = dict_params.take_opt(3, "fourth")?;
+        assert_eq!(fourth, Some(4));
+        let fourth: Option<usize> = dict_params.take_opt(3, "fourth")?;
+        assert_eq!(fourth, None); // already taken
+
+        // errors
+        let fifth_error: Result<String, _> = dict_params.take_by_name("fifth");
+        assert!(fifth_error.is_err()); // type error
+        let six_error: Result<String, _> = dict_params.take_by_name("sixth");
+        assert!(six_error.is_err()); // missing
+        let seven_error: Result<String, _> = dict_params.take_by_index(10);
+        assert!(seven_error.is_err()); // index parameter on a dict
+
+        let mut null_params = RpcParams::try_from(Value::Null)?;
+        let optional: Option<usize> = null_params.take_opt(3, "three")?;
+        assert_eq!(optional, None);
+        let index_error: Result<usize, _> = null_params.take_by_index(1);
+        assert!(index_error.is_err());
+        let name_error: Result<usize, _> = null_params.take_by_name("bla");
+        assert!(name_error.is_err());
 
         Ok(())
     }

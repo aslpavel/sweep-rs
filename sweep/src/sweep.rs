@@ -166,9 +166,9 @@ where
     }
 
     /// Register new field as reference
-    pub fn field_register(&self, field: Field<'static>) -> FieldRef {
+    pub fn field_register(&self, field: Field<'static>, id: Option<usize>) -> FieldRef {
         self.refs.with_mut(move |refs| {
-            let ref_id = FieldRef(refs.len());
+            let ref_id = FieldRef(id.unwrap_or(refs.len()));
             refs.insert(ref_id, field);
             ref_id
         })
@@ -250,10 +250,10 @@ where
 
     /// Bind specified chord to the tag
     ///
-    /// Whenever sequence of keys specified by chord is pressed, `SweepEvent::Bind(tag)`
+    /// Whenever sequence of keys specified by chord is pressed, [SweepEvent::Bind]
     /// will be generated, note if tag is empty string the binding will be removed
-    /// and no event will be generated. Tag can also be one of the standard actions
-    /// list of which is available with `ctrl+h`
+    /// and no event will be generated. Tag can also be a standard action name
+    /// (see available with `ctrl+h`) in this case [SweepEvent::Bind] is not generated.
     pub fn bind(&self, chord: Vec<Key>, tag: String, desc: String) {
         self.send_request(SweepRequest::Bind { chord, tag, desc })
     }
@@ -361,7 +361,8 @@ where
                 let sweep = sweep.clone();
                 async move {
                     let field: Field = params.take(0, "field")?;
-                    let field_ref = sweep.field_register(field);
+                    let id: Option<usize> = params.take_opt(1, "id")?;
+                    let field_ref = sweep.field_register(field, id);
                     Ok(field_ref.0)
                 }
             }
@@ -812,6 +813,9 @@ where
         let mut descriptions: BTreeMap<String, ActionDesc> = BTreeMap::new();
         self.key_map.for_each(|chord, action| {
             let mut desc = action.description();
+            if desc.name.is_empty() {
+                return;
+            }
             descriptions
                 .entry(desc.name.clone())
                 .and_modify(|desc_curr| desc_curr.chords.push(chord.to_owned()))
@@ -1017,18 +1021,28 @@ where
                                 name: KeyName::Backspace,
                                 mode: KeyMod::EMPTY,
                             }] => {
-                                state.key_empty_backspace.replace(tag);
+                                state.key_empty_backspace =
+                                    if tag.is_empty() { None } else { Some(tag) };
                             }
                             _ => {
-                                let action = state
-                                    .key_actions
-                                    .entry(tag.clone())
-                                    .or_insert_with(|| SweepAction::User {
-                                        chord: chord.clone(),
-                                        tag,
-                                        desc,
-                                    })
-                                    .clone();
+                                let action = if tag.is_empty() {
+                                    // empty user action means unbind
+                                    SweepAction::User {
+                                        chord: Vec::new(),
+                                        tag: String::new(),
+                                        desc: String::new(),
+                                    }
+                                } else {
+                                    state
+                                        .key_actions
+                                        .entry(tag.clone())
+                                        .or_insert_with(|| SweepAction::User {
+                                            chord: chord.clone(),
+                                            tag,
+                                            desc,
+                                        })
+                                        .clone()
+                                };
                                 state.key_map.register(chord.as_ref(), action);
                             }
                         },
