@@ -1,5 +1,5 @@
 use crate::{
-    candidate::FieldRefs,
+    candidate::{FieldRefs, VecDeserializeSeed},
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
@@ -9,16 +9,16 @@ use crate::{
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use futures::{
-    channel::oneshot,
-    future::{self, BoxFuture},
-    stream::TryStreamExt,
-    FutureExt, Stream,
+use futures::{channel::oneshot, future, stream::TryStreamExt, Stream};
+use serde::{
+    de::{DeserializeOwned, DeserializeSeed},
+    Serialize,
 };
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    future::Future,
+    marker::PhantomData,
     mem,
     ops::Deref,
     sync::Arc,
@@ -204,7 +204,7 @@ where
         self.ranker.haystack_clear()
     }
 
-    /// Get currently selected candidates
+    /// Get currently selected candidate
     pub async fn items_current(&self) -> Result<Option<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::Current(send));
@@ -327,10 +327,30 @@ impl<H> Sweep<H>
 where
     H: Haystack + Serialize + DeserializeOwned,
 {
-    pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
+    /// Serve RPC endpoint via read/write
+    pub fn serve<'a, R, W>(
+        &self,
+        read: R,
+        write: W,
+    ) -> impl Future<Output = Result<(), RpcError>> + 'a
     where
-        R: AsyncRead + Unpin + Send + 'static,
-        W: AsyncWrite + Unpin + Send + 'static,
+        R: AsyncRead + 'a,
+        W: AsyncWrite + 'a,
+    {
+        self.serve_seed(PhantomData::<H>, read, write)
+    }
+
+    /// Serve RPC endpoint via read/write with haystack deserialization seed
+    pub fn serve_seed<'de, 'a, S, R, W>(
+        &self,
+        seed: S,
+        read: R,
+        write: W,
+    ) -> impl Future<Output = Result<(), RpcError>> + 'a
+    where
+        S: DeserializeSeed<'de, Value = H> + Clone + Send + Sync + 'static,
+        R: AsyncRead + 'a,
+        W: AsyncWrite + 'a,
     {
         let peer = RpcPeer::new();
 
@@ -350,10 +370,12 @@ where
         // items extend
         peer.register("items_extend", {
             let sweep = self.clone();
+            let seed = seed.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
+                let seed = seed.clone();
                 async move {
-                    let items: Vec<H> = params.take(0, "items")?;
+                    let items = params.take_seed(VecDeserializeSeed(seed), 0, "items")?;
                     sweep.items_extend(items);
                     Ok(Value::Null)
                 }
@@ -498,7 +520,6 @@ where
                 result = events => result,
             }
         }
-        .boxed()
     }
 }
 

@@ -112,6 +112,10 @@ pub fn walk<'caller>(
         .flatten()
 }
 
+/// Unfold single path entry
+///
+/// TODO:
+///  - support .gitignore
 async fn path_unfold<I>(item: PathItem, ignore: Arc<I>) -> Result<(PathItem, Vec<PathItem>), Error>
 where
     I: Fn(&PathItem) -> bool,

@@ -7,6 +7,8 @@ import argparse
 import shlex
 import os
 from typing import Any, List, Optional
+
+from sweep import SweepEvent
 from .. import Icon, Candidate, Sweep, Field
 from . import sweep_default_cmd
 
@@ -68,7 +70,7 @@ PANEL_RIGHT = Icon(
 )
 
 
-async def main(args: Optional[List[str]] = None):
+async def main(args: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Demo that uses python sweep API")
     parser.add_argument("--theme", help="sweep theme")
     parser.add_argument("--sweep", help="path to the sweep command")
@@ -78,6 +80,7 @@ async def main(args: Optional[List[str]] = None):
 
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
+    event: Optional[SweepEvent[Any]] = None
     async with Sweep[Any](
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         tty=opts.tty,
@@ -170,9 +173,11 @@ async def main(args: Optional[List[str]] = None):
             ]
         )
 
+
         async for event in sweep:
-            return event
+            break
+    print(event)
 
 
 if __name__ == "__main__":
-    print(asyncio.run(main()))
+    asyncio.run(main())

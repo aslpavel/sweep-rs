@@ -1,7 +1,11 @@
 use crate::{Haystack, HaystackPreview, LockExt, Positions, Theme};
 use anyhow::Error;
 use futures::Stream;
-use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{self, DeserializeSeed},
+    ser::SerializeMap,
+    Deserialize, Deserializer, Serialize,
+};
 use serde_json::Value;
 use std::{
     borrow::Cow,
@@ -637,17 +641,15 @@ impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
     }
 }
 
-impl<'de, 'a> Deserialize<'de> for Field<'a> {
+impl<'de> Deserialize<'de> for Field<'static> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct FieldVisitor<'a> {
-            _phantom: &'a (),
-        }
+        struct FieldVisitor;
 
-        impl<'de, 'a> de::Visitor<'de> for FieldVisitor<'a> {
-            type Value = Field<'a>;
+        impl<'de> de::Visitor<'de> for FieldVisitor {
+            type Value = Field<'static>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("string, list of {string | (string, bool) | Field}")
@@ -729,7 +731,7 @@ impl<'de, 'a> Deserialize<'de> for Field<'a> {
             }
         }
 
-        deserializer.deserialize_any(FieldVisitor::<'a> { _phantom: &() })
+        deserializer.deserialize_any(FieldVisitor)
     }
 }
 
@@ -835,6 +837,48 @@ impl FromStr for FieldSelector {
             selector.push(select.trim().parse()?);
         }
         Ok(FieldSelector(selector.into()))
+    }
+}
+
+pub(crate) struct VecDeserializeSeed<S>(pub(crate) S);
+
+impl<'de, S> DeserializeSeed<'de> for VecDeserializeSeed<S>
+where
+    S: DeserializeSeed<'de> + Clone,
+{
+    type Value = Vec<S::Value>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct VecVisitor<S> {
+            seed: S,
+        }
+
+        impl<'de, S> de::Visitor<'de> for VecVisitor<S>
+        where
+            S: DeserializeSeed<'de> + Clone,
+        {
+            type Value = Vec<S::Value>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("sequence")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element_seed(self.seed.clone())? {
+                    items.push(item);
+                }
+                Ok(items)
+            }
+        }
+
+        deserializer.deserialize_seq(VecVisitor { seed: self.0 })
     }
 }
 

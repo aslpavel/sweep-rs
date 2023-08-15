@@ -5,7 +5,7 @@ use futures::{
     FutureExt, Stream, TryFutureExt, TryStreamExt,
 };
 use serde::{
-    de::{self, DeserializeOwned, IgnoredAny, Visitor},
+    de::{self, DeserializeOwned, DeserializeSeed, IgnoredAny, Visitor},
     ser::SerializeMap,
     Deserialize, Serialize,
 };
@@ -17,6 +17,7 @@ use std::{
     fmt,
     future::Future,
     io::Write,
+    marker::PhantomData,
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -71,6 +72,7 @@ impl RpcId {
     }
 }
 
+/// Convenience structure to access RPC handler function parameters by name or index
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RpcParams {
     List(Vec<Value>),
@@ -84,6 +86,18 @@ impl RpcParams {
         &mut self,
         name: impl AsRef<str>,
     ) -> Result<V, RpcError> {
+        self.take_by_name_seed(PhantomData::<V>, name)
+    }
+
+    /// Take attribute by the name and deserialize it with seed
+    pub fn take_by_name_seed<'de, S>(
+        &mut self,
+        seed: S,
+        name: impl AsRef<str>,
+    ) -> Result<S::Value, RpcError>
+    where
+        S: DeserializeSeed<'de>,
+    {
         let name = name.as_ref();
         self.as_map()
             .and_then(|kwargs| kwargs.remove(name))
@@ -92,7 +106,7 @@ impl RpcParams {
                 data: format!("missing required keyword argument: {}", name),
             })
             .and_then(|param| {
-                serde_json::from_value(param).map_err(|err| RpcError {
+                seed.deserialize(param).map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
                     data: format!("[arg_name={}] {}", name, err),
                 })
@@ -101,13 +115,25 @@ impl RpcParams {
 
     /// Take attribute by the index and deserialize it
     pub fn take_by_index<V: DeserializeOwned>(&mut self, index: usize) -> Result<V, RpcError> {
+        self.take_by_index_seed(PhantomData::<V>, index)
+    }
+
+    /// Take attribute by the index and deserialize it with seed
+    pub fn take_by_index_seed<'de, S>(
+        &mut self,
+        seed: S,
+        index: usize,
+    ) -> Result<S::Value, RpcError>
+    where
+        S: DeserializeSeed<'de>,
+    {
         match self {
-            RpcParams::List(args) if index < args.len() => {
-                serde_json::from_value(args[index].take()).map_err(|err| RpcError {
+            RpcParams::List(args) if index < args.len() => seed
+                .deserialize(args[index].take())
+                .map_err(|err| RpcError {
                     kind: RpcErrorKind::InvalidParams,
                     data: format!("[arg_index={}] {}", index, err),
-                })
-            }
+                }),
             _ => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
                 data: format!("missing required positional argument: {}", index),
@@ -121,9 +147,22 @@ impl RpcParams {
         index: usize,
         name: impl AsRef<str>,
     ) -> Result<V, RpcError> {
+        self.take_seed(PhantomData::<V>, index, name)
+    }
+
+    /// Take attribute by the name or the index and deserialize it with seed
+    pub fn take_seed<'de, S>(
+        &mut self,
+        seed: S,
+        index: usize,
+        name: impl AsRef<str>,
+    ) -> Result<S::Value, RpcError>
+    where
+        S: DeserializeSeed<'de>,
+    {
         match self {
-            RpcParams::List(_) => self.take_by_index(index),
-            RpcParams::Map(_) => self.take_by_name(name.as_ref()),
+            RpcParams::List(_) => self.take_by_index_seed(seed, index),
+            RpcParams::Map(_) => self.take_by_name_seed(seed, name.as_ref()),
             RpcParams::Null => Err(RpcError {
                 kind: RpcErrorKind::InvalidParams,
                 data: format!(
@@ -141,10 +180,25 @@ impl RpcParams {
         index: usize,
         name: impl AsRef<str>,
     ) -> Result<Option<V>, RpcError> {
+        self.take_opt_seed(PhantomData::<V>, index, name)
+    }
+
+    /// Take optional attribute by the name or the index and deserialize it with seed
+    pub fn take_opt_seed<'de, S>(
+        &mut self,
+        seed: S,
+        index: usize,
+        name: impl AsRef<str>,
+    ) -> Result<Option<S::Value>, RpcError>
+    where
+        S: DeserializeSeed<'de>,
+    {
         let result = match self {
-            RpcParams::List(attrs) if attrs.len() > index => Some(self.take_by_index(index)?),
+            RpcParams::List(attrs) if attrs.len() > index => {
+                Some(self.take_by_index_seed(seed, index)?)
+            }
             RpcParams::Map(attrs) if attrs.contains_key(name.as_ref()) => {
-                Some(self.take_by_name(name)?)
+                Some(self.take_by_name_seed(seed, name)?)
             }
             _ => None,
         };
@@ -702,15 +756,15 @@ impl RpcPeer {
     }
 
     /// Register callback for the provided method name
-    pub fn register<H, HP, HF, HV>(
+    pub fn register<H, HP, HF, HR>(
         &self,
         method: impl Into<String>,
         callback: H,
     ) -> Option<RpcHandler>
     where
         H: Fn(HP) -> HF + Send + Sync + 'static,
-        HF: Future<Output = Result<HV, RpcError>> + Send + 'static,
-        HV: Into<Value> + Send + 'static,
+        HF: Future<Output = Result<HR, RpcError>> + Send + 'static,
+        HR: Into<Value> + Send + 'static,
         HP: DeserializeOwned,
     {
         let handler = Arc::new(move |params| {
@@ -723,7 +777,7 @@ impl RpcPeer {
         self.regesiter_handler(method, handler)
     }
 
-    /// Register handler for the provided name
+    /// Register handler for the provided method name
     pub fn regesiter_handler(
         &self,
         method: impl Into<String>,
@@ -814,15 +868,19 @@ impl RpcPeer {
     }
 
     /// Start serving rpc requests
-    ///
-    /// NOTE: make sure read/write are properly configured to be non-blocking
-    pub fn serve<R, W>(&self, read: R, write: W) -> BoxFuture<'static, Result<(), RpcError>>
+    pub fn serve<'a, R, W>(
+        &self,
+        read: R,
+        write: W,
+    ) -> impl Future<Output = Result<(), RpcError>> + 'a
     where
-        R: AsyncRead + Unpin + Send + 'static,
-        W: AsyncWrite + Unpin + Send + 'static,
+        R: AsyncRead + 'a,
+        W: AsyncWrite + 'a,
     {
         let peer = self.clone();
+
         async move {
+            tokio::pin!(read);
             let write_receiver = peer
                 .inner
                 .with_mut(|inner| inner.write_receiver.take())
@@ -835,7 +893,6 @@ impl RpcPeer {
                 result = writer => result,
             }
         }
-        .boxed()
     }
 
     /// Submit message to be send to the other peer
@@ -949,9 +1006,9 @@ where
 }
 
 /// Read stream of RpcMessages from AsyncRead
-fn rpc_reader<R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>>
+fn rpc_reader<'a, R>(read: R) -> impl Stream<Item = Result<RpcMessage, RpcError>> + 'a
 where
-    R: AsyncRead + Unpin,
+    R: AsyncRead + Unpin + 'a,
 {
     struct State<R> {
         reader: BufReader<R>,
