@@ -175,7 +175,7 @@ impl Navigator {
         self.update_task = Some(
             tokio::spawn(async move {
                 if let Err(error) = sweep.items_extend_stream(items).await {
-                    tracing::error!(?error, "failed to generate items");
+                    tracing::error!(?error, "[Navigator.list_update]");
                 };
             })
             .into(),

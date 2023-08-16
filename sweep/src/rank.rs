@@ -456,7 +456,7 @@ impl<T: Default> Pool<T> {
             index: self.count,
         };
         self.count += 1;
-        tracing::info!(pool_size = self.count, "pool item allocated");
+        tracing::debug!(pool_size = self.count, "[Pool.alloc]");
         item
     }
 

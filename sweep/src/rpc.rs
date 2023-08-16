@@ -813,7 +813,7 @@ impl RpcPeer {
         tracing::debug!(
             method = %method,
             params = %params,
-            "outgoing event"
+            "[RpcPeer.notify_with_value]"
         );
         self.submit_message(RpcRequest { method, params, id })
     }
@@ -846,7 +846,7 @@ impl RpcPeer {
         let method = method.into();
         let params = params.into();
         let span = tracing::debug_span!(
-            "outgoing request",
+            "[RpcPeer.call_with_value]",
             method = %method,
             params = %params,
             id = ?id,
@@ -864,7 +864,7 @@ impl RpcPeer {
             method = %method,
             result = ?result,
             id = ?id,
-            "outgoing result",
+            "[RpcPeer.call_with_value]",
         );
         result
     }
@@ -932,7 +932,7 @@ impl RpcPeer {
                     let peer = self.clone();
                     tokio::spawn(async move {
                         let span = tracing::debug_span!(
-                            "incoming request",
+                            "[RpcPeer.handle_message]",
                             method = %request.method,
                             params = %request.params,
                             id = ?request.id,
@@ -942,7 +942,7 @@ impl RpcPeer {
                             method = %request.method,
                             result = ?result,
                             id = ?request.id,
-                            "incoming result",
+                            "[RpcPeer.handle_message]"
                         );
                         if request.id != RpcId::Null {
                             let method = request.method;
@@ -961,7 +961,7 @@ impl RpcPeer {
                         method = %request.method,
                         params = %request.params,
                         id = ?request.id,
-                        "invalid method"
+                        "[RpcPeer.handle_message]"
                     );
                     let response = RpcResponse {
                         result: Err(RpcError {

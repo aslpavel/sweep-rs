@@ -74,6 +74,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     parser.add_argument("--theme", help="sweep theme")
     parser.add_argument("--sweep", help="path to the sweep command")
     parser.add_argument("--tty", help="path to the tty")
+    parser.add_argument("--log", help="log file")
 
     opts = parser.parse_args(args)
 
@@ -140,7 +141,7 @@ async def main(args: Optional[List[str]] = None) -> None:
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         tty=opts.tty,
         theme=opts.theme,
-        log="/tmp/sweep-demo.log",  # nosec
+        log=opts.log,
     )
     print(result)
 

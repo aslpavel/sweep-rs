@@ -316,7 +316,7 @@ where
         self.waker.wake().unwrap_or(());
         if let Some(handle) = self.ui_worker.take() {
             if let Err(error) = handle.join() {
-                tracing::error!("sweep ui worker thread failed:\r\n{:?}", error);
+                tracing::error!("[SweepInner.drop] ui worker thread failed: {:?}", error);
             }
         }
     }
@@ -956,7 +956,7 @@ fn sweep_ui_worker<H>(
 where
     H: Haystack,
 {
-    tracing::debug!(?options.theme);
+    tracing::debug!(?options.theme, "[sweep_ui_worker]");
 
     // initialize terminal
     term.execute_many([
@@ -1128,10 +1128,10 @@ where
         };
         let ctx = ViewContext::new(term)?;
         if let Some(state) = state_help.as_mut() {
-            tracing::debug_span!("[draw] sweep help state")
+            tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
                 .in_scope(|| state_surf.draw_view(&ctx, state))?;
         } else {
-            tracing::debug_span!("[draw] sweep state")
+            tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
                 .in_scope(|| state_surf.draw_view(&ctx, &mut state))?;
         }
 

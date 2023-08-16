@@ -146,7 +146,7 @@ where
         }
         .await
         .unwrap_or_else(|error| {
-            tracing::warn!(?item.path, ?error, "failed to list directory");
+            tracing::warn!(?item.path, ?error, "[path_unfold]");
             Vec::new()
         }),
         _ => Vec::new(),
