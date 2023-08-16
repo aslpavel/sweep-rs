@@ -1,5 +1,5 @@
 //! Basic asynchronous [JSON-RPC](https://www.jsonrpc.org/specification) implementation
-use crate::LockExt;
+use crate::common::LockExt;
 use futures::{
     future::{self, BoxFuture},
     FutureExt, Stream, TryFutureExt, TryStreamExt,

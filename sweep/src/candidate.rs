@@ -1,6 +1,7 @@
 use crate::{
+    common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
     rpc::{RpcParams, RpcPeer},
-    Haystack, HaystackPreview, LockExt, Positions, Theme,
+    Haystack, HaystackPreview, Positions, Theme,
 };
 use anyhow::Error;
 use futures::Stream;
@@ -18,8 +19,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
+    rasterize::SVG_COLORS,
     view::{Align, Container, Flex, Justify, Margins, Text, View},
-    Face, Glyph,
+    Face, FaceDeserializer, Glyph, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -184,17 +186,17 @@ impl Candidate {
     }
 
     /// Candidate setup
-    pub fn setup(peer: RpcPeer, refs: FieldRefs) {
+    pub fn setup(peer: RpcPeer, ctx: CandidateContext) {
         // register field
         peer.register("field_register", {
             move |mut params: RpcParams| {
-                let refs = refs.clone();
+                let ctx = ctx.clone();
                 async move {
                     let field: Field = params.take(0, "field")?;
                     let ref_id_opt: Option<usize> = params.take_opt(1, "id")?;
-                    Ok(refs.with_mut(move |refs| {
-                        let ref_id = ref_id_opt.unwrap_or(refs.len());
-                        refs.insert(FieldRef(ref_id), field);
+                    Ok(ctx.inner.with_mut(move |inner| {
+                        let ref_id = ref_id_opt.unwrap_or(inner.field_refs.len());
+                        inner.field_refs.insert(FieldRef(ref_id), field);
                         ref_id
                     }))
                 }
@@ -253,89 +255,6 @@ impl Serialize for Candidate {
     }
 }
 
-impl<'de> Deserialize<'de> for Candidate {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct CandidateVisitor;
-
-        impl<'de> de::Visitor<'de> for CandidateVisitor {
-            type Value = Candidate;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("string or dict with entry field")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                let fields = vec![Field::from(v.to_owned())];
-                Ok(Candidate::new(
-                    fields,
-                    None,
-                    Vec::new(),
-                    0,
-                    None,
-                    Vec::new(),
-                    0.0,
-                ))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                let mut target = None;
-                let mut extra = HashMap::new();
-                let mut right = None;
-                let mut right_offset = 0;
-                let mut right_face = None;
-                let mut preview = None;
-                let mut preview_flex = 0.0;
-
-                while let Some(name) = map.next_key::<Cow<'de, str>>()? {
-                    match name.as_ref() {
-                        "entry" | "fields" | "target" => {
-                            target.replace(map.next_value()?);
-                        }
-                        "right" => {
-                            right.replace(map.next_value()?);
-                        }
-                        "right_offset" | "offset" => {
-                            right_offset = map.next_value()?;
-                        }
-                        "right_face" => {
-                            right_face.replace(map.next_value()?);
-                        }
-                        "preview" => {
-                            preview = map.next_value()?;
-                        }
-                        "preview_flex" => {
-                            preview_flex = map.next_value()?;
-                        }
-                        _ => {
-                            extra.insert(name.into_owned(), map.next_value()?);
-                        }
-                    }
-                }
-                Ok(Candidate::new(
-                    target.ok_or_else(|| de::Error::missing_field("entry or fields"))?,
-                    (!extra.is_empty()).then_some(extra),
-                    right.unwrap_or_default(),
-                    right_offset,
-                    right_face,
-                    preview.unwrap_or_default(),
-                    preview_flex,
-                ))
-            }
-        }
-
-        deserializer.deserialize_any(CandidateVisitor)
-    }
-}
-
 /// Split string into chunks separated by `sep` char.
 ///
 /// Separated a glued to the beginning of the chunk. Adjacent separators are treated as
@@ -387,7 +306,7 @@ impl<'a> Iterator for SplitInclusive<'a> {
 }
 
 impl Haystack for Candidate {
-    type Context = FieldRefs;
+    type Context = CandidateContext;
 
     fn haystack_scope<S>(&self, scope: S)
     where
@@ -451,7 +370,7 @@ impl Haystack for Candidate {
         let mut positions_offset = self.inner.preview_haystack_position;
         let preview = fields_view(
             &self.inner.preview,
-            &positions,
+            positions,
             &mut positions_offset,
             ctx,
             theme.list_text,
@@ -478,7 +397,7 @@ pub fn fields_view(
     fields: &[Field<'_>],
     positions: &Positions,
     positions_offset: &mut usize,
-    refs: &FieldRefs,
+    candidate_context: &CandidateContext,
     face_default: Face,
     face_highlight: Face,
     face_inactive: Face,
@@ -486,7 +405,7 @@ pub fn fields_view(
     let mut text = Text::new();
     for field in fields {
         text.set_face(face_default);
-        let field = field.resolve(refs);
+        let field = candidate_context.field_resolve(field);
         let field_face = field.face.unwrap_or_default();
 
         if field.active && field.glyph.is_none() {
@@ -514,13 +433,165 @@ pub fn fields_view(
     text
 }
 
+struct CandidateContextInner {
+    field_refs: HashMap<FieldRef, Field<'static>>,
+    named_colors: HashMap<String, RGBA>,
+}
+
+#[derive(Clone)]
+pub struct CandidateContext {
+    inner: Arc<RwLock<CandidateContextInner>>,
+}
+
+impl CandidateContext {
+    pub fn new() -> Self {
+        let inner = CandidateContextInner {
+            field_refs: HashMap::new(),
+            named_colors: SVG_COLORS.clone(),
+        };
+        Self {
+            inner: Arc::new(RwLock::new(inner)),
+        }
+    }
+
+    /// Resolve field references
+    pub fn field_resolve<'a>(&self, field: &'a Field<'_>) -> Field<'a> {
+        self.inner.with(|inner| field.resolve(&inner.field_refs))
+    }
+
+    /// Update stored named colors from [Theme]
+    pub fn update_named_colors(&self, theme: &Theme) {
+        self.inner.with_mut(|inner| {
+            inner.named_colors.insert("fg".to_owned(), theme.fg);
+            inner.named_colors.insert("bg".to_owned(), theme.bg);
+            inner.named_colors.insert("accent".to_owned(), theme.accent);
+            inner.named_colors.insert("base".to_owned(), theme.accent);
+        })
+    }
+
+    /// Parse [Candidate] from JSON bytes
+    pub fn candidate_from_json(&self, slice: &[u8]) -> Result<Candidate, Error> {
+        Ok(json_from_slice_seed(self, slice)?)
+    }
+
+    /// Parse [Candidate] from [Value]
+    pub fn candidate_from_value(&self, value: Value) -> Result<Candidate, Error> {
+        Ok(self.deserialize(value)?)
+    }
+}
+
+impl Default for CandidateContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for &'a CandidateContext {
+    type Value = Candidate;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for CandidateContext {
+    type Value = Candidate;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(&self)
+    }
+}
+
+impl<'de, 'a> de::Visitor<'de> for &'a CandidateContext {
+    type Value = Candidate;
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("String or Struct")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        let fields = vec![Field::from(v.to_owned())];
+        Ok(Candidate::new(
+            fields,
+            None,
+            Vec::new(),
+            0,
+            None,
+            Vec::new(),
+            0.0,
+        ))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::MapAccess<'de>,
+    {
+        let mut target = None;
+        let mut extra = HashMap::new();
+        let mut right = None;
+        let mut right_offset = 0;
+        let mut right_face = None;
+        let mut preview = None;
+        let mut preview_flex = 0.0;
+
+        let ctx = self.inner.read().map_err(de::Error::custom)?;
+        let fields_seed = VecDeserializeSeed(FieldDeserializer {
+            colors: &ctx.named_colors,
+        });
+        let face_seed = FaceDeserializer {
+            colors: &ctx.named_colors,
+        };
+        while let Some(name) = map.next_key::<Cow<'de, str>>()? {
+            match name.as_ref() {
+                "entry" | "fields" | "target" => {
+                    target.replace(map.next_value_seed(fields_seed.clone())?);
+                }
+                "right" => {
+                    right.replace(map.next_value_seed(fields_seed.clone())?);
+                }
+                "right_offset" | "offset" => {
+                    right_offset = map.next_value()?;
+                }
+                "right_face" => {
+                    right_face.replace(map.next_value_seed(face_seed.clone())?);
+                }
+                "preview" => {
+                    preview.replace(map.next_value_seed(fields_seed.clone())?);
+                }
+                "preview_flex" => {
+                    preview_flex = map.next_value()?;
+                }
+                _ => {
+                    extra.insert(name.into_owned(), map.next_value()?);
+                }
+            }
+        }
+        Ok(Candidate::new(
+            target.ok_or_else(|| de::Error::missing_field("entry or fields"))?,
+            (!extra.is_empty()).then_some(extra),
+            right.unwrap_or_default(),
+            right_offset,
+            right_face,
+            preview.unwrap_or_default(),
+            preview_flex,
+        ))
+    }
+}
+
 /// Previously registered field that is used as base of the field
 ///
 /// Mainly used avoid constant sending of glyphs (icons)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FieldRef(pub(crate) usize);
-pub type FieldRefs = Arc<RwLock<HashMap<FieldRef, Field<'static>>>>;
 
 /// Single theme-able part of the haystack
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -585,11 +656,11 @@ impl<'a> Field<'a> {
     }
 
     /// Resolve reference in the field
-    pub fn resolve(&'a self, refs: &FieldRefs) -> Field<'a> {
+    pub fn resolve(&'a self, refs: &HashMap<FieldRef, Field<'static>>) -> Field<'a> {
         let Some(field_ref) = self.field_ref else {
             return self.borrow()
         };
-        let Some(base) = refs.with(|refs| refs.get(&field_ref).cloned()) else {
+        let Some(base) = refs.get(&field_ref).cloned() else {
             return self.borrow()
         };
         Self {
@@ -670,92 +741,112 @@ impl<'de> Deserialize<'de> for Field<'static> {
     where
         D: Deserializer<'de>,
     {
-        struct FieldVisitor;
+        FieldDeserializer {
+            colors: &SVG_COLORS,
+        }
+        .deserialize(deserializer)
+    }
+}
 
-        impl<'de> de::Visitor<'de> for FieldVisitor {
-            type Value = Field<'static>;
+#[derive(Clone)]
+pub struct FieldDeserializer<'a> {
+    pub colors: &'a HashMap<String, RGBA>,
+}
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("string, list of {string | (string, bool) | Field}")
-            }
+impl<'de, 'a> DeserializeSeed<'de> for FieldDeserializer<'a> {
+    type Value = Field<'static>;
 
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Field {
-                    text: v.to_owned().into(),
-                    ..Field::default()
-                })
-            }
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
 
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Field {
-                    text: v.into(),
-                    ..Field::default()
-                })
-            }
+impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
+    type Value = Field<'static>;
 
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                Ok(Field {
-                    text: seq
-                        .next_element()?
-                        .ok_or_else(|| de::Error::missing_field("text"))?,
-                    active: seq.next_element()?.unwrap_or(true),
-                    ..Field::default()
-                })
-            }
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("String, List<String | (String, bool)> or Struct")
+    }
 
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::MapAccess<'de>,
-            {
-                let mut text = None;
-                let mut active = None;
-                let mut glyph = None;
-                let mut face = None;
-                let mut reference = None;
-                while let Some(name) = map.next_key::<Cow<'de, str>>()? {
-                    match name.as_ref() {
-                        "text" => {
-                            text.replace(map.next_value()?);
-                        }
-                        "active" => {
-                            active.replace(map.next_value()?);
-                        }
-                        "glyph" => {
-                            glyph.replace(map.next_value()?);
-                        }
-                        "face" => {
-                            face.replace(map.next_value()?);
-                        }
-                        "ref" => {
-                            reference.replace(map.next_value()?);
-                        }
-                        _ => {
-                            map.next_value::<de::IgnoredAny>()?;
-                        }
-                    }
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Field {
+            text: v.to_owned().into(),
+            ..Field::default()
+        })
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Field {
+            text: v.into(),
+            ..Field::default()
+        })
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+    {
+        Ok(Field {
+            text: seq
+                .next_element()?
+                .ok_or_else(|| de::Error::missing_field("text"))?,
+            active: seq.next_element()?.unwrap_or(true),
+            ..Field::default()
+        })
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::MapAccess<'de>,
+    {
+        let mut text = None;
+        let mut active = None;
+        let mut glyph = None;
+        let mut face = None;
+        let mut reference = None;
+        while let Some(name) = map.next_key::<Cow<'de, str>>()? {
+            match name.as_ref() {
+                "text" => {
+                    text.replace(map.next_value()?);
                 }
-                let text = text.unwrap_or(Cow::Borrowed::<'static>(""));
-                let text_not_empty = !text.is_empty();
-                Ok(Field {
-                    text,
-                    active: active.unwrap_or(glyph.is_none() && text_not_empty),
-                    glyph,
-                    face,
-                    field_ref: reference,
-                })
+                "active" => {
+                    active.replace(map.next_value()?);
+                }
+                "glyph" => {
+                    glyph.replace(map.next_value()?);
+                }
+                "face" => {
+                    let seed = FaceDeserializer {
+                        colors: self.colors,
+                    };
+                    face.replace(map.next_value_seed(seed)?);
+                }
+                "ref" => {
+                    reference.replace(map.next_value()?);
+                }
+                _ => {
+                    map.next_value::<de::IgnoredAny>()?;
+                }
             }
         }
-
-        deserializer.deserialize_any(FieldVisitor)
+        let text = text.unwrap_or(Cow::Borrowed::<'static>(""));
+        let text_not_empty = !text.is_empty();
+        Ok(Field {
+            text,
+            active: active.unwrap_or(glyph.is_none() && text_not_empty),
+            glyph,
+            face,
+            field_ref: reference,
+        })
     }
 }
 
@@ -864,48 +955,6 @@ impl FromStr for FieldSelector {
     }
 }
 
-pub(crate) struct VecDeserializeSeed<S>(pub(crate) S);
-
-impl<'de, S> DeserializeSeed<'de> for VecDeserializeSeed<S>
-where
-    S: DeserializeSeed<'de> + Clone,
-{
-    type Value = Vec<S::Value>;
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct VecVisitor<S> {
-            seed: S,
-        }
-
-        impl<'de, S> de::Visitor<'de> for VecVisitor<S>
-        where
-            S: DeserializeSeed<'de> + Clone,
-        {
-            type Value = Vec<S::Value>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("sequence")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                let mut items = Vec::new();
-                while let Some(item) = seq.next_element_seed(self.seed.clone())? {
-                    items.push(item);
-                }
-                Ok(items)
-            }
-        }
-
-        deserializer.deserialize_seq(VecVisitor { seed: self.0 })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,6 +1000,8 @@ mod tests {
 
     #[test]
     fn test_serde_candidate() -> Result<(), Error> {
+        let ctx = CandidateContext::new();
+
         let mut extra = HashMap::new();
         extra.insert("extra".to_owned(), Value::from(127i32));
         let glyph = Glyph::new(
@@ -1016,22 +1067,18 @@ mod tests {
         println!("=== mark ===: 1");
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
-            serde_json::to_value(serde_json::from_str::<Candidate>(
-                candidate_string.as_str()
-            )?)
-            .unwrap()
+            serde_json::to_value(ctx.candidate_from_json(candidate_string.as_bytes())?).unwrap()
         );
         println!("=== mark ===: 2");
         println!("{}", value_string);
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
-            serde_json::to_value(serde_json::from_str::<Candidate>(value_string.as_str())?)
-                .unwrap(),
+            serde_json::to_value(ctx.candidate_from_json(value_string.as_bytes())?).unwrap(),
         );
         println!("=== mark ===: 3");
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
-            serde_json::to_value(serde_json::from_value::<Candidate>(value)?).unwrap()
+            serde_json::to_value(ctx.candidate_from_value(value)?).unwrap()
         );
 
         let candidate = Candidate::new(
@@ -1043,7 +1090,7 @@ mod tests {
             Vec::new(),
             0.0,
         );
-        assert_eq!(candidate, serde_json::from_str("\"four\"")?);
+        assert_eq!(candidate, ctx.candidate_from_json("\"four\"".as_bytes())?);
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 
         Ok(())

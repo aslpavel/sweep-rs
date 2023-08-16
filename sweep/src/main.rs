@@ -12,7 +12,10 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use sweep::{Candidate, FieldRefs, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme};
+use sweep::{
+    common::{json_from_slice_seed, VecDeserializeSeed},
+    Candidate, CandidateContext, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme,
+};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -91,16 +94,18 @@ async fn main() -> Result<(), Error> {
         }
     };
 
-    let field_refs = FieldRefs::default();
+    let theme = Theme {
+        show_preview: args.preview,
+        ..args.theme
+    };
+    let candidate_context = CandidateContext::new();
+    candidate_context.update_named_colors(&theme);
     let sweep: Sweep<Candidate> = Sweep::new(
-        field_refs.clone(),
+        candidate_context.clone(),
         SweepOptions {
             height: args.height,
             prompt: args.prompt.clone(),
-            theme: Theme {
-                show_preview: args.preview,
-                ..args.theme
-            },
+            theme,
             keep_order: args.keep_order,
             tty_path: args.tty_path.clone(),
             title: args.title.clone(),
@@ -115,14 +120,17 @@ async fn main() -> Result<(), Error> {
 
     if args.rpc {
         sweep
-            .serve(input, output, |peer| Candidate::setup(peer, field_refs))
+            .serve_seed(candidate_context.clone(), input, output, |peer| {
+                Candidate::setup(peer, candidate_context)
+            })
             .await?;
     } else {
         if args.json {
             let mut data: Vec<u8> = Vec::new();
             tokio::io::copy(&mut input, &mut data).await?;
-            let candidates: Vec<Candidate> =
-                serde_json::from_slice(data.as_ref()).context("failed to parse input JSON")?;
+            let seed = VecDeserializeSeed(&candidate_context);
+            let candidates =
+                json_from_slice_seed(seed, data.as_ref()).context("failed to parse input JSON")?;
             sweep.items_extend(candidates);
         } else {
             let sweep = sweep.clone();

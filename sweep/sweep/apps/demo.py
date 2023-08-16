@@ -106,7 +106,7 @@ async def main(args: Optional[List[str]] = None) -> None:
         .target_push("Muli line entry\n - Second Line")
         .right_push(glyph=PANEL_RIGHT)
         .right_push("right text field")
-        .right_face_set("bg=#b1628650"),
+        .right_face_set("bg=accent/.2"),
         # direct glyph icon usage example
         Candidate()
         .target_push("Entry with beer icon: ")

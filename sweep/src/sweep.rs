@@ -1,5 +1,5 @@
 use crate::{
-    candidate::VecDeserializeSeed,
+    common::VecDeserializeSeed,
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
@@ -340,7 +340,12 @@ where
     {
         self.serve_seed(PhantomData::<H>, read, write, setup)
     }
+}
 
+impl<H> Sweep<H>
+where
+    H: Haystack + Serialize,
+{
     /// Serve RPC endpoint via read/write with haystack deserialization seed
     pub fn serve_seed<'de, 'a, S, R, W, F>(
         &self,
@@ -1112,7 +1117,7 @@ where
         }
 
         // render
-        let mut state_view = if options.border > 0 && options.border < view.width() / 2 {
+        let mut state_surf = if options.border > 0 && options.border < view.width() / 2 {
             let border = options.border as i32;
             view.view_mut(
                 (row_offset as i32)..(row_offset + height) as i32,
@@ -1123,9 +1128,11 @@ where
         };
         let ctx = ViewContext::new(term)?;
         if let Some(state) = state_help.as_mut() {
-            state_view.draw_view(&ctx, state)?
+            tracing::debug_span!("[draw] sweep help state")
+                .in_scope(|| state_surf.draw_view(&ctx, state))?;
         } else {
-            state_view.draw_view(&ctx, &mut state)?;
+            tracing::debug_span!("[draw] sweep state")
+                .in_scope(|| state_surf.draw_view(&ctx, &mut state))?;
         }
 
         Ok(TerminalAction::Wait)

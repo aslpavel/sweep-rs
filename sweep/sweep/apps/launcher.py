@@ -78,7 +78,9 @@ class DesktopEntry(NamedTuple):
             Candidate()
             .target_push(self.app_info.get_display_name())
             .preview_flex_set(1.0)
-            .preview_push(f" {self.description() or 'No description'}\n", face="bg=#d3869b30")
+            .preview_push(
+                f" {self.description() or 'No description'}\n", face="bg=accent/.12"
+            )
             .preview_push("\n")
             .preview_push(f"cmd     : {self.commandline()}\n")
             .preview_push(f"icon    : {self.app_info.get_icon()}\n")
