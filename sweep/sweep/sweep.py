@@ -398,12 +398,12 @@ async def sweep(
             await sweep.bind(bind.key, bind.tag, bind.desc, bind.handler)
 
         # setup prompt
-        if not isinstance(prompt_icon, (Icon, type(None))):
+        if isinstance(prompt_icon, str):
             icon = Icon.from_str_or_file(prompt_icon)
-            if icon is None:
-                raise ValueError(f"invalid prompt icon: {prompt_icon}")
-            prompt_icon = icon
-        await sweep.prompt_set(prompt=options.get("prompt"), icon=prompt_icon)
+        else:
+            icon = prompt_icon
+        if icon is not None:
+            await sweep.prompt_set(prompt=options.get("prompt"), icon=icon)
 
         # send items
         await sweep.items_extend(items)

@@ -923,13 +923,14 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
                 let flex = preview.flex.unwrap_or(0.0);
-                let mut view = Container::new(Container::new(preview.view).with_margins(Margins {
-                    left: 1,
-                    right: 1,
-                    ..Default::default()
-                }))
-                .with_vertical(Align::Expand)
-                .with_face(self.theme.list_selected);
+                let mut view = Container::new(preview.view)
+                    .with_margins(Margins {
+                        left: 1,
+                        right: 1,
+                        ..Default::default()
+                    })
+                    .with_vertical(Align::Expand)
+                    .with_face(self.theme.list_selected);
                 if flex > 0.0 {
                     view = view.with_horizontal(Align::Expand);
                 }

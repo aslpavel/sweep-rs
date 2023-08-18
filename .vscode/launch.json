@@ -39,6 +39,16 @@
       }
     },
     {
+      // NOTE:
+      // There is ptrace protection to disable:
+      // echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+      "name": "attach",
+      "type": "lldb",
+      "request": "attach",
+      "sourceLanguages": ["rust"],
+      "pid": "${command:pickMyProcess}"
+    },
+    {
       "name": "chronicler",
       "type": "lldb",
       "request": "launch",

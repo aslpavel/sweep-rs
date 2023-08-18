@@ -44,8 +44,19 @@ pub struct HaystackPreview {
 }
 
 impl HaystackPreview {
+    /// Create haystack preview item
     pub fn new(view: Box<dyn View>, flex: Option<f64>) -> Self {
         Self { view, flex }
+    }
+
+    /// Get view
+    pub fn view(&self) -> &Box<dyn View> {
+        &self.view
+    }
+
+    /// Get flex value
+    pub fn flex(&self) -> Option<f64> {
+        self.flex
     }
 }
 
