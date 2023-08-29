@@ -57,9 +57,13 @@ class DesktopEntry(NamedTuple):
 
     app_info: Any  # Gio.AppInfo https://lazka.github.io/pgi-docs/#Gio-2.0/classes/DesktopAppInfo.html#Gio.DesktopAppInfo
 
-    def commandline(self, path: Optional[str] = None, term: str = "kitty") -> str:
+    def commandline(
+        self, path: Optional[str] = None, term: str = "kitty"
+    ) -> Optional[str]:
         """Get command line required to launch app"""
-        cmd: str = self.app_info.get_commandline()
+        cmd: Optional[str] = self.app_info.get_commandline()
+        if cmd is None:
+            return None
         cmd = self.CLEANUP_RE.sub("", cmd)
         cmd = self.URL_RE.sub(path or "", cmd).strip()
         if self.requires_terminal():
@@ -80,7 +84,13 @@ class DesktopEntry(NamedTuple):
 
     def is_flatpak(self) -> bool:
         """Whether app is a flatpak app"""
-        return self.commandline().find("flatpak") >= 0
+        cmd = self.commandline()
+        if cmd is None:
+            return False
+        return cmd.find("flatpak") >= 0
+
+    def should_show(self) -> bool:
+        return not self.app_info.get_boolean("NoDisplay")
 
     def keywords(self) -> List[str]:
         kw: List[str] = self.app_info.get_keywords() or []
@@ -107,8 +117,10 @@ class DesktopEntry(NamedTuple):
         if keywords:
             candidate.preview_push(" Keywords\n", face=header_face)
             candidate.preview_push(f"{' '.join(self.keywords())}\n", active=True)
-        candidate.preview_push(" Command Line\n", face=header_face)
-        candidate.preview_push(self.commandline() + "\n", active=True)
+        cmd = self.commandline()
+        if cmd is not None:
+            candidate.preview_push(" Command Line\n", face=header_face)
+            candidate.preview_push(cmd + "\n", active=True)
         candidate.preview_push(" Desktop File\n", face=header_face)
         candidate.preview_push(self.app_info.get_filename() + "\n")
 
@@ -126,9 +138,10 @@ class DesktopEntry(NamedTuple):
     def get_all() -> List[DesktopEntry]:
         apps: List[DesktopEntry] = []
         for app_info in cast(List[Any], Gio.AppInfo.get_all()):  # type: ignore
-            if not app_info.should_show():
+            app = DesktopEntry(app_info)
+            if not app.should_show():
                 continue
-            apps.append(DesktopEntry(app_info))
+            apps.append(app)
         apps.sort(key=lambda entry: entry.app_info.get_display_name())
         return apps
 
@@ -191,7 +204,9 @@ async def main(args: Optional[List[str]] = None) -> None:
         return
     match opts.action:
         case "print":
-            print(entry.commandline())
+            cmd = entry.commandline()
+            if cmd is not None:
+                print(entry.commandline())
         case "launch":
             entry.app_info.launch()
         case _:
