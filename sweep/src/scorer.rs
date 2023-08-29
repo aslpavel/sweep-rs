@@ -50,7 +50,7 @@ impl HaystackPreview {
     }
 
     /// Get view
-    pub fn view(&self) -> &Box<dyn View> {
+    pub fn view(&self) -> &dyn View {
         &self.view
     }
 

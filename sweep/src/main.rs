@@ -7,8 +7,11 @@ use futures::TryStreamExt;
 use std::{
     collections::VecDeque,
     fs::File,
-    io::Write,
-    os::unix::{io::FromRawFd, net::UnixStream as StdUnixStream},
+    io::{IsTerminal, Write},
+    os::unix::{
+        io::{AsFd, FromRawFd},
+        net::UnixStream as StdUnixStream,
+    },
     pin::Pin,
     sync::{Arc, Mutex},
 };
@@ -55,8 +58,7 @@ async fn main() -> Result<(), Error> {
                     let stdin = tokio::io::stdin();
                     #[cfg(not(target_os = "macos"))]
                     {
-                        use std::os::unix::io::AsRawFd;
-                        if nix::unistd::isatty(stdin.as_raw_fd())? {
+                        if stdin.as_fd().is_terminal() {
                             return Err(anyhow::anyhow!(
                                 "stdin can not be a tty, pipe in data instead"
                             ));
@@ -67,18 +69,21 @@ async fn main() -> Result<(), Error> {
                 Some(path) => Box::pin(tokio::fs::File::open(path).await?),
             };
 
-            // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
-            // from asyncio python interface, sweep subprocess is created with
-            // `socketpair` as its {stdin|stdout}, but `isatty` when used on socket
-            // under MacOS causes "Operation not supported on socket" error.
-            #[cfg(not(target_os = "macos"))]
-            {
-                use std::os::unix::io::AsRawFd;
-                if args.rpc && nix::unistd::isatty(std::io::stdout().as_raw_fd())? {
-                    return Err(anyhow::anyhow!("stdout can not be a tty if rpc is enabled"));
+            let output: Pin<Box<dyn AsyncWrite + Send>> = {
+                let stdout = tokio::io::stdout();
+                // Disabling `isatty` check on {stdin|stdout} on MacOS. When used
+                // from asyncio python interface, sweep subprocess is created with
+                // `socketpair` as its {stdin|stdout}, but `isatty` when used on socket
+                // under MacOS causes "Operation not supported on socket" error.
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if args.rpc && stdout.as_fd().is_terminal() {
+                        return Err(anyhow::anyhow!("stdout can not be a tty if rpc is enabled"));
+                    }
                 }
-            }
-            (input, Box::pin(tokio::io::stdout()))
+                Box::pin(stdout)
+            };
+            (input, output)
         }
         Some(ref address) => {
             let stream = match address.parse() {

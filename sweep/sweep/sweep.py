@@ -965,6 +965,7 @@ class RpcPeer:
         except (CancelledError, ConnectionResetError):
             pass
         finally:
+            writer.close()
             self.terminate()
 
     def __aiter__(self) -> AsyncIterator[RpcRequest]:

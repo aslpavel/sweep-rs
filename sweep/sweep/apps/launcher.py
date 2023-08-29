@@ -171,7 +171,7 @@ async def main(args: Optional[List[str]] = None) -> None:
                 border=0,
             )
         )
-        sweep_cmd.extend(["kitty", "--class", "org.sweep.launcher"])
+        sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.launcher"])
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 
     entry = await sweep(
