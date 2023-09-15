@@ -26,7 +26,7 @@ use std::{
 };
 use surf_n_term::{
     encoder::ColorDepth,
-    view::{Align, Container, Flex, IntoView, Margins, Text, View, ViewContext},
+    view::{Align, BoxView, Container, Flex, IntoView, Margins, Text, ViewContext},
     Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal, Terminal,
     TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
@@ -1194,7 +1194,7 @@ struct SweepItem<H: Haystack> {
 }
 
 impl<H: Haystack> IntoView for SweepItem<H> {
-    type View = Box<dyn View>;
+    type View = BoxView<'static>;
 
     fn into_view(self) -> Self::View {
         self.result

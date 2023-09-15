@@ -1,11 +1,16 @@
-use crate::{haystack_default_view, Haystack, HaystackPreview, Positions};
-use std::{cell::Cell as StdCell, cmp::max, collections::VecDeque, fmt::Write as _, str::FromStr};
+use crate::{common::LockExt, haystack_default_view, Haystack, HaystackPreview, Positions};
+use std::{
+    cmp::max,
+    collections::VecDeque,
+    fmt::Write as _,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 use surf_n_term::{
-    common::clamp,
     rasterize::PathBuilder,
     view::{
-        Axis, BoxConstraint, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text, Tree,
-        View, ViewContext,
+        Axis, BoxConstraint, BoxView, Container, Dynamic, Flex, IntoView, Justify, Layout,
+        ScrollBar, Text, Tree, View, ViewContext,
     },
     BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
     SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
@@ -24,8 +29,7 @@ pub struct Theme {
     pub list_text: Face,
     pub list_highlight: Face,
     pub list_inactive: Face,
-    pub scrollbar_on: Face,
-    pub scrollbar_off: Face,
+    pub scrollbar: Face,
     pub stats: Face,
     pub label: Face,
     pub separator: Face,
@@ -74,8 +78,11 @@ impl Theme {
         let list_text = Face::default().with_fg(list_selected.fg);
         let list_highlight = cursor;
         let list_inactive = Face::default().with_fg(Some(bg.blend_over(fg.with_alpha(0.6))));
-        let scrollbar_on = Face::new(None, Some(accent.with_alpha(0.8)), FaceAttrs::EMPTY);
-        let scrollbar_off = Face::new(None, Some(accent.with_alpha(0.5)), FaceAttrs::EMPTY);
+        let scrollbar = list_default.with_fg(list_default.bg).overlay(&Face::new(
+            Some(accent.with_alpha(0.8)),
+            Some(accent.with_alpha(0.5)),
+            FaceAttrs::EMPTY,
+        ));
         let stats = Face::new(
             Some(accent.best_contrast(bg, fg)),
             Some(accent),
@@ -97,8 +104,7 @@ impl Theme {
             list_text,
             list_highlight,
             list_inactive,
-            scrollbar_on,
-            scrollbar_off,
+            scrollbar,
             stats,
             label,
             separator,
@@ -157,8 +163,7 @@ impl Theme {
             list_text,
             list_highlight: cursor,
             list_inactive: Face::default().with_fg(Some(color2)),
-            scrollbar_on: Face::new(None, Some(color2), FaceAttrs::EMPTY),
-            scrollbar_off: Face::new(None, Some(color1), FaceAttrs::EMPTY),
+            scrollbar: Face::new(Some(color2), Some(color1), FaceAttrs::EMPTY),
             stats,
             label: stats.with_attrs(FaceAttrs::BOLD),
             separator: Face::new(Some(accent), input.bg, FaceAttrs::EMPTY),
@@ -212,7 +217,7 @@ impl Haystack for ActionDesc {
         self.name.chars().for_each(scope);
     }
 
-    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
+    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             (|| {
@@ -365,15 +370,20 @@ impl InputAction {
     }
 }
 
+#[derive(Debug, Default)]
+struct InputState {
+    offset: usize,
+}
+
 pub struct Input {
     /// string before cursor
     before: Vec<char>,
     /// reversed string after cursor
     after: Vec<char>,
-    /// visible offset
-    offset: StdCell<usize>,
     /// theme
     theme: Theme,
+    /// Input view state
+    view_state: Arc<Mutex<InputState>>,
 }
 
 impl Input {
@@ -381,8 +391,8 @@ impl Input {
         Self {
             before: Default::default(),
             after: Default::default(),
-            offset: StdCell::new(0),
             theme,
+            view_state: Default::default(),
         }
     }
 
@@ -482,20 +492,11 @@ impl Input {
         self.before.clear();
         self.after.clear();
         self.before.extend(text.chars());
-        self.offset.set(0);
+        self.view_state.with_mut(|st| st.offset = 0);
     }
 
     fn offset(&self) -> usize {
-        self.offset.get()
-    }
-
-    fn fix_offset(&self, size: usize) -> usize {
-        if self.offset() > self.before.len() {
-            self.offset.set(self.before.len());
-        } else if self.offset() + size < self.before.len() + 1 {
-            self.offset.set(self.before.len() - size + 1);
-        }
-        self.offset()
+        self.view_state.with(|st| st.offset)
     }
 }
 
@@ -533,7 +534,14 @@ impl<'a> View for &'a Input {
         if size < 2 {
             return Tree::leaf(Layout::new());
         }
-        self.fix_offset(size);
+        // fix render offset
+        self.view_state.with_mut(|st| {
+            if st.offset > self.before.len() {
+                st.offset = self.before.len();
+            } else if st.offset + size < self.before.len() + 1 {
+                st.offset = self.before.len() - size + 1;
+            }
+        });
         Tree::leaf(Layout::new().with_size(ct.max()))
     }
 }
@@ -644,14 +652,14 @@ pub struct List<T> {
     items: T,
     cursor: usize,
     theme: Theme,
-    view_state: StdCell<ListViewState>,
+    view_state: Arc<Mutex<ListState>>,
 }
 
 /// Current state of the list view (it is only updated on layout calculation)
 #[derive(Debug, Clone, Copy, Default)]
-struct ListViewState {
-    offset: usize,  // visible offset (first rendered element offset)
-    visible: usize, // number of visible elements
+struct ListState {
+    offset: usize,        // visible offset (first rendered element offset)
+    visible_count: usize, // number of visible elements
 }
 
 impl<T: ListItems> List<T> {
@@ -660,7 +668,7 @@ impl<T: ListItems> List<T> {
             items,
             cursor: 0,
             theme,
-            view_state: StdCell::default(),
+            view_state: Default::default(),
         }
     }
 
@@ -670,7 +678,7 @@ impl<T: ListItems> List<T> {
 
     pub fn items_set(&mut self, items: T) -> T {
         self.cursor = 0;
-        self.view_state = StdCell::default();
+        self.view_state = Default::default();
         std::mem::replace(&mut self.items, items)
     }
 
@@ -684,7 +692,7 @@ impl<T: ListItems> List<T> {
 
     pub fn cursor_set(&mut self, cursor: usize) {
         self.cursor = cursor;
-        self.view_state.get_mut().offset = cursor;
+        self.view_state.with_mut(|st| st.offset = cursor);
     }
 
     pub fn apply(&mut self, action: ListAction) {
@@ -697,25 +705,25 @@ impl<T: ListItems> List<T> {
                 }
             }
             PageNext => {
-                let page_size = max(self.view_state.get().visible, 1);
+                let page_size = max(self.visible_count(), 1);
                 self.cursor += page_size;
             }
             PagePrev => {
-                let page_size = max(self.view_state.get().visible, 1);
+                let page_size = max(self.visible_count(), 1);
                 if self.cursor >= page_size {
                     self.cursor -= page_size;
                 }
             }
             Home => {
                 self.cursor = 0;
-                self.view_state.get_mut().offset = 0;
+                self.view_state.with_mut(|st| st.offset = 0);
             }
             End => {
                 self.cursor = self.items.len() - 1;
             }
         }
         if self.items.len() > 0 {
-            self.cursor = clamp(self.cursor, 0, self.items.len() - 1);
+            self.cursor = self.cursor.clamp(0, self.items.len() - 1);
         } else {
             self.cursor = 0;
         }
@@ -741,29 +749,45 @@ impl<T: ListItems> List<T> {
         }
     }
 
-    /// First visible element position
-    #[cfg(test)]
-    fn offset(&self) -> usize {
-        self.view_state.get().offset
-    }
-
-    pub fn scroll_bar(&self) -> ListScrollBar<'_, T> {
-        ListScrollBar { list: self }
+    pub fn scroll_bar(&self) -> impl View {
+        let face = self.theme.scrollbar;
+        let total = self.items.len();
+        let offset = self.cursor;
+        let state = self.view_state.clone();
+        Dynamic::new(move |_, _| {
+            ScrollBar::new(
+                Axis::Vertical,
+                face,
+                total,
+                offset,
+                state.with(|st| st.visible_count),
+            )
+        })
     }
 
     pub fn theme_set(&mut self, theme: Theme) {
         self.theme = theme;
     }
+
+    /// First visible element position
+    #[cfg(test)]
+    fn offset(&self) -> usize {
+        self.view_state.with(|st| st.offset)
+    }
+
+    fn visible_count(&self) -> usize {
+        self.view_state.with(|st| st.visible_count)
+    }
 }
 
 struct ListItemView {
-    view: Box<dyn View>,
+    view: BoxView<'static>,
     pointed: bool,
 }
 
 impl<'a, T> View for &'a List<T>
 where
-    T: ListItems,
+    T: ListItems + Send + Sync,
     T::Item: 'static,
 {
     fn render<'b>(
@@ -815,8 +839,7 @@ where
         // adjust offset so item pointed by cursor will be visible
         let offset = self
             .view_state
-            .get()
-            .offset
+            .with(|st| st.offset)
             .min(self.items.len().saturating_sub(height)); // offset is at least hight from the bottom
         let offset = if offset > self.cursor {
             self.cursor
@@ -883,9 +906,11 @@ where
         }
 
         // update view state
-        self.view_state.set(ListViewState {
-            offset: offset + children_removed,
-            visible: layouts.len(),
+        self.view_state.with_mut(|st| {
+            *st = ListState {
+                offset: offset + children_removed,
+                visible_count: layouts.len(),
+            }
         });
 
         // compute view offsets
@@ -899,39 +924,6 @@ where
             Layout::new().with_size(Size::new(height, width)),
             layouts.into(),
         )
-    }
-}
-
-pub struct ListScrollBar<'a, T> {
-    list: &'a List<T>,
-}
-
-impl<'a, T: ListItems> View for ListScrollBar<'a, T> {
-    fn render<'b>(
-        &self,
-        ctx: &ViewContext,
-        surf: &'b mut TerminalSurface<'b>,
-        layout: &Tree<Layout>,
-    ) -> Result<(), Error> {
-        let theme = &self.list.theme;
-        let bg = theme.list_default.with_fg(theme.list_default.bg);
-        let scroll_bar_face = bg.overlay(
-            &Face::default()
-                .with_fg(theme.scrollbar_on.bg)
-                .with_bg(theme.scrollbar_off.bg),
-        );
-        let scroll_bar = ScrollBar::new(
-            Axis::Vertical,
-            scroll_bar_face,
-            self.list.items.len(),
-            self.list.cursor,
-            self.list.view_state.get().visible,
-        );
-        scroll_bar.render(ctx, surf, layout)
-    }
-
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        Tree::leaf(Layout::new().with_size(Size::new(ct.max().height, 1)))
     }
 }
 

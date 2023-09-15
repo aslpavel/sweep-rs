@@ -5,13 +5,15 @@ use std::{
     fmt::{self, Debug},
     sync::Arc,
 };
-use surf_n_term::view::{Text, View};
+use surf_n_term::view::{BoxView, Text, View};
 
 /// Haystack
 ///
 /// Item that can scored against the needle by the scorer.
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
-    type Context: Clone + Send;
+    /// Haystack context passed when generating view and preview (for example
+    /// [Candidate](crate::Candidate) reference resolution)
+    type Context: Clone + Send + Sync;
 
     /// Scope function is called with all characters one after another that will
     /// be searchable by [Scorer]
@@ -20,7 +22,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
         S: FnMut(char);
 
     /// Creates haystack view from matched positions and theme
-    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
+    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
         haystack_default_view(self, positions, theme).boxed()
     }
 
@@ -38,14 +40,14 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 /// Preview rendered for haystack item
 pub struct HaystackPreview {
     /// Preview of the item
-    pub(crate) view: Box<dyn View>,
+    pub(crate) view: BoxView<'static>,
     /// Flex value value of the view see [`surf_n_term::view::Flex`]
     pub(crate) flex: Option<f64>,
 }
 
 impl HaystackPreview {
     /// Create haystack preview item
-    pub fn new(view: Box<dyn View>, flex: Option<f64>) -> Self {
+    pub fn new(view: BoxView<'static>, flex: Option<f64>) -> Self {
         Self { view, flex }
     }
 

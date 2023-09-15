@@ -20,7 +20,7 @@ use std::{
 };
 use surf_n_term::{
     rasterize::SVG_COLORS,
-    view::{Align, Container, Flex, Justify, Margins, Text, View},
+    view::{Align, BoxView, Container, Flex, Justify, Margins, Text, View},
     Face, FaceDeserializer, Glyph, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
@@ -315,7 +315,7 @@ impl Haystack for Candidate {
         self.haystack().for_each(scope);
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Box<dyn View> {
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
@@ -658,10 +658,10 @@ impl<'a> Field<'a> {
     /// Resolve reference in the field
     pub fn resolve(&'a self, refs: &HashMap<FieldRef, Field<'static>>) -> Field<'a> {
         let Some(field_ref) = self.field_ref else {
-            return self.borrow()
+            return self.borrow();
         };
         let Some(base) = refs.get(&field_ref).cloned() else {
-            return self.borrow()
+            return self.borrow();
         };
         Self {
             text: if self.text.is_empty() {
