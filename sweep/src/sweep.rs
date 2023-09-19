@@ -163,6 +163,11 @@ where
         self.waker.wake().expect("failed to wake terminal");
     }
 
+    /// Get terminal waker
+    pub fn waker(&self) -> TerminalWaker {
+        self.waker.clone()
+    }
+
     /// Toggle preview associated with the current item
     pub fn preview_set(self, value: Option<bool>) {
         self.send_request(SweepRequest::PreviewSet(value));

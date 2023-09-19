@@ -20,8 +20,11 @@ use std::{
 };
 use surf_n_term::{
     rasterize::SVG_COLORS,
-    view::{Align, BoxView, Container, Flex, Justify, Margins, Text, View},
-    Face, FaceDeserializer, Glyph, RGBA,
+    view::{
+        Align, ArcView, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
+        ViewDeserializer,
+    },
+    Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -185,23 +188,28 @@ impl Candidate {
         self.inner.right_face
     }
 
-    /// Candidate setup
-    pub fn setup(peer: RpcPeer, ctx: CandidateContext) {
+    /// Initialize RpcPeer
+    pub fn setup(peer: RpcPeer, waker: TerminalWaker, ctx: CandidateContext) {
         // register field
         peer.register("field_register", {
+            let ctx = ctx.clone();
             move |mut params: RpcParams| {
                 let ctx = ctx.clone();
+                let waker = waker.clone();
                 async move {
                     let field: Field = params.take(0, "field")?;
                     let ref_id_opt: Option<usize> = params.take_opt(1, "id")?;
-                    Ok(ctx.inner.with_mut(move |inner| {
+                    let ref_id = ctx.inner.with_mut(move |inner| {
                         let ref_id = ref_id_opt.unwrap_or(inner.field_refs.len());
                         inner.field_refs.insert(FieldRef(ref_id), field);
                         ref_id
-                    }))
+                    });
+                    let _ = waker.wake();
+                    Ok(ref_id)
                 }
             }
         });
+        ctx.peer_set(peer);
     }
 }
 
@@ -342,7 +350,7 @@ impl Haystack for Candidate {
         let mut view = Flex::row()
             .justify(Justify::SpaceBetween)
             .add_flex_child(1.0, left);
-        if !right.is_empty() {
+        if !self.right().is_empty() {
             let mut right = Container::new(right).with_margins(Margins {
                 left: 1,
                 right: 1,
@@ -392,7 +400,7 @@ pub fn fields_haystack<'a>(fields: &'a [Field<'_>]) -> impl Iterator<Item = char
         .flatten()
 }
 
-/// Convert fields into [Text] view
+/// Convert fields into [View]
 pub fn fields_view(
     fields: &[Field<'_>],
     positions: &Positions,
@@ -401,14 +409,16 @@ pub fn fields_view(
     face_default: Face,
     face_highlight: Face,
     face_inactive: Face,
-) -> Text {
+) -> impl View {
+    let mut flex = Flex::column();
+    let mut has_views = false;
     let mut text = Text::new();
     for field in fields {
         text.set_face(face_default);
         let field = candidate_context.field_resolve(field);
         let field_face = field.face.unwrap_or_default();
 
-        if field.active && field.glyph.is_none() {
+        if field.active && field.glyph.is_none() && field.view.is_none() {
             // active field non glyph
             let face_highlight = face_highlight.overlay(&field_face);
             let face_default = face_default.overlay(&field_face);
@@ -428,14 +438,30 @@ pub fn fields_view(
                     .put_glyph(glyph.clone()),
                 None => text.push_str(&field.text, Some(face_inactive.overlay(&field_face))),
             };
+            // view
+            if let Some(view) = field.view {
+                if !text.is_empty() {
+                    flex.push_child(text.take());
+                }
+                flex.push_child(view.boxed());
+                has_views = true;
+            }
         }
     }
-    text
+    if has_views {
+        if !text.is_empty() {
+            flex.push_child(text.take());
+        }
+        Either::Left(flex)
+    } else {
+        Either::Right(text)
+    }
 }
 
 struct CandidateContextInner {
     field_refs: HashMap<FieldRef, Field<'static>>,
     named_colors: HashMap<String, RGBA>,
+    peer: Option<RpcPeer>,
 }
 
 #[derive(Clone)]
@@ -448,6 +474,7 @@ impl CandidateContext {
         let inner = CandidateContextInner {
             field_refs: HashMap::new(),
             named_colors: SVG_COLORS.clone(),
+            peer: None,
         };
         Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -456,7 +483,22 @@ impl CandidateContext {
 
     /// Resolve field references
     pub fn field_resolve<'a>(&self, field: &'a Field<'_>) -> Field<'a> {
+        if let Some(field_ref) = field.field_ref {
+            if !self
+                .inner
+                .with(|inner| inner.field_refs.contains_key(&field_ref))
+            {
+                self.field_missing(field_ref)
+            }
+        }
         self.inner.with(|inner| field.resolve(&inner.field_refs))
+    }
+
+    /// Notify peer that field is missing, if connected
+    pub fn field_missing(&self, field_ref: FieldRef) {
+        if let Some(peer) = self.inner.with(|inner| inner.peer.clone()) {
+            let _ = peer.notify_with_value("field_missing", serde_json::json!({"ref": field_ref}));
+        }
     }
 
     /// Update stored named colors from [Theme]
@@ -467,6 +509,11 @@ impl CandidateContext {
             inner.named_colors.insert("accent".to_owned(), theme.accent);
             inner.named_colors.insert("base".to_owned(), theme.accent);
         })
+    }
+
+    /// Set rpc peer
+    pub fn peer_set(&self, peer: RpcPeer) {
+        self.inner.with_mut(|inner| inner.peer.replace(peer));
     }
 
     /// Parse [Candidate] from JSON bytes
@@ -594,15 +641,18 @@ impl<'de, 'a> de::Visitor<'de> for &'a CandidateContext {
 pub struct FieldRef(pub(crate) usize);
 
 /// Single theme-able part of the haystack
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Field<'a> {
     /// Text content on the field
     pub text: Cow<'a, str>,
-    /// Flag indicating if the should be used as part of search
-    pub active: bool,
     /// Render glyph (if glyphs are disabled text is shown)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glyph: Option<Glyph>,
+    /// [View] representing a field content
+    #[serde(skip_serializing)]
+    pub view: Option<ArcView<'static>>,
+    /// Flag indicating if the should be used as part of search
+    pub active: bool,
     /// Face used to override default one
     #[serde(skip_serializing_if = "Option::is_none")]
     pub face: Option<Face>,
@@ -611,26 +661,69 @@ pub struct Field<'a> {
     pub field_ref: Option<FieldRef>,
 }
 
+impl<'a> fmt::Debug for Field<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug_struct = f.debug_struct("Field");
+        debug_struct
+            .field("text", &self.text)
+            .field("active", &self.active)
+            .field("glyph", &self.glyph)
+            .field("face", &self.face)
+            .field("field_ref", &self.field_ref);
+        if let Some(view) = &self.view {
+            debug_struct.field("view", &view.debug(Size::new(20, 10)));
+        }
+        debug_struct.finish()
+    }
+}
+
+impl<'a> std::cmp::PartialEq for Field<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        let eq = self.text == other.text
+            && self.active == other.active
+            && self.glyph == other.glyph
+            && self.face == other.face
+            && self.field_ref == other.field_ref;
+        if !eq {
+            return false;
+        }
+        match (&self.view, &other.view) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<'a> std::cmp::Eq for Field<'a> {}
+
+impl<'a> Default for Field<'a> {
+    fn default() -> Self {
+        Self {
+            text: Cow::Borrowed(""),
+            glyph: None,
+            view: None,
+            active: true,
+            face: None,
+            field_ref: None,
+        }
+    }
+}
+
 impl<'a> Field<'a> {
     /// Create text field
     pub fn text(text: impl Into<Cow<'a, str>>) -> Self {
         Self {
             text: text.into(),
-            active: true,
-            glyph: None,
-            face: Default::default(),
-            field_ref: None,
+            ..Default::default()
         }
     }
 
     /// Create glyph field
     pub fn glyph(glyph: Glyph) -> Self {
         Self {
-            text: Cow::Borrowed(""),
-            active: true,
             glyph: Some(glyph),
-            face: Default::default(),
-            field_ref: None,
+            ..Default::default()
         }
     }
 
@@ -669,8 +762,9 @@ impl<'a> Field<'a> {
             } else {
                 Cow::Borrowed(&self.text)
             },
-            active: self.active,
             glyph: self.glyph.clone().or(base.glyph),
+            view: self.view.clone().or(base.view),
+            active: self.active,
             face: self.face.or(base.face),
             field_ref: None,
         }
@@ -680,47 +774,24 @@ impl<'a> Field<'a> {
     pub fn borrow(&'a self) -> Field<'a> {
         Self {
             text: Cow::Borrowed(&self.text),
-            active: self.active,
             glyph: self.glyph.clone(),
+            view: self.view.clone(),
+            active: self.active,
             face: self.face,
             field_ref: self.field_ref,
         }
     }
 }
 
-impl<'a> Default for Field<'a> {
-    fn default() -> Self {
-        Self {
-            text: Cow::Borrowed(""),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
-    }
-}
-
 impl<'a, 'b: 'a> From<&'b str> for Field<'a> {
     fn from(text: &'b str) -> Self {
-        Self {
-            text: text.into(),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
+        Self::text(text)
     }
 }
 
 impl From<String> for Field<'static> {
     fn from(text: String) -> Self {
-        Self {
-            text: text.into(),
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
-        }
+        Self::text(text)
     }
 }
 
@@ -728,10 +799,7 @@ impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
     fn from(text: Cow<'b, str>) -> Self {
         Self {
             text,
-            active: true,
-            glyph: None,
-            face: None,
-            field_ref: None,
+            ..Default::default()
         }
     }
 }
@@ -813,6 +881,7 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
         let mut glyph = None;
         let mut face = None;
         let mut reference = None;
+        let mut view: Option<ArcView<'static>> = None;
         while let Some(name) = map.next_key::<Cow<'de, str>>()? {
             match name.as_ref() {
                 "text" => {
@@ -825,13 +894,17 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
                     glyph.replace(map.next_value()?);
                 }
                 "face" => {
-                    let seed = FaceDeserializer {
+                    face.replace(map.next_value_seed(FaceDeserializer {
                         colors: self.colors,
-                    };
-                    face.replace(map.next_value_seed(seed)?);
+                    })?);
                 }
                 "ref" => {
                     reference.replace(map.next_value()?);
+                }
+                "view" => {
+                    view.replace(Arc::from(
+                        map.next_value_seed(&ViewDeserializer::new(Some(&self.colors)))?,
+                    ));
                 }
                 _ => {
                     map.next_value::<de::IgnoredAny>()?;
@@ -839,11 +912,11 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
             }
         }
         let text = text.unwrap_or(Cow::Borrowed::<'static>(""));
-        let text_not_empty = !text.is_empty();
         Ok(Field {
+            active: active.unwrap_or(glyph.is_none() && !text.is_empty()),
             text,
-            active: active.unwrap_or(glyph.is_none() && text_not_empty),
             glyph,
+            view,
             face,
             field_ref: reference,
         })

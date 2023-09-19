@@ -126,7 +126,7 @@ async fn main() -> Result<(), Error> {
     if args.rpc {
         sweep
             .serve_seed(candidate_context.clone(), input, output, |peer| {
-                Candidate::setup(peer, candidate_context)
+                Candidate::setup(peer, sweep.waker(), candidate_context)
             })
             .await?;
     } else {

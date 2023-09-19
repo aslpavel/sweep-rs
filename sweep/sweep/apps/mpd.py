@@ -9,7 +9,6 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 import shlex
-import re
 import os
 import io
 from PIL import Image

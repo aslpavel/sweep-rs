@@ -3,7 +3,6 @@
 """
 # pyright: strict
 from __future__ import annotations
-
 import asyncio
 import inspect
 import json
@@ -12,6 +11,10 @@ import socket
 import sys
 import tempfile
 import time
+import zlib
+import base64
+from abc import ABC, abstractmethod
+from enum import Enum
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from asyncio.tasks import Task
@@ -19,6 +22,7 @@ from collections import deque
 from functools import partial
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     AsyncIterator,
@@ -41,6 +45,10 @@ from typing import (
     cast,
     runtime_checkable,
 )
+
+if TYPE_CHECKING:
+    from _typeshed import ReadableBuffer
+
 
 __all__ = [
     "Sweep",
@@ -146,8 +154,9 @@ class Field:
     """Filed structure used to construct `Candidate`"""
 
     text: str = ""
-    active: bool = True
     glyph: Optional[Icon] = None
+    view: Optional[View] = None
+    active: bool = True
     face: Optional[str] = None
     ref: Optional[int] = None
 
@@ -159,6 +168,8 @@ class Field:
             attrs.append(f"active={self.active}")
         if self.glyph is not None and self.glyph.fallback:
             attrs.append(f"glyph={self.glyph.fallback}")
+        if self.view is not None:
+            attrs.append(f"view={self.view}")
         if self.face is not None:
             attrs.append(f"face={self.face}")
         if self.ref is not None:
@@ -172,6 +183,8 @@ class Field:
             obj["active"] = False
         if self.glyph:
             obj["glyph"] = self.glyph.to_json()
+        if self.view:
+            obj["view"] = self.view.to_json()
         if self.face:
             obj["face"] = self.face
         if self.ref is not None:
@@ -220,13 +233,14 @@ class Candidate:
         text: str = "",
         active: bool = True,
         glyph: Optional[Icon] = None,
+        view: Optional[View] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
         """Add field to the target (matchable left side text)"""
         if self.target is None:
             self.target = []
-        self.target.append(Field(text, active, glyph, face, ref))
+        self.target.append(Field(text, glyph, view, active, face, ref))
         return self
 
     def right_push(
@@ -234,13 +248,14 @@ class Candidate:
         text: str = "",
         active: bool = False,
         glyph: Optional[Icon] = None,
+        view: Optional[View] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
         """Add field to the right (unmatchable right side text)"""
         if self.right is None:
             self.right = []
-        self.right.append(Field(text, active, glyph, face, ref))
+        self.right.append(Field(text, glyph, view, active, face, ref))
         return self
 
     def right_offset_set(self, offset: int) -> Candidate:
@@ -258,13 +273,14 @@ class Candidate:
         text: str = "",
         active: bool = False,
         glyph: Optional[Icon] = None,
+        view: Optional[View] = None,
         face: Optional[str] = None,
         ref: Optional[int] = None,
     ) -> Candidate:
         """Add field to the preview (text shown when item is highlighted)"""
         if self.preview is None:
             self.preview = []
-        self.preview.append(Field(text or "", active, glyph, face, ref))
+        self.preview.append(Field(text or "", glyph, view, active, face, ref))
         return self
 
     def preview_flex_set(self, flex: float) -> Candidate:
@@ -353,6 +369,7 @@ class Candidate:
 
 SweepEvent = Union[SweepBind, SweepSelect[I]]
 BindHandler = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
+FiledResolver = Callable[[int], Awaitable[Optional[Field]]]
 
 
 @dataclass
@@ -437,6 +454,7 @@ class Sweep(Generic[I]):
         "_tmp_socket",
         "_items",
         "_binds",
+        "_field_resolver",
     ]
 
     _args: List[str]
@@ -446,6 +464,7 @@ class Sweep(Generic[I]):
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
     _items: List[I]
     _binds: Dict[str, BindHandler[I]]
+    _field_resolver: Optional[FiledResolver]
 
     def __init__(
         self,
@@ -465,6 +484,7 @@ class Sweep(Generic[I]):
         altscreen: bool = False,
         tmp_socket: bool = False,
         border: Optional[int] = None,
+        field_resolver: Optional[FiledResolver] = None,
     ) -> None:
         args: List[str] = []
         args.extend(["--prompt", prompt])
@@ -501,6 +521,7 @@ class Sweep(Generic[I]):
         self._peer = RpcPeer()
         self._items = []
         self._binds = {}
+        self._field_resolver = field_resolver
 
     async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
@@ -574,6 +595,13 @@ class Sweep(Generic[I]):
                         item = await handler(self, tag)
                         if item is not None:
                             yield SweepSelect(item)
+                elif event.method == "field_missing":
+                    ref = event.params.get("ref")
+                    if ref is None or self._field_resolver is None:
+                        continue
+                    field = await self._field_resolver(ref)
+                    if field is not None:
+                        await self.field_register(field, ref)
 
         return event_iter()
 
@@ -1174,6 +1202,122 @@ class Event(Generic[E]):
 
     def __repr__(self) -> str:
         return f"Events(handlers={len(self._handlers)}, futures={len(self._futures)})"
+
+
+# ------------------------------------------------------------------------------
+# Views
+# ------------------------------------------------------------------------------
+
+
+class View(ABC):
+    @abstractmethod
+    def to_json(self) -> Dict[str, Any]:
+        ...
+
+
+class Direction(Enum):
+    ROW = "horizontal"
+    COL = "vertical"
+
+
+class Justify(Enum):
+    START = "start"
+    CENTER = "center"
+    END = "end"
+    SPACE_BETWEEN = "space-between"
+    SPACE_AROUND = "space-around"
+    SPACE_EVENLY = "space-evenly"
+
+
+class Align(Enum):
+    START = "start"
+    CENTER = "center"
+    END = "end"
+    EXPAND = "expand"
+    SHRINK = "shrink"
+
+
+class FlexChild(NamedTuple):
+    view: View
+    flex: Optional[float]
+    face: Optional[str]
+    align: Align
+
+
+@dataclass
+class Flex(View):
+    _children: List[FlexChild]
+    _justify: Justify
+    _direction: Direction
+
+    def __init__(self, direction: Direction) -> None:
+        self._children = []
+        self._justify = Justify.START
+        self._direction = direction
+
+    @staticmethod
+    def row() -> Flex:
+        return Flex(Direction.ROW)
+
+    @staticmethod
+    def col() -> Flex:
+        return Flex(Direction.COL)
+
+    def justify(self, justify: Justify) -> Flex:
+        self._justify = justify
+        return self
+
+    def push(
+        self,
+        child: View,
+        flex: Optional[float] = None,
+        face: Optional[str] = None,
+        align: Align = Align.START,
+    ) -> Flex:
+        self._children.append(FlexChild(child, flex, face, align))
+        return self
+
+    def to_json(self) -> Dict[str, Any]:
+        children_json: List[Dict[str, Any]] = []
+        for child in self._children:
+            child_json: Dict[str, Any] = {}
+            if child.flex is not None:
+                child_json["flex"] = child.flex
+            if child.face is not None:
+                child_json["face"] = child.face
+            child_json["view"] = child.view.to_json()
+            children_json.append(child_json)
+        return {
+            "direction": self._direction,
+            "justify": self._justify,
+            "children": children_json,
+        }
+
+
+@dataclass
+class Image(View):
+    size: Tuple[int, int]
+    channels: int
+    data: bytes
+
+    def __init__(self, buff: ReadableBuffer):
+        mem = memoryview(buff)
+        if mem.shape is None:
+            raise ValueError("None image shape value")
+        if mem.ndim == 3:
+            channels = mem.shape[-1]
+        elif mem.ndim == 2:
+            channels = 1
+        else:
+            raise ValueError("Invalid image shape: {}", mem.shape)
+        if channels not in {4, 3, 1}:
+            raise ValueError("Invalid channel size: {}", channels)
+        self.size = (mem.shape[0], mem.shape[1])
+        self.channels = channels
+        self.data = base64.b64encode(zlib.compress(mem))
+
+    def to_json(self) -> Dict[str, Any]:
+        return {"size": self.size, "channels": self.channels, "data": self.data}
 
 
 # ------------------------------------------------------------------------------

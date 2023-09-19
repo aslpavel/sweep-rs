@@ -55,6 +55,19 @@ ICON_BACKPACK = Icon(
     size=(1, 3),
     fallback="[B]",
 )
+ICON_SOFA = Icon(
+    path="M21 9V7C21 5.35 19.65 4 18 4H14C13.23 4 12.53 4.3 12 4.78"
+    "C11.47 4.3 10.77 4 10 4H6C4.35 4 3 5.35 3 7V9C1.35 9 0 10.35 0 12V17"
+    "C0 18.65 1.35 20 3 20V22H5V20H19V22H21V20C22.65 20 24 18.65 24 17V12"
+    "C24 10.35 22.65 9 21 9M14 6H18C18.55 6 19 6.45 19 7V9.78"
+    "C18.39 10.33 18 11.12 18 12V14H13V7C13 6.45 13.45 6 14 6M5 7"
+    "C5 6.45 5.45 6 6 6H10C10.55 6 11 6.45 11 7V14H6V12C6 11.12 5.61 10.33 5 9.78"
+    "V7M22 17C22 17.55 21.55 18 21 18H3C2.45 18 2 17.55 2 17V12"
+    "C2 11.45 2.45 11 3 11S4 11.45 4 12V16H20V12C20 11.45 20.45 11 21 11S22 11.45 22 12V17Z",
+    size=(1, 3),
+    view_box=(0, 0, 24, 24),
+    fallback="[S]",
+)
 PANEL_RIGHT = Icon(
     view_box=(0, 0, 128, 128),
     size=(1, 3),
@@ -80,16 +93,24 @@ async def main(args: Optional[List[str]] = None) -> None:
 
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
+    # Bindings
     @Bind.decorator("ctrl+q", "user.custom.action", "My awesome custom action")
     async def ctrl_q_action(_sweep: Any, _tag: str) -> Optional[Any]:
         return ctrl_q_action
 
+    # Field references
     ref_backpack = 1
     ref_cocktail = 2
+    ref_sofa = 127
     fields = {
         ref_backpack: Field(glyph=ICON_BACKPACK, face="fg=#076678"),
         ref_cocktail: Field(glyph=ICON_COCKTAIL),
     }
+
+    # Dynamic field references
+    async def field_resolver(ref: int) -> Optional[Field]:
+        if ref == ref_sofa:
+            return Field(glyph=ICON_SOFA)
 
     candidates = [
         # simple fields
@@ -131,12 +152,18 @@ async def main(args: Optional[List[str]] = None) -> None:
         .preview_push(" - beer\n", active=True)
         .preview_push(glyph=ICON_BACKPACK)
         .preview_push(" - backpack", active=True),
+        # dynamic preview
+        Candidate()
+        .target_push("Item with lazily fetched preview")
+        .preview_push("This icon is lazy loaded - ")
+        .preview_push(ref=ref_sofa),
     ]
 
     result = await sweep(
         candidates,
         binds=[ctrl_q_action],
         fields=fields,
+        field_resolver=field_resolver,
         prompt_icon=ICON_COCKTAIL,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         tty=opts.tty,

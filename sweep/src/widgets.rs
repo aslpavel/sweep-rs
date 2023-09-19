@@ -9,8 +9,8 @@ use std::{
 use surf_n_term::{
     rasterize::PathBuilder,
     view::{
-        Axis, BoxConstraint, BoxView, Container, Dynamic, Flex, IntoView, Justify, Layout,
-        ScrollBar, Text, Tree, View, ViewContext,
+        Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
+        Tree, View, ViewContext,
     },
     BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
     SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
@@ -663,6 +663,7 @@ struct ListState {
 }
 
 impl<T: ListItems> List<T> {
+    /// Create new List widget
     pub fn new(items: T, theme: Theme) -> Self {
         Self {
             items,
@@ -672,29 +673,35 @@ impl<T: ListItems> List<T> {
         }
     }
 
+    /// Reference to list items
     pub fn items(&self) -> &T {
         &self.items
     }
 
+    /// Set list items
     pub fn items_set(&mut self, items: T) -> T {
         self.cursor = 0;
         self.view_state = Default::default();
         std::mem::replace(&mut self.items, items)
     }
 
+    /// Currently pointed item
     pub fn current(&self) -> Option<T::Item> {
         self.items.get(self.cursor, self.theme.clone())
     }
 
+    /// Current cursor position
     pub fn cursor(&self) -> usize {
         self.cursor
     }
 
+    /// Set cursor position
     pub fn cursor_set(&mut self, cursor: usize) {
         self.cursor = cursor;
         self.view_state.with_mut(|st| st.offset = cursor);
     }
 
+    /// Apply action
     pub fn apply(&mut self, action: ListAction) {
         use ListAction::*;
         match action {
@@ -729,6 +736,7 @@ impl<T: ListItems> List<T> {
         }
     }
 
+    /// Handle terminal event
     pub fn handle(&mut self, event: &TerminalEvent) {
         if let TerminalEvent::Key(Key { name, mode }) = event {
             match *mode {
@@ -749,22 +757,16 @@ impl<T: ListItems> List<T> {
         }
     }
 
+    /// Get scroll bar widget
     pub fn scroll_bar(&self) -> impl View {
-        let face = self.theme.scrollbar;
-        let total = self.items.len();
-        let offset = self.cursor;
-        let state = self.view_state.clone();
-        Dynamic::new(move |_, _| {
-            ScrollBar::new(
-                Axis::Vertical,
-                face,
-                total,
-                offset,
-                state.with(|st| st.visible_count),
-            )
-        })
+        ListScrollBar {
+            face: self.theme.scrollbar,
+            total: self.items.len(),
+            state: self.view_state.clone(),
+        }
     }
 
+    /// Set theme
     pub fn theme_set(&mut self, theme: Theme) {
         self.theme = theme;
     }
@@ -775,6 +777,7 @@ impl<T: ListItems> List<T> {
         self.view_state.with(|st| st.offset)
     }
 
+    /// Number of visible items
     fn visible_count(&self) -> usize {
         self.view_state.with(|st| st.visible_count)
     }
@@ -924,6 +927,37 @@ where
             Layout::new().with_size(Size::new(height, width)),
             layouts.into(),
         )
+    }
+}
+
+/// Lazy list scroll bar that is generated on **render** since internal state of the
+/// list is updated on layout.
+struct ListScrollBar {
+    face: Face,
+    total: usize,
+    state: Arc<Mutex<ListState>>,
+}
+
+impl View for ListScrollBar {
+    fn render<'a>(
+        &self,
+        ctx: &ViewContext,
+        surf: &'a mut TerminalSurface<'a>,
+        layout: &Tree<Layout>,
+    ) -> Result<(), Error> {
+        let state = self.state.with(|st| st.clone());
+        ScrollBar::new(
+            Axis::Vertical,
+            self.face,
+            self.total,
+            state.offset,
+            state.visible_count,
+        )
+        .render(ctx, surf, layout)
+    }
+
+    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+        Tree::leaf(Layout::new().with_size(Size::new(ct.max().height, 1)))
     }
 }
 
