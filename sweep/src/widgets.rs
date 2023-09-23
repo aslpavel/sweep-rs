@@ -1,13 +1,13 @@
 use crate::{common::LockExt, haystack_default_view, Haystack, HaystackPreview, Positions};
 use std::{
     cmp::max,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fmt::Write as _,
     str::FromStr,
     sync::{Arc, Mutex},
 };
 use surf_n_term::{
-    rasterize::PathBuilder,
+    rasterize::{PathBuilder, SVG_COLORS},
     view::{
         Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
         Tree, View, ViewContext,
@@ -36,6 +36,7 @@ pub struct Theme {
     pub separator_right: Text,
     pub separator_left: Text,
     pub show_preview: bool,
+    pub named_colors: Arc<HashMap<String, RGBA>>,
 }
 
 impl Theme {
@@ -92,6 +93,11 @@ impl Theme {
         let separator = Face::new(Some(accent), input.bg, FaceAttrs::EMPTY);
         let separator_right = Text::new().push_str(" ", Some(separator)).take();
         let separator_left = Text::new().push_str("", Some(separator)).take();
+        let mut named_colors = SVG_COLORS.clone();
+        named_colors.insert("fg".to_owned(), fg);
+        named_colors.insert("bg".to_owned(), bg);
+        named_colors.insert("accent".to_owned(), accent);
+        named_colors.insert("base".to_owned(), accent);
         Self {
             fg,
             bg,
@@ -111,6 +117,7 @@ impl Theme {
             separator_right,
             separator_left,
             show_preview: true,
+            named_colors: Arc::new(named_colors),
         }
     }
 
@@ -151,6 +158,11 @@ impl Theme {
             .push_str(" > ", Some(Face::default().with_fg(Some(accent))))
             .take();
         let list_text = Face::default().with_fg(list_selected.fg);
+        let mut named_colors = SVG_COLORS.clone();
+        named_colors.insert("fg".to_owned(), fg);
+        named_colors.insert("bg".to_owned(), bg);
+        named_colors.insert("accent".to_owned(), accent);
+        named_colors.insert("base".to_owned(), accent);
         Self {
             fg,
             bg,
@@ -170,6 +182,7 @@ impl Theme {
             separator_right: Text::new().push_str(" ", Some(default)).take(),
             separator_left: Text::new(),
             show_preview: true,
+            named_colors: Arc::new(named_colors),
         }
     }
 }
@@ -945,7 +958,7 @@ impl View for ListScrollBar {
         surf: &'a mut TerminalSurface<'a>,
         layout: &Tree<Layout>,
     ) -> Result<(), Error> {
-        let state = self.state.with(|st| st.clone());
+        let state = self.state.with(|st| *st);
         ScrollBar::new(
             Axis::Vertical,
             self.face,

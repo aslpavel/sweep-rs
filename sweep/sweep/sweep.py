@@ -11,7 +11,6 @@ import socket
 import sys
 import tempfile
 import time
-import zlib
 import base64
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -22,7 +21,6 @@ from collections import deque
 from functools import partial
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     AsyncIterator,
@@ -46,10 +44,6 @@ from typing import (
     runtime_checkable,
 )
 
-if TYPE_CHECKING:
-    from _typeshed import ReadableBuffer
-
-
 __all__ = [
     "Sweep",
     "SweepSelect",
@@ -61,6 +55,14 @@ __all__ = [
     "sweep",
     "Candidate",
     "Field",
+    "View",
+    "Direction",
+    "Justify",
+    "Align",
+    "Flex",
+    "Container",
+    "Image",
+    "Text",
 ]
 
 # ------------------------------------------------------------------------------
@@ -620,6 +622,14 @@ class Sweep(Generic[I]):
             field.to_json() if isinstance(field, Field) else field, ref
         )
 
+    def field_resolver_set(
+        self,
+        field_resolver: Optional[FiledResolver],
+    ) -> Optional[FiledResolver]:
+        """Set field resolver"""
+        field_resolver, self._field_resolver = self._field_resolver, field_resolver
+        return field_resolver
+
     async def items_extend(self, items: Iterable[I]) -> None:
         """Extend list of searchable items"""
         time_start = time.monotonic()
@@ -678,6 +688,13 @@ class Sweep(Generic[I]):
     async def preview_set(self, value: Optional[bool]) -> None:
         """Whether to show preview associated with the current item"""
         await self._peer.preview_set(value=value)
+
+    async def footer_set(self, footer: Optional[View]) -> None:
+        """Set footer view"""
+        if footer:
+            await self._peer.footer_set(footer=footer.to_json())
+        else:
+            await self._peer.footer_set()
 
     async def bind(
         self,
@@ -909,7 +926,7 @@ class RpcPeer:
     def events(self) -> Event[RpcRequest]:
         """Received events (requests with id = None)"""
         if self._is_terminated:
-            raise RuntimeError("peer has already been terminated")
+            raise StopAsyncIteration
         return self._events
 
     @property
@@ -1283,25 +1300,149 @@ class Flex(View):
             child_json: Dict[str, Any] = {}
             if child.flex is not None:
                 child_json["flex"] = child.flex
+            if child.align != Align.START:
+                child_json["align"] = child.align.value
             if child.face is not None:
                 child_json["face"] = child.face
             child_json["view"] = child.view.to_json()
             children_json.append(child_json)
         return {
-            "direction": self._direction,
-            "justify": self._justify,
+            "type": "flex",
+            "direction": self._direction.value,
+            "justify": self._justify.value,
             "children": children_json,
         }
 
 
-@dataclass
-class Image(View):
-    size: Tuple[int, int]
-    channels: int
-    data: bytes
+class Container(View):
+    _child: View
+    _face: Optional[str]
+    _vertical: Align
+    _horizontal: Align
+    _size: Tuple[int, int]
+    _margins: Tuple[int, int, int, int]
 
-    def __init__(self, buff: ReadableBuffer):
-        mem = memoryview(buff)
+    def __init__(self, child: View) -> None:
+        self._child = child
+        self._face = None
+        self._vertical = Align.START
+        self._horizontal = Align.START
+        self._size = (0, 0)
+        self._margins = (0, 0, 0, 0)
+
+    def face(self, face: str) -> Container:
+        self._face = face
+        return self
+
+    def horizontal(self, align: Align) -> Container:
+        self._horizontal = align
+        return self
+
+    def vertical(self, align: Align) -> Container:
+        self._vertical = align
+        return self
+
+    def margins(
+        self,
+        left: Optional[int] = None,
+        right: Optional[int] = None,
+        top: Optional[int] = None,
+        bottom: Optional[int] = None,
+    ) -> Container:
+        left = left if left is not None else self._margins[0]
+        right = right if right is not None else self._margins[1]
+        top = top if top is not None else self._margins[2]
+        bottom = bottom if bottom is not None else self._margins[3]
+        self._margins = (left, right, top, bottom)
+        return self
+
+    def size(
+        self,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+    ) -> Container:
+        height = height if height is not None else self._size[0]
+        width = width if width is not None else self._size[1]
+        self._size = (height, width)
+        return self
+
+    def to_json(self) -> Dict[str, Any]:
+        obj: Dict[str, Any] = dict(type="container", child=self._child.to_json())
+        if self._face is not None:
+            obj["face"] = self._face
+        if self._vertical != Align.START:
+            obj["vertical"] = self._vertical.value
+        if self._horizontal != Align.START:
+            obj["horizontal"] = self._horizontal.value
+        if self._size != (0, 0):
+            obj["size"] = self._size
+        if self._margins != (0, 0, 0, 0):
+            obj["margins"] = self._margins
+        return obj
+
+
+class Text(View):
+    _chunks: List[Text] | str
+    _face: Optional[str]
+    _glyph: Optional[Icon]
+
+    def __init__(
+        self,
+        text: str = "",
+        glyph: Optional[Icon] = None,
+        face: Optional[str] = None,
+    ):
+        self._chunks = text
+        self._face = face
+        self._glyph = glyph
+
+    def push(
+        self,
+        text: str = "",
+        glyph: Optional[Icon] = None,
+        face: Optional[str] = None,
+    ) -> Text:
+        chunk = Text(text, glyph, face)
+        if isinstance(self._chunks, list):
+            self._chunks.append(chunk)
+        else:
+            self._chunks = [Text(self._chunks, self._glyph), chunk]
+            self._glyph = None
+        return self
+
+    def to_json(self) -> Dict[str, Any]:
+        def to_json_rec(text: Text) -> Any:
+            chunks = (
+                [to_json_rec(chunk) for chunk in text._chunks]
+                if isinstance(text._chunks, list)
+                else text._chunks
+            )
+            if text._glyph is None and text._face is None:
+                return chunks
+            obj: Dict[str, Any] = dict(text=chunks)
+            if text._glyph is not None:
+                obj["glyph"] = text._glyph
+            if text._face is not None:
+                obj["face"] = text._face
+            return obj
+
+        return {
+            "type": "text",
+            "text": to_json_rec(self),
+        }
+
+
+class Image(View):
+    _size: Tuple[int, int]
+    _channels: int
+    _data: str
+
+    def __init__(self, buff: Any):
+        arr = getattr(buff, "__array_interface__")
+        if isinstance(arr.get("data"), bytes):
+            mem = memoryview(arr["data"]).cast("B", arr["shape"])
+        else:
+            mem = memoryview(buff)
         if mem.shape is None:
             raise ValueError("None image shape value")
         if mem.ndim == 3:
@@ -1312,12 +1453,20 @@ class Image(View):
             raise ValueError("Invalid image shape: {}", mem.shape)
         if channels not in {4, 3, 1}:
             raise ValueError("Invalid channel size: {}", channels)
-        self.size = (mem.shape[0], mem.shape[1])
-        self.channels = channels
-        self.data = base64.b64encode(zlib.compress(mem))
+        self._size = (mem.shape[0], mem.shape[1])
+        self._channels = channels
+        self._data = base64.b64encode(mem).decode()
 
     def to_json(self) -> Dict[str, Any]:
-        return {"size": self.size, "channels": self.channels, "data": self.data}
+        return {
+            "type": "image",
+            "size": self._size,
+            "channels": self._channels,
+            "data": self._data,
+        }
+
+    def __repr__(self) -> str:
+        return f"Image(size={self._size}, channels={self._channels}, data_size={len(self._data)})"
 
 
 # ------------------------------------------------------------------------------

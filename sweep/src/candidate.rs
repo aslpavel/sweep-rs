@@ -460,7 +460,7 @@ pub fn fields_view(
 
 struct CandidateContextInner {
     field_refs: HashMap<FieldRef, Field<'static>>,
-    named_colors: HashMap<String, RGBA>,
+    named_colors: Arc<HashMap<String, RGBA>>,
     peer: Option<RpcPeer>,
 }
 
@@ -473,7 +473,7 @@ impl CandidateContext {
     pub fn new() -> Self {
         let inner = CandidateContextInner {
             field_refs: HashMap::new(),
-            named_colors: SVG_COLORS.clone(),
+            named_colors: Arc::new(SVG_COLORS.clone()),
             peer: None,
         };
         Self {
@@ -503,12 +503,9 @@ impl CandidateContext {
 
     /// Update stored named colors from [Theme]
     pub fn update_named_colors(&self, theme: &Theme) {
-        self.inner.with_mut(|inner| {
-            inner.named_colors.insert("fg".to_owned(), theme.fg);
-            inner.named_colors.insert("bg".to_owned(), theme.bg);
-            inner.named_colors.insert("accent".to_owned(), theme.accent);
-            inner.named_colors.insert("base".to_owned(), theme.accent);
-        })
+        let named_colors = theme.named_colors.clone();
+        self.inner
+            .with_mut(|inner| inner.named_colors = named_colors)
     }
 
     /// Set rpc peer
@@ -903,7 +900,7 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
                 }
                 "view" => {
                     view.replace(Arc::from(
-                        map.next_value_seed(&ViewDeserializer::new(Some(&self.colors)))?,
+                        map.next_value_seed(&ViewDeserializer::new(Some(self.colors)))?,
                     ));
                 }
                 _ => {

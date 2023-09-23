@@ -7,51 +7,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
 import shlex
 import os
 import io
-from PIL import Image
+from enum import Enum
+from PIL import Image as PILImage
+from PIL.Image import Resampling
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, List, NamedTuple, Sequence, cast, Optional, Dict
-from gi.repository import Gio  # type: ignore
-from .. import Candidate, Icon, sweep, Field
+
+from .. import Candidate, Icon, Sweep, Field, Image, Container, Align, Flex, Text
 from . import sweep_default_cmd
 
 # material-rocket-launch-outline
 PROMPT_ICON = Icon(
-    view_box=(0, 0, 24, 24),
-    size=(1, 3),
-    path="M13.13 22.19L11.5 18.36C13.07 17.78 14.54 17 15.9 16.09L13.13 22.19"
-    "M5.64 12.5L1.81 10.87L7.91 8.1C7 9.46 6.22 10.93 5.64 12.5M19.22 4"
-    "C19.5 4 19.75 4 19.96 4.05C20.13 5.44 19.94 8.3 16.66 11.58"
-    "C14.96 13.29 12.93 14.6 10.65 15.47L8.5 13.37C9.42 11.06 10.73 9.03 12.42 7.34"
-    "C15.18 4.58 17.64 4 19.22 4M19.22 2C17.24 2 14.24 2.69 11 5.93"
-    "C8.81 8.12 7.5 10.53 6.65 12.64C6.37 13.39 6.56 14.21 7.11 14.77L9.24 16.89"
-    "C9.62 17.27 10.13 17.5 10.66 17.5C10.89 17.5 11.13 17.44 11.36 17.35"
-    "C13.5 16.53 15.88 15.19 18.07 13C23.73 7.34 21.61 2.39 21.61 2.39"
-    "S20.7 2 19.22 2M14.54 9.46C13.76 8.68 13.76 7.41 14.54 6.63"
-    "S16.59 5.85 17.37 6.63C18.14 7.41 18.15 8.68 17.37 9.46"
-    "C16.59 10.24 15.32 10.24 14.54 9.46M8.88 16.53L7.47 15.12L8.88 16.53"
-    "M6.24 22L9.88 18.36C9.54 18.27 9.21 18.12 8.91 17.91L4.83 22H6.24M2 22"
-    "H3.41L8.18 17.24L6.76 15.83L2 20.59V22M2 19.17L6.09 15.09"
-    "C5.88 14.79 5.73 14.47 5.64 14.12L2 17.76V19.17Z",
-)
-# fluent-box-multiple
-FLATPAK_ICON = Icon(
-    size=(1, 3),
     view_box=(0, 0, 128, 128),
-    fallback="[F]",
-    path="M100.99 30.27L82.71 23.12Q77.24 21.02 71.57 23.33L71.57 23.33L53.28 30.27Q50.97 31.11 49.60 33.10Q48.24 35.10 48.24 37.62L48.24 37.62L48.24 43.30Q50.76 43.09 53.49 43.30L53.49 43.30L53.49 37.62Q53.49 35.73 55.17 35.10L55.17 35.10L73.46 28.16Q77.24 26.69 80.81 28.16L80.81 28.16L99.10 35.10Q100.78 35.73 100.78 37.62L100.78 37.62L100.78 78.40Q100.78 80.29 99.10 80.92L99.10 80.92L85.02 86.38L85.02 88.91Q85.02 90.59 84.60 92.06L84.60 92.06L100.99 85.75Q103.30 84.91 104.67 82.92Q106.04 80.92 106.04 78.40L106.04 78.40L106.04 37.62Q106.04 35.10 104.67 33.10Q103.30 31.11 100.99 30.27L100.99 30.27ZM95.95 38.46L95.95 38.46Q95.53 37.62 94.58 37.10Q93.64 36.57 92.58 36.99L92.58 36.99L78.08 42.67Q77.03 43.09 76.19 42.67L76.19 42.67L61.69 36.99Q60.22 36.36 59.06 37.41Q57.90 38.46 58.11 39.93Q58.33 41.41 59.80 42.04L59.80 42.04L74.30 47.50Q77.03 48.55 79.97 47.50L79.97 47.50L94.48 42.04Q95.53 41.62 95.95 40.56Q96.37 39.51 95.95 38.46ZM69.67 64.74L69.67 64.74Q69.25 63.89 68.31 63.37Q67.36 62.84 66.31 63.26L66.31 63.26L50.97 69.36L35.42 63.26Q34.36 62.84 33.42 63.37Q32.47 63.89 32.05 64.84Q31.63 65.79 32.05 66.84Q32.47 67.89 33.52 68.31L33.52 68.31L48.24 73.77L48.24 87.01Q48.24 88.07 48.97 88.80Q49.71 89.54 50.86 89.54Q52.02 89.54 52.76 88.80Q53.49 88.07 53.49 87.01L53.49 87.01L53.49 73.77L68.20 68.31Q69.25 67.89 69.67 66.84Q70.10 65.79 69.67 64.74ZM74.72 56.54L56.43 49.39Q50.76 47.29 45.29 49.39L45.29 49.39L27.01 56.54Q24.70 57.38 23.33 59.38Q21.96 61.37 21.96 63.89L21.96 63.89L21.96 88.91Q21.96 91.43 23.33 93.43Q24.70 95.42 27.01 96.26L27.01 96.26L45.29 103.41Q50.76 105.51 56.43 103.41L56.43 103.41L74.72 96.26Q77.03 95.42 78.40 93.43Q79.76 91.43 79.76 88.91L79.76 88.91L79.76 63.89Q79.76 61.37 78.40 59.38Q77.03 57.38 74.72 56.54L74.72 56.54ZM28.90 61.37L47.19 54.44Q50.97 52.97 54.54 54.44L54.54 54.44L72.83 61.37Q74.51 62.00 74.51 63.89L74.51 63.89L74.51 88.91Q74.51 90.80 72.83 91.43L72.83 91.43L54.54 98.36Q50.97 99.84 47.19 98.36L47.19 98.36L28.90 91.43Q27.22 90.80 27.22 88.91L27.22 88.91L27.22 63.89Q27.22 62.00 28.90 61.37L28.90 61.37Z",
-)
-FLATPAK_REF = 0
-
-TERMINAL_ICON = Icon(
     size=(1, 3),
-    view_box=(0, 0, 128, 128),
-    fallback="[T]",
-    path="M41.09 58.85L41.09 58.85Q41.93 58.01 42.98 58.01Q44.03 58.01 44.87 58.85L44.87 58.85L55.38 69.36Q56.22 69.99 56.22 71.15Q56.22 72.30 55.38 72.93L55.38 72.93L44.87 83.44Q44.03 84.28 42.98 84.28Q41.93 84.28 41.09 83.55Q40.25 82.81 40.25 81.66Q40.25 80.50 41.09 79.87L41.09 79.87L49.71 71.04L41.09 62.42Q40.25 61.79 40.25 60.64Q40.25 59.48 41.09 58.85ZM87.75 79.03L87.75 79.03L61.48 79.03Q60.22 79.03 59.48 79.76Q58.75 80.50 58.75 81.66Q58.75 82.81 59.48 83.55Q60.22 84.28 61.27 84.28L61.27 84.28L87.75 84.28Q88.80 84.28 89.54 83.55Q90.27 82.81 90.27 81.66Q90.27 80.50 89.54 79.76Q88.80 79.03 87.75 79.03ZM27.22 86.80L27.22 39.51Q27.22 34.26 31.11 30.37Q35.00 26.48 40.25 26.48L40.25 26.48L87.54 26.48Q93.00 26.48 96.89 30.37Q100.78 34.26 100.78 39.72L100.78 39.72L100.78 86.80Q100.78 92.27 96.89 96.16Q93.00 100.05 87.54 100.05L87.54 100.05L40.25 100.05Q35.00 100.05 31.11 96.16Q27.22 92.27 27.22 86.80L27.22 86.80ZM32.47 42.25L95.53 42.25L95.53 39.51Q95.53 36.36 93.22 34.05Q90.90 31.74 87.54 31.74L87.54 31.74L40.25 31.74Q37.10 31.74 34.78 34.05Q32.47 36.36 32.47 39.72L32.47 39.72L32.47 42.25ZM95.53 47.50L32.47 47.50L32.47 86.80Q32.47 90.17 34.78 92.48Q37.10 94.79 40.25 94.79L40.25 94.79L87.54 94.79Q90.90 94.79 93.22 92.48Q95.53 90.17 95.53 86.80L95.53 86.80L95.53 47.50Z",
+    path="M52.02 33.84L88.80 22.49Q91.32 21.65 93.43 23.22Q95.53 24.80 95.53 27.53L95.53 27.53L95.53 81.55Q95.53 86.17 92.69 89.75Q89.85 93.32 85.44 94.37Q81.02 95.42 76.82 93.53Q72.62 91.64 70.62 87.54Q68.62 83.44 69.57 78.92Q70.52 74.40 73.98 71.57Q77.45 68.73 82.08 68.52Q86.70 68.31 90.27 71.25L90.27 71.25L90.27 43.09L53.49 54.65L53.49 92.06Q53.49 96.68 50.65 100.26Q47.82 103.83 43.40 104.88Q38.99 105.93 34.78 104.04Q30.58 102.15 28.58 98.05Q26.59 93.95 27.53 89.43Q28.48 84.91 31.95 82.08Q35.42 79.24 40.04 79.03Q44.66 78.82 48.24 81.76L48.24 81.76L48.24 38.88Q48.24 37.20 49.29 35.84Q50.34 34.47 52.02 33.84L52.02 33.84ZM53.49 38.88L53.49 49.18L90.27 37.62L90.27 27.32L53.49 38.88ZM40.46 84.28L40.46 84.28Q37.10 84.28 34.78 86.59Q32.47 88.91 32.47 92.16Q32.47 95.42 34.78 97.73Q37.10 100.05 40.35 100.05Q43.61 100.05 45.92 97.73Q48.24 95.42 48.24 92.16Q48.24 88.91 45.92 86.59Q43.61 84.28 40.46 84.28ZM74.51 81.76L74.51 81.55Q74.51 84.91 76.82 87.22Q79.13 89.54 82.39 89.54Q85.65 89.54 87.96 87.22Q90.27 84.91 90.27 81.66Q90.27 78.40 87.96 76.09Q85.65 73.77 82.39 73.77Q79.13 73.77 76.82 76.09Q74.51 78.40 74.51 81.76L74.51 81.76Z",
 )
-TERMINAL_REF = 1
 
 
 class MPDChunk(NamedTuple):
@@ -84,28 +57,72 @@ class Song:
         self.title = None
         self.attrs = {}
 
+    def __eq__(self, other: Any) -> bool:
+        return self.file == other.file
+
+    def __hash__(self) -> int:
+        return hash(self.file)
+
+    def album_id(self) -> int:
+        return abs(hash(self.attrs.get("MUSICBRAINZ_ALBUMID") or self.album or ""))
+
     def to_candidate(self) -> Candidate:
-        candidate = Candidate()
+        result = Candidate()
+
+        # target
         if self.title:
-            if self.artist:
-                candidate.target_push(self.artist)
-                candidate.target_push(" - ")
-            candidate.target_push(self.title)
+            result.target_push(self.title)
         else:
-            candidate.target_push(os.path.basename(self.file))
+            result.target_push(os.path.basename(self.file))
+
+        # right
+        result.right_push(duration_fmt(self.duration))
+
+        # preview
+        if self.artist:
+            result.preview_push(f"Artist: ", face="bold").preview_push(
+                f"{self.artist}\n", active=True
+            )
         if self.album:
-            candidate.right_push(self.album)
-        return candidate
+            result.preview_push("Album : ", face="bold").preview_push(
+                f"{self.album}\n", active=True
+            )
+        result.preview_push(ref=self.album_id()).preview_flex_set(1)
+        return result
+
+
+class MPDState(Enum):
+    WAIT = 0
+    IDLE = 1
+    REQUEST = 2
 
 
 class MPD:
     """MPD Client implementation"""
 
+    __slots__ = [
+        "_host",
+        "_port",
+        "_reader",
+        "_writer",
+        "_state",
+        "_state_cond",
+        "_idle_task",
+        "_album_id_to_song",
+    ]
+
     def __init__(self, host: str = "localhost", port: int = 6600):
         self._host = host
         self._port = port
+
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
+
+        self._state = MPDState.WAIT
+        self._state_cond = asyncio.Condition()
+        self._idle_task = asyncio.create_task(self._idle_coro(), name="mpd-idle")
+
+        self._album_id_to_song: Dict[int, Song] = {}
 
     async def __aenter__(self) -> MPD:
         self._reader, self._writer = await asyncio.open_connection(
@@ -145,7 +162,7 @@ class MPD:
                 break
             elif line.startswith(b"ACK "):
                 raise ValueError(line[4:].strip().decode())
-            name, value = line.rsplit(b": ", maxsplit=1)
+            name, value = line.split(b": ", maxsplit=1)
             if name == b"binary":
                 data = await self._reader.readexactly(int(value))
                 yield MPDChunk("binary", data)
@@ -153,15 +170,52 @@ class MPD:
             else:
                 yield MPDChunk(name.decode(), value.decode())
 
+    async def _idle_coro(self) -> None:
+        """Client needs to be in IDLE state if there is no request to avoid timeout"""
+        while True:
+            await asyncio.sleep(1)
+            async for _chunk in self.call("idle"):
+                pass
+
     async def call(self, cmd: str, *args: str) -> AsyncIterator[MPDChunk]:
-        await self._send_request(cmd, args)
-        async for chunk in self._recv_response():
-            yield chunk
+        print(cmd, args)
+        async with self._state_cond:
+            # interrupt idle state
+            if self._state == MPDState.IDLE:
+                await self._send_request("noidle", [])
+            # wait for client to transition into WAIT state
+            while self._state != MPDState.WAIT:
+                await self._state_cond.wait()
+            # change state
+            self._state = MPDState.IDLE if cmd == "idle" else MPDState.REQUEST
+            await self._send_request(cmd, args)
+        try:
+            async for chunk in self._recv_response():
+                yield chunk
+        finally:
+            # transition to WAIT state and wake up other tasks
+            async with self._state_cond:
+                self._state = MPDState.WAIT
+                self._state_cond.notify_all()
+
+    def song_by_id(self, id: int) -> Optional[Song]:
+        return self._album_id_to_song.get(id)
 
     async def playlistinfo(self) -> List[Song]:
-        return await mpd_songs(self.call("playlistinfo"))
+        songs = await mpd_songs(self.call("playlistinfo"))
+        for song in songs:
+            self._album_id_to_song[song.album_id()] = song
+        return songs
 
-    async def readpicture(self, file: str) -> Optional[Image.Image]:
+    async def listallinfo(self) -> List[Song]:
+        songs = await mpd_songs(self.call("listallinfo"))
+        for song in songs:
+            self._album_id_to_song[song.album_id()] = song
+        return songs
+
+    async def readpicture(
+        self, file: str, width: int = 500
+    ) -> Optional[PILImage.Image]:
         """Read picture embedded in music file"""
         cmd = "readpicture"
         size = 0
@@ -177,7 +231,13 @@ class MPD:
         if data.tell() == 0:
             return None
         data.seek(0)
-        return Image.open(data)
+        img = PILImage.open(data)
+        if img.width != width:
+            img = img.resize(
+                (width, round(width * img.height / img.width)),
+                resample=Resampling.BILINEAR,
+            )
+        return img
 
 
 def mpd_escape(value: str) -> str:
@@ -214,6 +274,96 @@ async def mpd_songs(chunks: AsyncIterator[MPDChunk]) -> List[Song]:
     return songs
 
 
+def duration_fmt(duration: float) -> str:
+    mins, secs = divmod(duration, 60)
+    hours, mins = divmod(mins, 60)
+    result = f"{mins:>02.0f}:{secs:>02.0f}"
+    if hours:
+        result = f"{hours:>02.0f}:{result}"
+    return result
+
+
+class MPDSweepView(Enum):
+    PLAYLIST = 0
+    ALL = 1
+    MAX = 2
+
+
+class MPDSweep:
+    def __init__(self, mpd: MPD, sweep: Sweep[Song]) -> None:
+        self.mpd = mpd
+        self.sweep = sweep
+        self.view = MPDSweepView.MAX
+
+    async def run(self) -> None:
+        self.sweep.field_resolver_set(self._field_resolver)
+        await self.sweep.bind(
+            key="ctrl+i",
+            tag="mpd.tab",
+            desc="switch between different views",
+            handler=self._tab_handler,
+        )
+        await self.view_playlist()
+        async for _event in self.sweep:
+            pass
+
+    async def view_switch(self, view: Optional[MPDSweepView] = None):
+        match view:
+            case None | MPDSweepView.MAX:
+                view = MPDSweepView((self.view.value + 1) % MPDSweepView.MAX.value)
+                await self.view_switch(view)
+            case MPDSweepView.ALL:
+                await self.view_all()
+            case MPDSweepView.PLAYLIST:
+                await self.view_playlist()
+
+    async def view_playlist(self):
+        if self.view == MPDSweepView.PLAYLIST:
+            return
+        self.view = MPDSweepView.PLAYLIST
+
+        await self.sweep.footer_set(
+            Text().push("Footer: ", face="bold").push("Playlist")
+        )
+        await self.sweep.prompt_set("Playlist")
+        await self.sweep.items_clear()
+        await self.sweep.items_extend(await self.mpd.playlistinfo())
+
+    async def view_all(self):
+        if self.view == MPDSweepView.ALL:
+            return
+        self.view = MPDSweepView.ALL
+
+        await self.sweep.footer_set(Text().push("Footer: ", face="bold").push("All"))
+        await self.sweep.prompt_set("All Songs")
+        await self.sweep.items_clear()
+        await self.sweep.items_extend(await self.mpd.listallinfo())
+
+    async def _on_select(self, song: Song):
+        match self.view:
+            case MPDSweepView.PLAYLIST:
+                pass
+            case _:
+                pass
+
+    async def _field_resolver(self, ref: int) -> Field:
+        song = self.mpd.song_by_id(ref)
+        if song is None:
+            return Field()
+        cover = await self.mpd.readpicture(song.file)
+        if cover is None:
+            return Field()
+        view = (
+            Flex.col()
+            # .push(Text(f"{cover.width}x{cover.height}"), align=Align.CENTER)
+            .push(Container(Image(cover)).horizontal(Align.CENTER).margins(top=1))
+        )
+        return Field(view=view)
+
+    async def _tab_handler(self, _sweep: Sweep[Song], tag: str) -> None:
+        await self.view_switch()
+
+
 async def main(args: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -234,11 +384,6 @@ async def main(args: Optional[List[str]] = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    fields = {
-        FLATPAK_REF: Field(glyph=FLATPAK_ICON),
-        TERMINAL_REF: Field(glyph=TERMINAL_ICON),
-    }
-
     sweep_theme = opts.theme
     sweep_args: Dict[str, Any] = {}
     sweep_cmd: List[str] = []
@@ -252,32 +397,20 @@ async def main(args: Optional[List[str]] = None) -> None:
                 border=0,
             )
         )
-        sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.launcher"])
+        sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.mpd"])
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 
     async with MPD() as mpd:
-        # async for song in mpd.playlistinfo():
-        #     print(song)
-        # print(
-        #     await mpd.readpicture(
-        #         "Summoning/[2001] Let Mortal Heroes Sing Your Fame/08 Farewell.mp3"
-        #     )
-        # )
-
-        entry = await sweep(
-            (await mpd.playlistinfo()),
+        async with Sweep[Song](
             sweep=sweep_cmd,
-            fields=fields,
             scorer="substr",
             tty=opts.tty,
             theme=sweep_theme,
-            prompt="Launch",
-            prompt_icon=PROMPT_ICON,
             log=opts.log,
-            title="Sweep Launcher",
+            title="MPD Client",
             **sweep_args,
-        )
-        print(entry)
+        ) as sweep:
+            await MPDSweep(mpd, sweep).run()
 
 
 if __name__ == "__main__":

@@ -26,7 +26,10 @@ use std::{
 };
 use surf_n_term::{
     encoder::ColorDepth,
-    view::{Align, BoxView, Container, Flex, IntoView, Margins, Text, ViewContext},
+    view::{
+        Align, BoxView, Container, Flex, IntoView, Margins, Text, View, ViewContext,
+        ViewDeserializer,
+    },
     Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal, Terminal,
     TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
 };
@@ -108,11 +111,11 @@ where
     }
 }
 
-#[derive(Debug)]
 enum SweepRequest<H> {
     NeedleSet(String),
     NeedleGet(oneshot::Sender<String>),
     PromptSet(Option<String>, Option<Glyph>),
+    ThemeGet(oneshot::Sender<Theme>),
     Bind {
         chord: Vec<Key>,
         tag: String,
@@ -123,6 +126,7 @@ enum SweepRequest<H> {
     PeerSet(mpsc::UnboundedSender<SweepEvent<H>>),
     ScorerByName(Option<String>, oneshot::Sender<bool>),
     PreviewSet(Option<bool>),
+    FooterSet(Option<Arc<dyn View>>),
 }
 
 #[derive(Clone, Debug)]
@@ -245,6 +249,18 @@ where
     /// Set prompt
     pub fn prompt_set(&self, prompt: Option<String>, icon: Option<Glyph>) {
         self.send_request(SweepRequest::PromptSet(prompt, icon))
+    }
+
+    /// Get current theme
+    pub async fn theme_get(&self) -> Result<Theme, Error> {
+        let (send, recv) = oneshot::channel();
+        self.send_request(SweepRequest::ThemeGet(send));
+        Ok(recv.await?)
+    }
+
+    /// Set Footer
+    pub fn footer_set(&self, footer: Option<Arc<dyn View>>) {
+        self.send_request(SweepRequest::FooterSet(footer))
     }
 
     /// Bind specified chord to the tag
@@ -452,6 +468,24 @@ where
             }
         });
 
+        // footer set
+        peer.register("footer_set", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let theme = sweep.theme_get().await?;
+                    let footer: Option<Box<dyn View>> = params.take_opt_seed(
+                        &ViewDeserializer::new(Some(&theme.named_colors)),
+                        0,
+                        "footer",
+                    )?;
+                    sweep.footer_set(footer.map(Arc::from));
+                    Ok(Value::Null)
+                }
+            }
+        });
+
         // key binding
         peer.register("bind", {
             let sweep = self.clone();
@@ -630,6 +664,8 @@ struct SweepState<H: Haystack> {
     prompt: String,
     // prompt icon
     prompt_icon: Option<Glyph>,
+    // footer
+    footer: Option<Arc<dyn View>>,
     // current state of the key chord
     key_map_state: Vec<Key>,
     // user action executed on backspace when input is empty
@@ -695,6 +731,7 @@ where
             scorers,
             prompt,
             prompt_icon,
+            footer: None,
             key_map_state: Vec::new(),
             key_empty_backspace: None,
             key_map,
@@ -945,9 +982,13 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // scroll bar
         body.push_child(self.list.scroll_bar());
 
-        Flex::column()
+        let mut view = Flex::column()
             .add_child(Container::new(header).with_height(1))
-            .add_flex_child(1.0, body)
+            .add_flex_child(1.0, body);
+        if let Some(footer) = &self.footer {
+            view.push_child(footer.clone())
+        }
+        view
     }
 }
 
@@ -1024,6 +1065,9 @@ where
                         NeedleGet(resolve) => {
                             mem::drop(resolve.send(state.input.get().collect()));
                         }
+                        ThemeGet(resolve) => {
+                            mem::drop(resolve.send(state.theme.clone()));
+                        }
                         Terminate => return Ok(TerminalAction::Quit(())),
                         Bind { chord, tag, desc } => match *chord.as_slice() {
                             [Key {
@@ -1078,6 +1122,7 @@ where
                                 ..state.theme.clone()
                             });
                         }
+                        FooterSet(view) => state.footer = view,
                     }
                 }
             }

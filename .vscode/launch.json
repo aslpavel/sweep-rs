@@ -29,6 +29,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "mpd",
+      "type": "python",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/sweep",
+      "program": "debug.py",
+      "args": ["mpd", "--sweep", "cargo run --"],
+      "console": "integratedTerminal"
+    },
+    {
       "name": "cargo test",
       "type": "lldb",
       "request": "launch",
