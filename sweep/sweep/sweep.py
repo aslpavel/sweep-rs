@@ -45,30 +45,58 @@ from typing import (
 )
 
 __all__ = [
-    "Sweep",
-    "SweepSelect",
-    "SweepBind",
-    "SweepEvent",
+    "Align",
     "Bind",
     "BindHandler",
-    "Icon",
-    "sweep",
     "Candidate",
-    "Field",
-    "View",
-    "Direction",
-    "Justify",
-    "Align",
-    "Flex",
     "Container",
+    "Direction",
+    "Event",
+    "Field",
+    "Flex",
+    "Icon",
     "Image",
+    "Justify",
+    "Size",
+    "sweep",
+    "Sweep",
+    "SweepBind",
+    "SweepEvent",
+    "SweepSelect",
+    "SweepSize",
     "Text",
+    "View",
 ]
 
 # ------------------------------------------------------------------------------
 # Sweep
 # ------------------------------------------------------------------------------
 I = TypeVar("I")  # sweep item
+
+
+class Size(NamedTuple):
+    height: int
+    width: int
+
+    @staticmethod
+    def from_json(obj: Any) -> Size:
+        height = None
+        width = None
+        if isinstance(obj, list):
+            obj = cast(List[Any], obj)
+            height, width = obj
+        elif isinstance(obj, dict):
+            obj = cast(Dict[str, Any], obj)
+            height = obj.get("height")
+            width = obj.get("width")
+        if (
+            not isinstance(height, int)
+            or not isinstance(width, int)
+            or height < 0
+            or width < 0
+        ):
+            raise ValueError(f"Invalid Size: {obj}")
+        return Size(height, width)
 
 
 class SweepBind(NamedTuple):
@@ -78,6 +106,28 @@ class SweepBind(NamedTuple):
 
     def __repr__(self):
         return f'SweepBind("{self.tag}")'
+
+
+class SweepSize(NamedTuple):
+    cells: Size
+    pixels: Size
+    pixels_per_cell: Size
+
+    def cells_in_pixels(self, cells: Size) -> Size:
+        return Size(
+            height=self.pixels_per_cell.height * cells.height,
+            width=self.pixels_per_cell.width * cells.width,
+        )
+
+    @staticmethod
+    def from_json(obj: Any) -> SweepSize:
+        if not isinstance(obj, dict):
+            raise ValueError(f"Invalid SweepSize: {obj}")
+        obj = cast(Dict[str, Any], obj)
+        cells = Size.from_json(obj.get("cells"))
+        pixels = Size.from_json(obj.get("pixels"))
+        pixels_per_cell = Size.from_json(obj.get("pixels_per_cell"))
+        return SweepSize(cells, pixels, pixels_per_cell)
 
 
 @dataclass
@@ -369,7 +419,7 @@ class Candidate:
         )
 
 
-SweepEvent = Union[SweepBind, SweepSelect[I]]
+SweepEvent = Union[SweepBind, SweepSize, SweepSelect[I]]
 BindHandler = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
 FiledResolver = Callable[[int], Awaitable[Optional[Field]]]
 
@@ -453,10 +503,13 @@ class Sweep(Generic[I]):
         "_proc",
         "_io_sock",
         "_peer",
+        "_peer_iter",
         "_tmp_socket",
         "_items",
         "_binds",
+        "_field_known",
         "_field_resolver",
+        "_size",
     ]
 
     _args: List[str]
@@ -467,6 +520,7 @@ class Sweep(Generic[I]):
     _items: List[I]
     _binds: Dict[str, BindHandler[I]]
     _field_resolver: Optional[FiledResolver]
+    _size: Optional[SweepSize]
 
     def __init__(
         self,
@@ -521,8 +575,11 @@ class Sweep(Generic[I]):
         self._io_sock = None
         self._tmp_socket = tmp_socket
         self._peer = RpcPeer()
+        self._peer_iter = aiter(self._peer)
+        self._size = None
         self._items = []
         self._binds = {}
+        self._field_known: Set[int] = set()
         self._field_resolver = field_resolver
 
     async def __aenter__(self) -> Sweep[I]:
@@ -583,7 +640,7 @@ class Sweep(Generic[I]):
 
     def __aiter__(self) -> AsyncIterator[SweepEvent[I]]:
         async def event_iter() -> AsyncGenerator[SweepEvent[I], None]:
-            async for event in self._peer:
+            async for event in self._peer_iter:
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
@@ -597,9 +654,17 @@ class Sweep(Generic[I]):
                         item = await handler(self, tag)
                         if item is not None:
                             yield SweepSelect(item)
+                elif event.method == "resize":
+                    size = SweepSize.from_json(event.params)
+                    self._size = size
+                    yield size
                 elif event.method == "field_missing":
                     ref = event.params.get("ref")
-                    if ref is None or self._field_resolver is None:
+                    if (
+                        ref is None
+                        or ref in self._field_known
+                        or self._field_resolver is None
+                    ):
                         continue
                     field = await self._field_resolver(ref)
                     if field is not None:
@@ -618,9 +683,11 @@ class Sweep(Generic[I]):
             await proc.wait()
 
     async def field_register(self, field: Any, ref: Optional[int] = None) -> int:
-        return await self._peer.field_register(
+        ref_val = await self._peer.field_register(
             field.to_json() if isinstance(field, Field) else field, ref
         )
+        self._field_known.add(ref_val)
+        return ref_val
 
     def field_resolver_set(
         self,
@@ -629,6 +696,12 @@ class Sweep(Generic[I]):
         """Set field resolver"""
         field_resolver, self._field_resolver = self._field_resolver, field_resolver
         return field_resolver
+
+    async def size(self) -> SweepSize:
+        """Get size of the Sweep ui"""
+        while self._size is None:
+            await self._peer.events
+        return self._size
 
     async def items_extend(self, items: Iterable[I]) -> None:
         """Extend list of searchable items"""
@@ -661,6 +734,10 @@ class Sweep(Generic[I]):
     async def items_current(self) -> Optional[I]:
         """Get currently selected item if any"""
         return self._item_get(await self._peer.items_current())
+
+    async def cursor_set(self, position: int) -> None:
+        """Set cursor to specified position"""
+        await self._peer.cursor_set(position=position)
 
     async def query_set(self, query: str) -> None:
         """Set query string used to filter items"""

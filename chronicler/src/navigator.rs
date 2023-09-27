@@ -240,6 +240,7 @@ impl Navigator {
                             .await?
                     }
                 },
+                SweepEvent::Resize(_) => {}
             }
         }
         Ok(None)

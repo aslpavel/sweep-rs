@@ -30,8 +30,9 @@ use surf_n_term::{
         Align, BoxView, Container, Flex, IntoView, Margins, Text, View, ViewContext,
         ViewDeserializer,
     },
-    Glyph, Key, KeyMap, KeyMod, KeyName, Position, Surface, SurfaceMut, SystemTerminal, Terminal,
-    TerminalAction, TerminalCommand, TerminalEvent, TerminalSurfaceExt, TerminalWaker,
+    Glyph, Key, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal,
+    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize, TerminalSurfaceExt,
+    TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -123,7 +124,9 @@ enum SweepRequest<H> {
     },
     Terminate,
     Current(oneshot::Sender<Option<H>>),
-    PeerSet(mpsc::UnboundedSender<SweepEvent<H>>),
+    CursorSet {
+        position: usize,
+    },
     ScorerByName(Option<String>, oneshot::Sender<bool>),
     PreviewSet(Option<bool>),
     FooterSet(Option<Arc<dyn View>>),
@@ -133,6 +136,7 @@ enum SweepRequest<H> {
 pub enum SweepEvent<H> {
     Select(Option<H>),
     Bind(String),
+    Resize(TerminalSize),
 }
 
 #[derive(Clone)]
@@ -258,9 +262,14 @@ where
         Ok(recv.await?)
     }
 
-    /// Set Footer
+    /// Set footer
     pub fn footer_set(&self, footer: Option<Arc<dyn View>>) {
         self.send_request(SweepRequest::FooterSet(footer))
+    }
+
+    /// Set cursor to specified position
+    pub fn cursor_set(&self, position: usize) {
+        self.send_request(SweepRequest::CursorSet { position })
     }
 
     /// Bind specified chord to the tag
@@ -423,6 +432,18 @@ where
             }
         });
 
+        peer.register("cursor_set", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    let position: usize = params.take(0, "position")?;
+                    sweep.cursor_set(position);
+                    Ok(Value::Null)
+                }
+            }
+        });
+
         // query set
         peer.register("query_set", {
             let sweep = self.clone();
@@ -518,11 +539,8 @@ where
         // setup
         setup(peer.clone());
 
-        // set as current peer
-        let (send, recv) = mpsc::unbounded_channel();
-        self.send_request(SweepRequest::PeerSet(send));
-
         // handle events and serve
+        let sweep = self.clone();
         async move {
             let serve = peer.serve(read, write);
             let events = async move {
@@ -538,15 +556,22 @@ where
                     }),
                 )?;
 
-                tokio::pin!(recv);
-                while let Some(event) = recv.recv().await {
+                while let Some(event) = sweep.next_event().await {
                     match event {
                         SweepEvent::Bind(tag) => {
                             peer.notify_with_value("bind", json!({ "tag": tag }))?
                         }
                         SweepEvent::Select(Some(item)) => {
-                            peer.notify("select", json!({ "item": item }))?
+                            peer.notify_with_value("select", json!({ "item": item }))?
                         }
+                        SweepEvent::Resize(size) => peer.notify_with_value(
+                            "resize",
+                            json!({
+                                "cells": size.cells,
+                                "pixels": size.pixels,
+                                "pixels_per_cell": size.pixels_per_cell(),
+                            }),
+                        )?,
                         SweepEvent::Select(None) => {}
                     }
                 }
@@ -1042,25 +1067,38 @@ where
         options.scorers,
         haystack_context,
     );
-    let mut state_peer: Option<mpsc::UnboundedSender<SweepEvent<H>>> = None;
     let mut state_help: Option<SweepState<ActionDesc>> = None;
+
+    let sweep_size = Size {
+        width: term_size.cells.width - 2 * options.border,
+        height: options.height.min(term_size.cells.height),
+    };
+    events.send(SweepEvent::Resize(TerminalSize {
+        cells: sweep_size,
+        pixels: term_size.cells_in_pixels(sweep_size),
+    }))?;
 
     // render loop
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, mut view| {
         // handle events
         match event {
-            Some(TerminalEvent::Resize(_term_size)) => {
+            Some(TerminalEvent::Resize(term_size)) => {
                 term.execute(TerminalCommand::Scroll(row_offset as i32))?;
                 row_offset = 0;
+                let sweep_size = Size {
+                    width: term_size.cells.width - 2 * options.border,
+                    height: options.height.min(term_size.cells.height),
+                };
+                events.send(SweepEvent::Resize(TerminalSize {
+                    cells: sweep_size,
+                    pixels: term_size.cells_in_pixels(sweep_size),
+                }))?;
             }
             Some(TerminalEvent::Wake) => {
                 for request in requests.try_iter() {
                     use SweepRequest::*;
                     match request {
-                        PeerSet(peer) => {
-                            state_peer.replace(peer);
-                        }
                         NeedleSet(needle) => state.input.set(needle.as_ref()),
                         NeedleGet(resolve) => {
                             mem::drop(resolve.send(state.input.get().collect()));
@@ -1109,6 +1147,9 @@ where
                             let current = state.list.current().map(|item| item.result.haystack);
                             mem::drop(resolve.send(current));
                         }
+                        CursorSet { position } => {
+                            state.list.cursor_set(position);
+                        }
                         ScorerByName(name, resolve) => {
                             let _ = resolve.send(state.scorer_by_name(name));
                         }
@@ -1148,11 +1189,6 @@ where
                 };
                 match action {
                     SweepKeyEvent::Event(event) => {
-                        if let Some(peer) = &state_peer {
-                            if peer.send(event.clone()).is_err() {
-                                state_peer.take();
-                            }
-                        }
                         events.send(event)?;
                     }
                     SweepKeyEvent::Quit => return Ok(TerminalAction::Quit(())),

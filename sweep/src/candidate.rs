@@ -344,7 +344,7 @@ impl Haystack for Candidate {
             ctx,
             theme.list_text,
             theme.list_highlight,
-            theme.list_text,
+            theme.list_inactive,
         );
 
         let mut view = Flex::row()

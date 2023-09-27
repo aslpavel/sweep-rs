@@ -285,7 +285,9 @@ impl<H> RankerResult<H> {
     {
         let matched = self.matches.get(index)?.clone();
         Some(ScoreResult {
-            haystack: self.haystack.with(|hs| hs.get(matched.index).cloned())?,
+            haystack: self
+                .haystack
+                .with(|hs| hs.get(matched.haystack_index).cloned())?,
             score: matched.score.unwrap_or(Score::MIN),
             positions: matched.positions,
         })
@@ -293,7 +295,7 @@ impl<H> RankerResult<H> {
 
     /// Get haystack index given match index
     pub fn get_haystack_index(&self, index: usize) -> Option<usize> {
-        Some(self.matches.get(index)?.index)
+        Some(self.matches.get(index)?.haystack_index)
     }
 
     /// Find match index by haystack index
@@ -301,7 +303,9 @@ impl<H> RankerResult<H> {
         self.matches
             .iter()
             .enumerate()
-            .find_map(|(index, matched)| (matched.index == haystack_index).then_some(index))
+            .find_map(|(index, matched)| {
+                (matched.haystack_index == haystack_index).then_some(index)
+            })
     }
 
     /// Iterator over all matched items
@@ -348,17 +352,20 @@ enum RankerCmd<H> {
 
 #[derive(Clone, Debug)]
 struct Match {
+    /// Score value of the match
     score: Option<Score>,
+    /// Matched positions
     positions: Positions,
-    index: usize,
+    /// Index in the haystack
+    haystack_index: usize,
 }
 
 impl Match {
-    fn new(index: usize) -> Self {
+    fn new(haystack_index: usize) -> Self {
         Self {
             score: None,
             positions: Positions::new(0),
-            index,
+            haystack_index,
         }
     }
 }
@@ -384,7 +391,7 @@ where
                 TARGET.with(|target| {
                     let mut target = target.borrow_mut();
                     target.clear();
-                    haystack[item.index]
+                    haystack[item.haystack_index]
                         .haystack_scope(|char| target.extend(char::to_lowercase(char)));
                     let mut score = Score::MIN;
                     let mut positions = Positions::new(target.len());
