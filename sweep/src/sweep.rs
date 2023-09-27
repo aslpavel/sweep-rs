@@ -1,5 +1,5 @@
 use crate::{
-    common::VecDeserializeSeed,
+    common::{LockExt, VecDeserializeSeed},
     fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
@@ -287,6 +287,14 @@ where
         let mut receiver = self.events.lock().await;
         receiver.recv().await
     }
+
+    /// Wait for sweep to correctly terminate and cleanup terminal
+    pub async fn terminate(&self) {
+        self.send_request(SweepRequest::Terminate);
+        if let Some(terminated) = self.terminated.with_mut(|t| t.take()) {
+            let _ = terminated.await;
+        }
+    }
 }
 
 pub struct SweepInner<H: Haystack> {
@@ -295,6 +303,7 @@ pub struct SweepInner<H: Haystack> {
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
     events: Mutex<mpsc::UnboundedReceiver<SweepEvent<H>>>,
+    terminated: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl<H: Haystack> SweepInner<H> {
@@ -305,6 +314,7 @@ impl<H: Haystack> SweepInner<H> {
         }
         let (requests_send, requests_recv) = unbounded();
         let (events_send, events_recv) = mpsc::unbounded_channel();
+        let (terminate_send, terminate_recv) = oneshot::channel();
         let term = SystemTerminal::open(&options.tty_path)
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
@@ -325,6 +335,10 @@ impl<H: Haystack> SweepInner<H> {
                     events_send,
                     haystack_context,
                 )
+                .map(|result| {
+                    let _ = terminate_send.send(());
+                    result
+                })
             }
         })?;
         Ok(SweepInner {
@@ -333,6 +347,7 @@ impl<H: Haystack> SweepInner<H> {
             ui_worker: Some(worker),
             requests: requests_send,
             events: Mutex::new(events_recv),
+            terminated: std::sync::Mutex::new(Some(terminate_recv)),
         })
     }
 }
@@ -342,7 +357,7 @@ where
     H: Haystack,
 {
     fn drop(&mut self) {
-        self.requests.send(SweepRequest::Terminate).unwrap_or(());
+        let _ = self.requests.send(SweepRequest::Terminate);
         self.waker.wake().unwrap_or(());
         if let Some(handle) = self.ui_worker.take() {
             if let Err(error) = handle.join() {
@@ -541,6 +556,7 @@ where
 
         // handle events and serve
         let sweep = self.clone();
+        let sweep_terminate = self.clone();
         async move {
             let serve = peer.serve(read, write);
             let events = async move {
@@ -577,10 +593,12 @@ where
                 }
                 Ok(())
             };
-            tokio::select! {
+            let result = tokio::select! {
                 result = serve => result,
                 result = events => result,
-            }
+            };
+            sweep_terminate.terminate().await;
+            result
         }
     }
 }
