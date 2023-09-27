@@ -290,7 +290,8 @@ where
 
     /// Wait for sweep to correctly terminate and cleanup terminal
     pub async fn terminate(&self) {
-        self.send_request(SweepRequest::Terminate);
+        let _ = self.requests.send(SweepRequest::Terminate);
+        let _ = self.waker.wake();
         if let Some(terminated) = self.terminated.with_mut(|t| t.take()) {
             let _ = terminated.await;
         }
