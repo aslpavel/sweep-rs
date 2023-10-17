@@ -1,4 +1,5 @@
 _chronicler_bin="##CHRONICLER_BIN##"
+_chronicler_db=$("$_chronicler_bin" update --show-db-path)
 
 # chronicler session
 if [ -f /proc/sys/kernel/random/uuid ]; then

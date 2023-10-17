@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 mod history;
 mod navigator;
 mod utils;
@@ -65,6 +67,9 @@ async fn main() -> Result<(), Error> {
                 print!("{}", entry);
             }
         }
+        ArgsSubcommand::Update(args) if args.show_db_path => {
+            print!("{}", db_path.canonicalize()?.to_string_lossy())
+        }
         ArgsSubcommand::Update(_args) => {
             let history = History::new(db_path).await?;
             let mut update_str = String::new();
@@ -110,7 +115,11 @@ struct ArgsCmd {}
 /// Update entry in the history database
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand, name = "update")]
-struct ArgsUpdate {}
+struct ArgsUpdate {
+    /// return path to the database
+    #[argh(switch)]
+    show_db_path: bool,
+}
 
 /// List path
 #[derive(Debug, argh::FromArgs)]
