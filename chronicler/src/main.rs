@@ -166,7 +166,7 @@ struct Args {
     db: Option<PathBuf>,
 
     /// theme as a list of comma-separated attributes
-    #[argh(option, default = "Theme::light()")]
+    #[argh(option, default = "Theme::from_env()")]
     pub theme: Theme,
 
     /// path to the TTY

@@ -211,7 +211,7 @@ pub struct Args {
     pub query: String,
 
     /// theme as a list of comma-separated attributes
-    #[argh(option, default = "Theme::light()")]
+    #[argh(option, default = "Theme::from_env()")]
     pub theme: Theme,
 
     /// comma-separated list of fields for limiting search scope

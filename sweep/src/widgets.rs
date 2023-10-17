@@ -185,6 +185,16 @@ impl Theme {
             named_colors: Arc::new(named_colors),
         }
     }
+
+    /// Parse theme from `SWEEP_THEME` environment variable
+    pub fn from_env() -> Self {
+        match std::env::var("SWEEP_THEME") {
+            Ok(theme_var) if !theme_var.is_empty() => {
+                Theme::from_str(&theme_var).unwrap_or(Theme::light())
+            }
+            _ => Theme::light(),
+        }
+    }
 }
 
 impl FromStr for Theme {

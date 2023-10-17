@@ -121,7 +121,7 @@ impl FromStr for HistoryUpdate {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut result = HistoryUpdate::default();
-        for kv in s.split("\x0c") {
+        for kv in s.split('\x0c') {
             let mut kv = kv.trim().splitn(2, '\n');
             let key = kv.next();
             let value = kv.next().map(|val| val.trim());
