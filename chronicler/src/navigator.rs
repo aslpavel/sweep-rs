@@ -39,27 +39,27 @@ impl Haystack for NavigatorItem {
 
     fn view(
         &self,
-        _ctx: &Self::Context,
+        ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &sweep::Theme,
     ) -> Box<dyn sweep::surf_n_term::view::View> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.view(&(), positions, theme),
-            History(history) => history.view(&(), positions, theme),
+            Path(path) => path.view(ctx, positions, theme),
+            History(history) => history.view(ctx, positions, theme),
         }
     }
 
     fn preview(
         &self,
-        _ctx: &Self::Context,
+        ctx: &Self::Context,
         positions: &Positions,
         theme: &sweep::Theme,
     ) -> Option<HaystackPreview> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.preview(&(), positions, theme),
-            History(history) => history.preview(&(), positions, theme),
+            Path(path) => path.preview(ctx, positions, theme),
+            History(history) => history.preview(ctx, positions, theme),
         }
     }
 }
@@ -223,8 +223,8 @@ impl Navigator {
         Ok(())
     }
 
-    pub async fn run(&mut self) -> Result<Option<NavigatorItem>, Error> {
-        self.switch_mode(self.state.clone(), None).await?;
+    pub async fn run(&mut self, query: Option<&str>) -> Result<Option<NavigatorItem>, Error> {
+        self.switch_mode(self.state.clone(), query).await?;
         while let Some(event) = self.sweep.next_event().await {
             match event {
                 SweepEvent::Select(result) => return Ok(result),

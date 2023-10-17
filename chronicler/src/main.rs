@@ -26,7 +26,7 @@ async fn main() -> Result<(), Error> {
 
     if args.version {
         println!(
-            "sweep {} ({})",
+            "chronicler {} ({})",
             env!("CARGO_PKG_VERSION"),
             env!("COMMIT_INFO")
         );
@@ -53,12 +53,13 @@ async fn main() -> Result<(), Error> {
         tty_path: args.tty_path,
         ..Default::default()
     };
+    let query = (!args.query.is_empty()).then_some(args.query.as_ref());
 
     match args.subcommand {
         ArgsSubcommand::Cmd(_args) => {
             let mut navigator =
                 Navigator::new(options, db_path, NavigatorState::CmdHistory).await?;
-            let entry = navigator.run().await?;
+            let entry = navigator.run(query).await?;
             std::mem::drop(navigator);
             if let Some(entry) = entry {
                 print!("{}", entry);
@@ -68,8 +69,9 @@ async fn main() -> Result<(), Error> {
             let history = History::new(db_path).await?;
             let mut update_str = String::new();
             std::io::stdin().read_to_string(&mut update_str)?;
-            history.update(update_str.parse()?).await?;
+            let id = history.update(update_str.parse()?).await?;
             history.close().await?;
+            print!("{id}")
         }
         ArgsSubcommand::Path(args) => {
             let mut navigator = match args.path {
@@ -79,11 +81,22 @@ async fn main() -> Result<(), Error> {
                         .await?
                 }
             };
-            let entry = navigator.run().await?;
+            let entry = navigator.run(query).await?;
             std::mem::drop(navigator);
             if let Some(entry) = entry {
-                print!("{}", entry);
+                print!("{entry}");
             }
+        }
+        ArgsSubcommand::Setup(args) => {
+            const CHRONICLER_PATTERN: &str = "##CHRONICLER_BIN##";
+            let chronicler_path = std::env::current_exe()?;
+            let chronicler_bin = chronicler_path.to_str().unwrap_or("chronicler");
+            let setup = match args.shell {
+                Shell::Bash => {
+                    include_str!("../scripts/setup.sh").replace(CHRONICLER_PATTERN, chronicler_bin)
+                }
+            };
+            print!("{setup}")
         }
     }
     Ok(())
@@ -108,12 +121,37 @@ struct ArgsPath {
     path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Shell {
+    Bash,
+}
+
+impl std::str::FromStr for Shell {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bash" | "sh" => Ok(Shell::Bash),
+            _ => Err(format!("failed to parse shell type: {s}")),
+        }
+    }
+}
+
+/// Output script that will setup chronicler
+#[derive(Debug, argh::FromArgs)]
+#[argh(subcommand, name = "setup")]
+struct ArgsSetup {
+    #[argh(positional)]
+    shell: Shell,
+}
+
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
 enum ArgsSubcommand {
     Cmd(ArgsCmd),
     Update(ArgsUpdate),
     Path(ArgsPath),
+    Setup(ArgsSetup),
 }
 
 /// History manager
@@ -134,6 +172,10 @@ struct Args {
     /// path to the TTY
     #[argh(option, long = "tty", default = "\"/dev/tty\".to_string()")]
     pub tty_path: String,
+
+    /// initial query
+    #[argh(option, long = "query", default = "String::new()")]
+    pub query: String,
 
     /// action
     #[argh(subcommand)]

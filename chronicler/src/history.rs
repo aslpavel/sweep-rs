@@ -121,19 +121,23 @@ impl FromStr for HistoryUpdate {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut result = HistoryUpdate::default();
-        for kv in s.split('\x00') {
-            let mut kv = kv.splitn(2, '\n');
-            match (kv.next(), kv.next()) {
-                (Some("id"), Some(val)) => result.id = Some(val.trim().parse()?),
+        for kv in s.split("\x0c") {
+            let mut kv = kv.trim().splitn(2, '\n');
+            let key = kv.next();
+            let value = kv.next().map(|val| val.trim());
+            match (key, value) {
+                (Some("id"), Some(val)) => result.id = Some(val.parse()?),
                 (Some("cmd"), Some(val)) => result.cmd = Some(val.to_owned()),
-                (Some("status" | "return"), Some(val)) => result.status = Some(val.trim().parse()?),
-                (Some("cwd"), Some(val)) => result.cwd = Some(val.trim().to_owned()),
-                (Some("hostname"), Some(val)) => result.hostname = Some(val.trim().to_owned()),
-                (Some("user"), Some(val)) => result.user = Some(val.trim().to_owned()),
-                (Some("start_ts"), Some(val)) => result.start_ts = Some(val.trim().parse()?),
-                (Some("end_ts"), Some(val)) => result.end_ts = Some(val.trim().parse()?),
-                (Some("session"), Some(val)) => result.session = Some(val.trim().to_owned()),
-                (Some(key), _) => return Err(anyhow::anyhow!("invalid key `{key}`")),
+                (Some("status" | "return"), Some(val)) => result.status = Some(val.parse()?),
+                (Some("cwd"), Some(val)) => result.cwd = Some(val.to_owned()),
+                (Some("hostname"), Some(val)) => result.hostname = Some(val.to_owned()),
+                (Some("user"), Some(val)) => result.user = Some(val.to_owned()),
+                (Some("start_ts"), Some(val)) => result.start_ts = Some(val.parse()?),
+                (Some("end_ts"), Some(val)) => result.end_ts = Some(val.parse()?),
+                (Some("session"), Some(val)) => result.session = Some(val.to_owned()),
+                (Some(key), _) => {
+                    return Err(anyhow::anyhow!("history update invalid key \"{key}\""))
+                }
                 _ => continue,
             }
         }
