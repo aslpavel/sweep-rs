@@ -5,8 +5,10 @@ use futures::{
     stream::{self, FuturesOrdered},
     FutureExt, Stream, StreamExt, TryStreamExt,
 };
+use globset::{GlobBuilder, GlobMatcher};
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
+    fmt,
     fs::Metadata,
     future::Future,
     os::unix::fs::MetadataExt,
@@ -22,7 +24,7 @@ use time::OffsetDateTime;
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PathItem {
     /// Number of bytes in the path that are part of the root of the walk
     pub root_length: usize,
@@ -30,6 +32,67 @@ pub struct PathItem {
     pub path: PathBuf,
     /// Metadata associated with path
     pub metadata: Option<Metadata>,
+    /// Ignore matcher
+    pub ignore: Option<PathIgnoreArc>,
+}
+
+impl PathItem {
+    pub fn is_dir(&self) -> bool {
+        self.metadata.as_ref().map_or_else(|| false, |m| m.is_dir())
+    }
+
+    pub async fn unfold(&self) -> Result<Vec<PathItem>, Error> {
+        if !self.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let ignore: Option<PathIgnoreArc> =
+            match PathIgnoreGit::new(self.path.join(".gitignore")).await {
+                Err(_) => self.ignore.clone(),
+                Ok(git_ignore) => {
+                    if let Some(ignore) = self.ignore.clone() {
+                        Some(Arc::new(git_ignore.chain(ignore.clone())))
+                    } else {
+                        Some(Arc::new(git_ignore))
+                    }
+                }
+            };
+
+        let read_dir = fs::read_dir(&self.path).await?;
+        let mut entries: Vec<_> = ReadDirStream::new(read_dir)
+            .map_ok(|entry| entry.path())
+            .try_filter_map(|path| async {
+                let metadata = fs::symlink_metadata(&path).await.ok();
+                let path_item = PathItem {
+                    path,
+                    metadata,
+                    root_length: self.root_length,
+                    ignore: ignore.clone(),
+                };
+                if ignore
+                    .as_ref()
+                    .map_or_else(|| false, |ignore| ignore.matches(&path_item))
+                {
+                    return Ok(None);
+                }
+                Ok(Some(path_item))
+            })
+            .try_collect()
+            .await?;
+
+        entries.sort_unstable_by(|a, b| path_sort_key(b).cmp(&path_sort_key(a)));
+        Ok(entries)
+    }
+}
+
+impl fmt::Debug for PathItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PathItem")
+            .field("root_length", &self.root_length)
+            .field("path", &self.path)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
 }
 
 impl Haystack for PathItem {
@@ -44,7 +107,7 @@ impl Haystack for PathItem {
             Some(path) => path.chars().for_each(&mut scope),
             None => path.chars().for_each(&mut scope),
         }
-        if let Some(true) = self.metadata.as_ref().map(|m| m.is_dir()) {
+        if self.is_dir() {
             scope('/')
         }
     }
@@ -91,9 +154,8 @@ impl Haystack for PathItem {
 /// Walk directory returning a stream of [PathItem] in the breadth first order
 pub fn walk<'caller>(
     root: impl AsRef<Path> + 'caller,
-    ignore: impl Fn(&PathItem) -> bool + 'caller,
+    ignore: Option<PathIgnoreArc>,
 ) -> impl Stream<Item = Result<PathItem, Error>> + 'caller {
-    let ignore = Arc::new(ignore);
     let root = root
         .as_ref()
         .canonicalize()
@@ -105,53 +167,21 @@ pub fn walk<'caller>(
                 root_length,
                 path: root,
                 metadata: metadata.ok(),
+                ignore,
             };
-            bounded_unfold(64, Some(init), move |item| {
-                path_unfold(item, ignore.clone())
+            bounded_unfold(64, Some(init), |item| async move {
+                let children = match item.unfold().await {
+                    Ok(children) => children,
+                    Err(error) => {
+                        tracing::warn!(?item.path, ?error, "[walk]");
+                        Vec::new()
+                    }
+                };
+                Ok((item, children))
             })
         })
         .into_stream()
         .flatten()
-}
-
-/// Unfold single path entry
-///
-/// TODO:
-///  - support .gitignore
-async fn path_unfold<I>(item: PathItem, ignore: Arc<I>) -> Result<(PathItem, Vec<PathItem>), Error>
-where
-    I: Fn(&PathItem) -> bool,
-{
-    let children = match &item.metadata {
-        Some(metadata) if metadata.is_dir() => async {
-            let read_dir = fs::read_dir(&item.path).await?;
-            let mut entries: Vec<_> = ReadDirStream::new(read_dir)
-                .map_ok(|entry| entry.path())
-                .try_filter_map(|path| async {
-                    let metadata = fs::symlink_metadata(&path).await.ok();
-                    let path_item = PathItem {
-                        path,
-                        metadata,
-                        root_length: item.root_length,
-                    };
-                    if ignore(&path_item) {
-                        return Ok(None);
-                    }
-                    Ok(Some(path_item))
-                })
-                .try_collect()
-                .await?;
-            entries.sort_unstable_by(|a, b| path_sort_key(b).cmp(&path_sort_key(a)));
-            Ok::<_, Error>(entries)
-        }
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(?item.path, ?error, "[path_unfold]");
-            Vec::new()
-        }),
-        _ => Vec::new(),
-    };
-    Ok((item, children))
 }
 
 fn path_sort_key(item: &PathItem) -> (bool, bool, &Path) {
@@ -193,6 +223,194 @@ impl std::fmt::Display for SizeDisplay {
         }
         write!(f, "{0:.1$}P", size, precision)
     }
+}
+
+pub trait PathIgnore {
+    fn matches(&self, item: &PathItem) -> bool;
+
+    fn chain<O>(self, other: O) -> PathIgnoreChain<Self, O>
+    where
+        O: PathIgnore + Sized,
+        Self: Sized,
+    {
+        PathIgnoreChain {
+            first: self,
+            second: other,
+        }
+    }
+}
+
+pub struct PathIgnoreChain<F, S> {
+    first: F,
+    second: S,
+}
+
+impl<F, S> PathIgnore for PathIgnoreChain<F, S>
+where
+    F: PathIgnore,
+    S: PathIgnore,
+{
+    fn matches(&self, item: &PathItem) -> bool {
+        self.first.matches(item) || self.second.matches(item)
+    }
+}
+
+pub type PathIgnoreArc = Arc<dyn PathIgnore + Send + Sync + 'static>;
+
+impl PathIgnore for PathIgnoreArc {
+    fn matches(&self, item: &PathItem) -> bool {
+        (**self).matches(item)
+    }
+}
+
+struct GlobGit {
+    matcher: GlobMatcher,
+    /// match on filename only
+    is_filename: bool,
+    /// match on directory only
+    is_dir: bool,
+    /// match is a whitelist
+    is_whitelist: bool,
+}
+
+impl GlobGit {
+    fn new(string: &str) -> impl Iterator<Item = GlobGit> + '_ {
+        string.lines().filter_map(|line| {
+            let line = line.trim();
+            // comments
+            if line.starts_with('#') || line.is_empty() {
+                return None;
+            }
+
+            // directory only match
+            let (is_dir, line) = if line.ends_with('/') {
+                (true, line.trim_end_matches('/'))
+            } else {
+                (false, line)
+            };
+
+            // whitelist
+            let (is_whitelist, line) = if line.starts_with('!') {
+                (true, line.trim_start_matches('!'))
+            } else {
+                (false, line)
+            };
+
+            // filename match
+            let is_filename = !line.contains('/');
+            let line = line.trim_start_matches('/');
+
+            if let Ok(glob) = GlobBuilder::new(line).literal_separator(true).build() {
+                Some(GlobGit {
+                    matcher: glob.compile_matcher(),
+                    is_dir,
+                    is_filename,
+                    is_whitelist,
+                })
+            } else {
+                None
+            }
+        })
+    }
+}
+
+struct PathIgnoreGit {
+    positive: Vec<GlobGit>,
+    negative: Vec<GlobGit>,
+    root: PathBuf,
+}
+
+impl PathIgnoreGit {
+    async fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let data = fs::read(path.as_ref()).await?;
+        let (positive, negative) =
+            GlobGit::new(std::str::from_utf8(&data)?).partition(|glob| !glob.is_whitelist);
+        Ok(Self {
+            positive,
+            negative,
+            root: path
+                .as_ref()
+                .parent()
+                .unwrap_or(Path::new(""))
+                .canonicalize()?,
+        })
+    }
+}
+
+impl PathIgnore for PathIgnoreGit {
+    fn matches(&self, item: &PathItem) -> bool {
+        let Ok(path) = item.path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let filename = Path::new(
+            path.file_name()
+                .and_then(|path| path.to_str())
+                .unwrap_or(""),
+        );
+        let is_dir = item.is_dir();
+
+        for glob in &self.negative {
+            if glob.is_dir && !is_dir {
+                continue;
+            }
+            let matched = if glob.is_filename {
+                glob.matcher.is_match(filename)
+            } else {
+                glob.matcher.is_match(path)
+            };
+            if matched {
+                return false;
+            }
+        }
+
+        for glob in &self.positive {
+            if glob.is_dir && !is_dir {
+                continue;
+            }
+            let matched = if glob.is_filename {
+                glob.matcher.is_match(filename)
+            } else {
+                glob.matcher.is_match(path)
+            };
+            if matched {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+pub struct PathIgnoreSet {
+    pub filenames: HashSet<String>,
+}
+
+impl Default for PathIgnoreSet {
+    fn default() -> Self {
+        Self {
+            filenames: [".hg", ".git"].iter().map(|f| f.to_string()).collect(),
+        }
+    }
+}
+
+impl PathIgnore for PathIgnoreSet {
+    fn matches(&self, item: &PathItem) -> bool {
+        let filename = item
+            .path
+            .file_name()
+            .and_then(|path| path.to_str())
+            .unwrap_or("");
+        self.filenames.contains(filename)
+    }
+}
+
+pub async fn path_ignore_for_path(path: impl AsRef<Path>) -> PathIgnoreArc {
+    let mut ignore: PathIgnoreArc = Arc::new(PathIgnoreSet::default());
+    for path in path.as_ref().ancestors() {
+        if let Ok(git_ignore) = PathIgnoreGit::new(path.join(".gitignore")).await {
+            ignore = Arc::new(git_ignore.chain(ignore));
+        }
+    }
+    ignore
 }
 
 /// Similar to unfold but runs unfold function in parallel with the specified

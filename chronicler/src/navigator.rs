@@ -1,7 +1,7 @@
 use crate::{
     history::{History, HistoryEntry},
     utils::AbortJoinHandle,
-    walk::{walk, PathItem},
+    walk::{path_ignore_for_path, walk, PathItem},
 };
 use anyhow::Error;
 use futures::{future, stream, Stream, StreamExt, TryStreamExt};
@@ -121,11 +121,14 @@ impl Navigator {
                 self.sweep
                     .prompt_set(Some(path_collapse(path)), Some(PATH_NAV_ICON.clone()));
                 self.list_update(
-                    walk(path.clone(), |_| false)
-                        .try_filter(|item| {
-                            future::ready(item.path.as_os_str().len() >= item.root_length)
-                        })
-                        .map_ok(NavigatorItem::Path),
+                    walk(
+                        path.clone(),
+                        Some(path_ignore_for_path(path.as_path()).await),
+                    )
+                    .try_filter(|item| {
+                        future::ready(item.path.as_os_str().len() >= item.root_length)
+                    })
+                    .map_ok(NavigatorItem::Path),
                 );
             }
             CmdHistory => {
@@ -152,6 +155,7 @@ impl Navigator {
                             root_length: 0,
                             path: item.path.into(),
                             metadata: None,
+                            ignore: None,
                         })
                     })
                     .collect::<Vec<_>>()
