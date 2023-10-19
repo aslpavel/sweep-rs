@@ -1030,7 +1030,12 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             .add_child(Container::new(header).with_height(1))
             .add_flex_child(1.0, body);
         if let Some(footer) = &self.footer {
-            view.push_child(footer.clone())
+            view.push_child_ext(
+                footer.clone(),
+                None,
+                Some(self.theme.list_default),
+                Align::Expand,
+            )
         }
         view
     }

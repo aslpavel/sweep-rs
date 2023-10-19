@@ -451,6 +451,7 @@ async def sweep(
     prompt_icon: Optional[Icon | str] = None,
     binds: Optional[List[Bind[I]]] = None,
     fields: Optional[Dict[int, Any]] = None,
+    init: Optional[Callable[[Sweep[I]], Awaitable[None]]] = None,
     **options: Any,
 ) -> Optional[I]:
     """Convenience wrapper around `Sweep`
@@ -476,6 +477,10 @@ async def sweep(
 
         # send items
         await sweep.items_extend(items)
+
+        # init
+        if init is not None:
+            await init(sweep)
 
         # wait events
         async for event in sweep:
@@ -1498,7 +1503,7 @@ class Text(View):
                 return chunks
             obj: Dict[str, Any] = dict(text=chunks)
             if text._glyph is not None:
-                obj["glyph"] = text._glyph
+                obj["glyph"] = text._glyph.to_json()
             if text._face is not None:
                 obj["face"] = text._face
             return obj

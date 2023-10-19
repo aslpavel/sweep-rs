@@ -49,11 +49,7 @@ impl Theme {
             Face::new(Some(cursor_fg), Some(cursor_bg), FaceAttrs::EMPTY)
         };
         let input = Face::new(Some(fg), Some(bg), FaceAttrs::EMPTY);
-        let list_default = Face::new(
-            Some(bg.blend_over(fg.with_alpha(0.9))),
-            Some(bg),
-            FaceAttrs::EMPTY,
-        );
+        let list_default = Face::new(Some(fg), Some(bg), FaceAttrs::EMPTY);
         let list_selected = Face::new(
             Some(fg),
             if theme_is_light {
