@@ -271,7 +271,7 @@ JOIN (
     GROUP BY cmd
 ) h2
 ON h1.cmd = h2.cmd AND h1.end_ts = h2.max_ts
-ORDER BY end_ts DESC;
+ORDER BY abs(return), end_ts DESC;
 "#;
 
 const PATH_QUERY: &str = r#"
