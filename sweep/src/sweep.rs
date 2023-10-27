@@ -240,6 +240,11 @@ where
         self.ranker.scorer_set(scorer)
     }
 
+    /// Whether to keep order of elements or not
+    pub fn keep_order(&self, toggle: Option<bool>) {
+        self.ranker.keep_order(toggle)
+    }
+
     /// Switch scorer, if name is not provided next scorer is chosen
     pub async fn scorer_by_name(&self, name: Option<String>) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();

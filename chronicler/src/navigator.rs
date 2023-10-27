@@ -120,6 +120,7 @@ impl Navigator {
             Path(path) => {
                 self.sweep
                     .prompt_set(Some(path_collapse(path)), Some(PATH_NAV_ICON.clone()));
+                self.sweep.keep_order(Some(true));
                 self.list_update(
                     walk(
                         path.clone(),
@@ -134,6 +135,7 @@ impl Navigator {
             CmdHistory => {
                 self.sweep
                     .prompt_set(Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
+                self.sweep.keep_order(Some(false));
                 // NOTE: I have not found a way to create static stream from connection
                 //       pool even though it is clone-able.
                 let history = self
@@ -147,20 +149,36 @@ impl Navigator {
             PathHistory => {
                 self.sweep
                     .prompt_set(Some("PATH".to_owned()), Some(PATH_HISTORY_ICON.clone()));
-                let history = self
-                    .history
+                self.sweep.keep_order(Some(true));
+                let mut history = Vec::new();
+                let current_dir = std::env::current_dir();
+                if let Ok(current_dir) = &current_dir {
+                    history.push(NavigatorItem::Path(PathItem {
+                        root_length: 0,
+                        path: current_dir.clone(),
+                        metadata: None,
+                        ignore: None,
+                    }));
+                };
+                let current_dir = current_dir.unwrap_or_default();
+                self.history
                     .path_entries()
-                    .map_ok(|item| {
-                        NavigatorItem::Path(PathItem {
-                            root_length: 0,
-                            path: item.path.into(),
-                            metadata: None,
-                            ignore: None,
-                        })
+                    .for_each(|item| {
+                        if let Ok(item) = item {
+                            let path: PathBuf = item.path.into();
+                            if path != current_dir {
+                                history.push(NavigatorItem::Path(PathItem {
+                                    root_length: 0,
+                                    path,
+                                    metadata: None,
+                                    ignore: None,
+                                }))
+                            }
+                        }
+                        future::ready(())
                     })
-                    .collect::<Vec<_>>()
                     .await;
-                self.list_update(stream::iter(history))
+                self.list_update(stream::iter(history).map(Ok))
             }
         }
         Ok(())
