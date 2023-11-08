@@ -184,7 +184,7 @@ class Song:
 
         # preview
         if self.artist:
-            result.preview_push(f"Artist: ", face="bold").preview_push(
+            result.preview_push("Artist: ", face="bold").preview_push(
                 f"{self.artist}\n", active=True
             )
         if self.album:
@@ -558,7 +558,7 @@ class MPD:
 
 
 def mpd_escape(value: str) -> str:
-    if " " not in value and "'" not in value and not '"' in value:
+    if " " not in value and "'" not in value and '"' not in value:
         return value
     value_escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
     return f'"{value_escaped}"'
@@ -646,8 +646,7 @@ class MPDSweep:
         try:
             async for event in self._sweep:
                 if isinstance(event, SweepSelect):
-                    if event.item:
-                        await self._on_select(event.item)
+                    await self._on_select(event.items)
         finally:
             update_task.cancel()
 
@@ -690,9 +689,12 @@ class MPDSweep:
             songs = await self._mpd.listallinfo()
         await self._sweep.items_extend(songs)
 
-    async def _on_select(self, song: Song) -> None:
+    async def _on_select(self, songs: List[Song]) -> None:
         match self._view:
             case MPDSweepView.PLAYLIST:
+                if len(songs) != 1:
+                    return
+                song = songs[0]
                 if song.id is not None:
                     current = await self._mpd.currentsong()
                     if current == song:
@@ -700,7 +702,8 @@ class MPDSweep:
                     else:
                         await self._mpd.play(song)
             case MPDSweepView.SONGS:
-                await self._mpd.add(song)
+                for song in songs:
+                    await self._mpd.add(song)
             case _:
                 pass
 
@@ -731,10 +734,11 @@ class MPDSweep:
     async def _playlist_song_delete(self) -> None:
         if self._view != MPDSweepView.PLAYLIST:
             return
-        song = await self._sweep.items_current()
-        if song is None or song.id is None:
-            return
-        await self._mpd.delete(song)
+        songs = await self._sweep.items_marked() or [await self._sweep.items_current()]
+        for song in songs:
+            if song is None or song.id is None:
+                return
+            await self._mpd.delete(song)
 
     async def _playlist_song_move_up(self) -> None:
         if self._view != MPDSweepView.PLAYLIST:

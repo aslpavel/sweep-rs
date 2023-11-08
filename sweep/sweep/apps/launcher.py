@@ -187,7 +187,7 @@ async def main(args: Optional[List[str]] = None) -> None:
         sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.launcher"])
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 
-    entry = await sweep(
+    items = await sweep(
         DesktopEntry.get_all(),
         sweep=sweep_cmd,
         fields=fields,
@@ -200,15 +200,16 @@ async def main(args: Optional[List[str]] = None) -> None:
         title="Sweep Launcher",
         **sweep_args,
     )
-    if entry is None:
+    if not items:
         return
+    item = items[0]
     match opts.action:
         case "print":
-            cmd = entry.commandline()
+            cmd = item.commandline()
             if cmd is not None:
-                print(entry.commandline())
+                print(item.commandline())
         case "launch":
-            entry.app_info.launch()
+            item.app_info.launch()
         case _:
             pass
 

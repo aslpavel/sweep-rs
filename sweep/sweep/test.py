@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import socket
 import unittest
-from typing import List
+import warnings
+from typing import List, Any
 
 from .sweep import Event, RpcError, RpcPeer, RpcRequest
 
@@ -37,7 +38,9 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         event.on(once_handler)
         event.on(bad_handler)
 
-        event(5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            event(5)
         self.assertEqual(5, total)
         self.assertEqual(5, once)
         self.assertEqual(1, bad_count)
@@ -64,9 +67,12 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.01)
             return "done"
 
+        async def add(a: Any, b: Any) -> Any:
+            return a + b
+
         a = RpcPeer()
         a.register("name", lambda: "a")
-        a.register("add", lambda a, b: a + b)
+        a.register("add", add)
         send = Event[int]()
         a.register("send", send_handler)
         a.register("sleep", sleep)

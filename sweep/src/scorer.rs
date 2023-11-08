@@ -231,15 +231,6 @@ impl Ord for Score {
     }
 }
 
-const SCORE_GAP_LEADING: f32 = -0.005;
-const SCORE_GAP_TRAILING: f32 = -0.005;
-const SCORE_GAP_INNER: f32 = -0.01;
-const SCORE_MATCH_CONSECUTIVE: f32 = 1.0;
-const SCORE_MATCH_SLASH: f32 = 0.9;
-const SCORE_MATCH_WORD: f32 = 0.8;
-const SCORE_MATCH_CAPITAL: f32 = 0.7;
-const SCORE_MATCH_DOT: f32 = 0.6;
-
 /// Sub-string scorer
 ///
 /// This scorer splits needle into words and finds each word as uninterrupted sequence of
@@ -380,6 +371,15 @@ pub struct FuzzyScorer {
     needle_str: String,
 }
 
+const SCORE_GAP_LEADING: f32 = -0.005;
+const SCORE_GAP_TRAILING: f32 = -0.005;
+const SCORE_GAP_INNER: f32 = -0.01;
+const SCORE_MATCH_CONSECUTIVE: f32 = 1.0;
+const SCORE_MATCH_SLASH: f32 = 0.9;
+const SCORE_MATCH_WORD: f32 = 0.8;
+const SCORE_MATCH_CAPITAL: f32 = 0.7;
+const SCORE_MATCH_DOT: f32 = 0.6;
+
 thread_local! {
     static DATA_CELL: RefCell<Vec<f32>> = RefCell::new(Vec::new());
 }
@@ -459,14 +459,14 @@ impl FuzzyScorer {
         data.clear();
         data.resize(n_len * h_len * 2 + h_len, 0.0);
 
-        let (bonus_score, matrix_data) = data.split_at_mut(h_len);
-        let (d_data, m_data) = matrix_data.split_at_mut(n_len * h_len);
-        Self::bonus(haystack, bonus_score);
-        let mut d = ScoreMatrix::new(h_len, d_data); // best score ending with needle[..i]
-        let mut m = ScoreMatrix::new(h_len, m_data); // best score for needle[..i]
+        let (score_bonus, matrix_data) = data.split_at_mut(h_len);
+        let (score_ends_data, score_best_data) = matrix_data.split_at_mut(n_len * h_len);
+        Self::bonus(haystack, score_bonus);
+        let mut score_ends = ScoreMatrix::new(h_len, score_ends_data); // best score ending with (needle[..i], haystack[..j])
+        let mut score_best = ScoreMatrix::new(h_len, score_best_data); // best score for (needle[..i], haystack[..j])
         for (i, n_char) in needle.iter().enumerate() {
-            let mut prev_score = f32::NEG_INFINITY;
-            let gap_score = if i == n_len - 1 {
+            let mut score_prev = f32::NEG_INFINITY;
+            let score_gap = if i == n_len - 1 {
                 SCORE_GAP_TRAILING
             } else {
                 SCORE_GAP_INNER
@@ -474,21 +474,21 @@ impl FuzzyScorer {
             for (j, h_char) in haystack.iter().enumerate() {
                 if n_char == h_char {
                     let score = if i == 0 {
-                        (j as f32) * SCORE_GAP_LEADING + bonus_score[j]
+                        (j as f32) * SCORE_GAP_LEADING + score_bonus[j]
                     } else if j != 0 {
-                        let a = m.get(i - 1, j - 1) + bonus_score[j];
-                        let b = d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
-                        a.max(b)
+                        let best = score_best.get(i - 1, j - 1) + score_bonus[j];
+                        let ends = score_ends.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE;
+                        best.max(ends)
                     } else {
                         f32::NEG_INFINITY
                     };
-                    prev_score = score.max(prev_score + gap_score);
-                    d.set(i, j, score);
+                    score_prev = score.max(score_prev + score_gap);
+                    score_ends.set(i, j, score);
                 } else {
-                    prev_score += gap_score;
-                    d.set(i, j, f32::NEG_INFINITY);
+                    score_prev += score_gap;
+                    score_ends.set(i, j, f32::NEG_INFINITY);
                 }
-                m.set(i, j, prev_score);
+                score_best.set(i, j, score_prev);
             }
         }
 
@@ -498,19 +498,19 @@ impl FuzzyScorer {
         for i in (0..n_len).rev() {
             while j > 0 {
                 j -= 1;
-                if (match_required || (d.get(i, j) - m.get(i, j)).abs() < f32::EPSILON)
-                    && d.get(i, j) != f32::NEG_INFINITY
+                if (match_required || score_ends.get(i, j) == score_best.get(i, j))
+                    && score_ends.get(i, j) != f32::NEG_INFINITY
                 {
                     match_required = i > 0
                         && j > 0
-                        && (m.get(i, j) - (d.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE)).abs()
-                            < f32::EPSILON;
+                        && (score_best.get(i, j)
+                            == (score_ends.get(i - 1, j - 1) + SCORE_MATCH_CONSECUTIVE));
                     positions.set(j);
                     break;
                 }
             }
         }
-        *score = Score::new(m.get(n_len - 1, h_len - 1));
+        *score = Score::new(score_best.get(n_len - 1, h_len - 1));
 
         DATA_CELL.with(move |data_cell| data_cell.replace(data));
         true
@@ -542,10 +542,12 @@ impl<'a> ScoreMatrix<'a> {
         Self { data, width }
     }
 
+    #[inline(always)]
     fn get(&self, row: usize, col: usize) -> f32 {
         self.data[row * self.width + col]
     }
 
+    #[inline(always)]
     fn set(&mut self, row: usize, col: usize, val: f32) {
         self.data[row * self.width + col] = val;
     }

@@ -396,8 +396,8 @@ impl Haystack for Candidate {
 pub fn fields_haystack<'a>(fields: &'a [Field<'_>]) -> impl Iterator<Item = char> + 'a {
     fields
         .iter()
-        .filter_map(|f| (f.active && f.glyph.is_none()).then(|| f.text.chars()))
-        .flatten()
+        .filter(|f| f.active && f.glyph.is_none())
+        .flat_map(|f| f.text.chars())
 }
 
 /// Convert fields into [View]

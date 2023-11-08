@@ -245,7 +245,7 @@ impl Navigator {
         Ok(())
     }
 
-    pub async fn run(&mut self, query: Option<&str>) -> Result<Option<NavigatorItem>, Error> {
+    pub async fn run(&mut self, query: Option<&str>) -> Result<Vec<NavigatorItem>, Error> {
         self.switch_mode(self.state.clone(), query).await?;
         while let Some(event) = self.sweep.next_event().await {
             match event {
@@ -265,7 +265,7 @@ impl Navigator {
                 SweepEvent::Resize(_) => {}
             }
         }
-        Ok(None)
+        Ok(Vec::new())
     }
 }
 

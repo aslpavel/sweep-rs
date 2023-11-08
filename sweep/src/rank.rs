@@ -1,11 +1,10 @@
-use crate::{
-    common::LockExt, FuzzyScorer, Haystack, Positions, Score, ScoreResult, Scorer, SubstrScorer,
-};
+use crate::{common::LockExt, FuzzyScorer, Haystack, Positions, Score, Scorer, SubstrScorer};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use rayon::prelude::*;
 use std::{
-    cell::RefCell,
+    cell::Cell,
     collections::HashMap,
+    hash::Hash,
     ops::{Deref, DerefMut},
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
@@ -33,7 +32,7 @@ pub fn substr_scorer() -> ScorerBuilder {
 #[derive(Clone)]
 pub struct Ranker<H> {
     sender: Sender<RankerCmd<H>>,
-    result: Arc<Mutex<Arc<RankerResult<H>>>>,
+    result: Arc<Mutex<Arc<RankedItems<H>>>>,
 }
 
 impl<H> Ranker<H>
@@ -42,10 +41,10 @@ where
 {
     pub fn new<N>(notify: N) -> Self
     where
-        N: Fn(Arc<RankerResult<H>>) -> bool + Send + 'static,
+        N: Fn(Arc<RankedItems<H>>) -> bool + Send + 'static,
     {
         let (sender, receiver) = unbounded();
-        let result: Arc<Mutex<Arc<RankerResult<H>>>> = Default::default();
+        let result: Arc<Mutex<Arc<RankedItems<H>>>> = Default::default();
         std::thread::Builder::new()
             .name("sweep-ranker".to_string())
             .spawn({
@@ -101,18 +100,18 @@ where
     }
 
     /// Get last result
-    pub fn result(&self) -> Arc<RankerResult<H>> {
+    pub fn result(&self) -> Arc<RankedItems<H>> {
         self.result.with(|result| result.clone())
     }
 }
 
 fn ranker_worker<H, N>(
     receiver: Receiver<RankerCmd<H>>,
-    result: Arc<Mutex<Arc<RankerResult<H>>>>,
+    result: Arc<Mutex<Arc<RankedItems<H>>>>,
     notify: N,
 ) where
     H: Haystack,
-    N: Fn(Arc<RankerResult<H>>) -> bool,
+    N: Fn(Arc<RankedItems<H>>) -> bool,
 {
     let haystack: Arc<RwLock<Vec<H>>> = Default::default();
     let mut needle = String::new();
@@ -121,7 +120,8 @@ fn ranker_worker<H, N>(
     let mut scorer_builder = fuzzy_scorer();
     let mut scorer = scorer_builder("");
 
-    let mut generation = 0usize;
+    let mut rank_gen = 0usize;
+    let mut haystack_gen = 0usize;
     let mut pool: Pool<Vec<Match>> = Pool::new();
     let mut matches_prev: Arc<Vec<Match>> = Default::default();
 
@@ -171,6 +171,7 @@ fn ranker_worker<H, N>(
                 }
                 HaystackClear => {
                     action = All;
+                    haystack_gen += 1;
                     haystack.with_mut(|hs| hs.clear());
                 }
                 KeepOrder(toggle) => {
@@ -222,15 +223,16 @@ fn ranker_worker<H, N>(
         let rank_elapsed = rank_instant.elapsed();
 
         // update result
-        generation += 1;
+        rank_gen += 1;
         matches_prev = pool.promote(matches);
         result.with_mut(|result| {
-            *result = Arc::new(RankerResult {
+            *result = Arc::new(RankedItems {
                 haystack: haystack.clone(),
+                haystack_gen,
                 matches: matches_prev.clone(),
                 scorer: scorer.clone(),
                 duration: rank_elapsed,
-                generation,
+                rank_gen,
             });
         });
         if !notify(result.with(|r| r.clone())) {
@@ -240,15 +242,30 @@ fn ranker_worker<H, N>(
 }
 
 #[derive(Clone)]
-pub struct RankerResult<H> {
+pub struct RankedItems<H> {
     haystack: Arc<RwLock<Vec<H>>>,
+    haystack_gen: usize,
     matches: Arc<Vec<Match>>,
     scorer: Arc<dyn Scorer>,
     duration: Duration,
-    generation: usize,
+    rank_gen: usize,
 }
 
-impl<H> RankerResult<H> {
+#[derive(Debug, Clone)]
+pub struct RankedItem<H> {
+    pub haystack: H,
+    pub score: Score,
+    pub positions: Positions,
+    pub id: RankedItemId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RankedItemId {
+    haystack_index: usize,
+    haystack_gen: usize,
+}
+
+impl<H> RankedItems<H> {
     /// Number of matched items
     pub fn len(&self) -> usize {
         self.matches.len()
@@ -275,21 +292,25 @@ impl<H> RankerResult<H> {
 
     /// Generation number
     pub fn generation(&self) -> usize {
-        self.generation
+        self.rank_gen
     }
 
     /// Get score result by index
-    pub fn get(&self, index: usize) -> Option<ScoreResult<H>>
+    pub fn get(&self, index: usize) -> Option<RankedItem<H>>
     where
         H: Clone,
     {
         let matched = self.matches.get(index)?.clone();
-        Some(ScoreResult {
+        Some(RankedItem {
             haystack: self
                 .haystack
                 .with(|hs| hs.get(matched.haystack_index).cloned())?,
             score: matched.score.unwrap_or(Score::MIN),
             positions: matched.positions,
+            id: RankedItemId {
+                haystack_gen: self.haystack_gen,
+                haystack_index: matched.haystack_index,
+            },
         })
     }
 
@@ -309,7 +330,7 @@ impl<H> RankerResult<H> {
     }
 
     /// Iterator over all matched items
-    pub fn iter(&self) -> impl Iterator<Item = ScoreResult<H>> + '_
+    pub fn iter(&self) -> impl Iterator<Item = RankedItem<H>> + '_
     where
         H: Clone,
     {
@@ -317,27 +338,55 @@ impl<H> RankerResult<H> {
     }
 }
 
-impl<H> Default for RankerResult<H> {
+impl<H> Default for RankedItems<H> {
     fn default() -> Self {
         Self {
             haystack: Default::default(),
+            haystack_gen: Default::default(),
             matches: Default::default(),
             scorer: fuzzy_scorer()(""),
             duration: Default::default(),
-            generation: Default::default(),
+            rank_gen: Default::default(),
         }
     }
 }
 
-impl<H> std::fmt::Debug for RankerResult<H> {
+impl<H> std::fmt::Debug for RankedItems<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RankerResult")
             .field("len", &self.len())
+            .field("haystack_gen", &self.haystack_gen)
             .field("haystack_len", &self.haystack_len())
             .field("scorer", &self.scorer)
             .field("duration", &self.duration)
-            .field("generation", &self.generation)
+            .field("rank_gen", &self.rank_gen)
             .finish()
+    }
+}
+
+impl<H> PartialEq for RankedItem<H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<H> Eq for RankedItem<H> {}
+
+impl<I> Hash for RankedItem<I> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl<H> PartialOrd for RankedItem<H> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
+}
+
+impl<H> Ord for RankedItem<H> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
     }
 }
 
@@ -371,7 +420,7 @@ impl Match {
 }
 
 thread_local! {
-    static TARGET: RefCell<Vec<char>> = Default::default();
+    static TARGET: Cell<Vec<char>> = Default::default();
 }
 
 fn rank<S, H>(scorer: S, hastack: &Arc<RwLock<Vec<H>>>, matches: &mut Vec<Match>, sort: bool)
@@ -388,8 +437,8 @@ where
         matches
             .par_iter_mut()
             .for_each_with(scorer, |scorer, item| {
-                TARGET.with(|target| {
-                    let mut target = target.borrow_mut();
+                TARGET.with(|target_cell| {
+                    let mut target = target_cell.take();
                     target.clear();
                     haystack[item.haystack_index]
                         .haystack_scope(|char| target.extend(char::to_lowercase(char)));
@@ -401,6 +450,7 @@ where
                     } else {
                         item.score = None;
                     }
+                    target_cell.set(target);
                 })
             })
     });

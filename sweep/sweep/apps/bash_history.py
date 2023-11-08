@@ -69,7 +69,7 @@ async def main(args: Optional[List[str]] = None) -> None:
             .extra_update(item=entry)
         )
 
-    result = await sweep(
+    items = await sweep(
         candidates,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         prompt="HISTORY",
@@ -82,8 +82,8 @@ async def main(args: Optional[List[str]] = None) -> None:
         tty=opts.tty,
     )
 
-    if result is not None:
-        print(result.extra.get("item", ""), end="")
+    for item in items:
+        print(item.extra.get("item", ""), end="")
 
 
 if __name__ == "__main__":

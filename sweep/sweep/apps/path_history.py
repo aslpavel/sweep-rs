@@ -368,8 +368,8 @@ class PathSelector:
             await self.show_history(reset_needle=False)
 
         async for event in self.sweep:
-            if isinstance(event, SweepSelect) and event.item is not None:
-                path = Path(event.item["path"])
+            if isinstance(event, SweepSelect) and event.items:
+                path = Path(event.items[0]["path"])
                 if self.path is None:
                     return path
                 return self.path / path

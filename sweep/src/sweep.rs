@@ -1,10 +1,11 @@
 use crate::{
     common::{LockExt, VecDeserializeSeed},
     fuzzy_scorer,
+    rank::{RankedItem, RankedItemId},
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
-    Haystack, HaystackPreview, Ranker, RankerResult, ScoreResult, ScorerBuilder,
+    Haystack, HaystackPreview, RankedItems, Ranker, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -20,7 +21,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, RwLock},
     thread::{Builder, JoinHandle},
     time::Duration,
 };
@@ -87,7 +88,7 @@ pub async fn sweep<IS, I, E>(
     items: IS,
     items_context: I::Context,
     options: SweepOptions,
-) -> Result<Option<I>, Error>
+) -> Result<Vec<I>, Error>
 where
     IS: Stream<Item = Result<I, E>>,
     I: Haystack,
@@ -101,7 +102,7 @@ where
         tokio::select! {
             event = sweep.next_event() => match event {
                 Some(SweepEvent::Select(entry)) => return Ok(entry),
-                None => return Ok(None),
+                None => return Ok(Vec::new()),
                 _ => continue,
             },
             collect_result = &mut collect, if !collected => {
@@ -124,6 +125,7 @@ enum SweepRequest<H> {
     },
     Terminate,
     Current(oneshot::Sender<Option<H>>),
+    Marked(oneshot::Sender<Vec<H>>),
     CursorSet {
         position: usize,
     },
@@ -134,7 +136,7 @@ enum SweepRequest<H> {
 
 #[derive(Clone, Debug)]
 pub enum SweepEvent<H> {
-    Select(Option<H>),
+    Select(Vec<H>),
     Bind(String),
     Resize(TerminalSize),
 }
@@ -211,10 +213,17 @@ where
         self.ranker.haystack_clear()
     }
 
-    /// Get currently selected candidate
+    /// Get currently selected items
     pub async fn items_current(&self) -> Result<Option<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::Current(send));
+        Ok(recv.await?)
+    }
+
+    /// Get marked (multi-select) items
+    pub async fn items_marked(&self) -> Result<Vec<H>, Error> {
+        let (send, recv) = oneshot::channel();
+        self.send_request(SweepRequest::Marked(send));
         Ok(recv.await?)
     }
 
@@ -453,6 +462,18 @@ where
             }
         });
 
+        // items marked
+        peer.register("items_marked", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                let sweep = sweep.clone();
+                async move {
+                    let items = serde_json::to_value(sweep.items_current().await?)?;
+                    Ok(items)
+                }
+            }
+        });
+
         peer.register("cursor_set", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
@@ -583,8 +604,10 @@ where
                         SweepEvent::Bind(tag) => {
                             peer.notify_with_value("bind", json!({ "tag": tag }))?
                         }
-                        SweepEvent::Select(Some(item)) => {
-                            peer.notify_with_value("select", json!({ "item": item }))?
+                        SweepEvent::Select(items) => {
+                            if !items.is_empty() {
+                                peer.notify_with_value("select", json!({ "items": items }))?
+                            }
                         }
                         SweepEvent::Resize(size) => peer.notify_with_value(
                             "resize",
@@ -594,7 +617,6 @@ where
                                 "pixels_per_cell": size.pixels_per_cell(),
                             }),
                         )?,
-                        SweepEvent::Select(None) => {}
                     }
                 }
                 Ok(())
@@ -618,6 +640,8 @@ enum SweepAction {
         desc: String,
     },
     Select,
+    Mark,
+    MarkAll,
     Quit,
     Help,
     ScorerNext,
@@ -652,6 +676,22 @@ impl SweepAction {
                 ],
                 name: "sweep.select".to_owned(),
                 description: "Select item pointed by cursor".to_owned(),
+            },
+            Mark => ActionDesc {
+                chords: vec![vec![Key {
+                    name: KeyName::Char('m'),
+                    mode: KeyMod::ALT,
+                }]],
+                name: "sweep.mark.current".to_owned(),
+                description: "Mark item pointed by cursor".to_owned(),
+            },
+            MarkAll => ActionDesc {
+                chords: vec![vec![Key {
+                    name: KeyName::Char('m'),
+                    mode: KeyMod::ALT | KeyMod::SHIFT,
+                }]],
+                name: "sweep.mark.all".to_owned(),
+                description: "(Un)Mark all filtered items".to_owned(),
             },
             Quit => ActionDesc {
                 chords: vec![
@@ -698,7 +738,7 @@ impl SweepAction {
 
     fn all() -> impl Iterator<Item = SweepAction> {
         use SweepAction::*;
-        [Select, Quit, Help, ScorerNext, PreviewToggle]
+        [Select, Mark, MarkAll, Quit, Help, ScorerNext, PreviewToggle]
             .into_iter()
             .chain(InputAction::all().map(Input))
             .chain(ListAction::all().map(List))
@@ -729,6 +769,8 @@ struct SweepState<H: Haystack> {
     input: Input,
     // list widget
     list: List<SweepItems<H>>,
+    // marked items (multi-select)
+    marked: Arc<RwLock<MarkedItems<H>>>,
     // ranker
     ranker: Ranker<H>,
     // Filed refs (fields that can be used as a base)
@@ -770,7 +812,8 @@ where
         let input = Input::new(theme.clone());
         let list = List::new(
             SweepItems::new(
-                Arc::new(RankerResult::<H>::default()),
+                Arc::new(RankedItems::<H>::default()),
+                Default::default(),
                 haystack_context.clone(),
             ),
             theme.clone(),
@@ -788,6 +831,7 @@ where
             theme,
             input,
             list,
+            marked: Default::default(),
             ranker,
             haystack_context,
         }
@@ -796,11 +840,9 @@ where
     // get preview of the currently pointed haystack item
     fn preview(&self) -> Option<HaystackPreview> {
         self.list.current().and_then(|item| {
-            item.result.haystack.preview(
-                &self.haystack_context,
-                &item.result.positions,
-                &self.theme,
-            )
+            item.item
+                .haystack
+                .preview(&self.haystack_context, &item.item.positions, &self.theme)
         })
     }
 
@@ -852,14 +894,36 @@ where
             SweepAction::Quit => {
                 return SweepKeyEvent::Quit;
             }
-            SweepAction::Select => match self.list.current() {
-                Some(result) => {
-                    return Event(SweepEvent::Select(Some(result.result.haystack)));
+            SweepAction::Select => {
+                if !self.marked.with(|marked| marked.is_empty()) {
+                    let marked = self.marked.with_mut(|marked| marked.take()).collect();
+                    return Event(SweepEvent::Select(marked));
                 }
-                None => {
-                    return Event(SweepEvent::Select(None));
+                if let Some(current) = self.list.current() {
+                    return Event(SweepEvent::Select(vec![current.item.haystack]));
+                } else {
+                    return Event(SweepEvent::Select(Vec::new()));
                 }
-            },
+            }
+            SweepAction::Mark => {
+                if let Some(current) = self.list.current() {
+                    self.marked.with_mut(|marked| marked.toggle(current.item));
+                    self.list.apply(ListAction::ItemNext);
+                }
+            }
+            SweepAction::MarkAll => {
+                self.marked.with_mut(|marked| {
+                    if marked.is_empty() {
+                        // mark all
+                        for item in self.list.items().ranked_items.iter() {
+                            marked.toggle(item)
+                        }
+                    } else {
+                        // un-mark all
+                        _ = marked.take();
+                    }
+                })
+            }
             SweepAction::Help => return Help,
             SweepAction::ScorerNext => {
                 self.scorer_by_name(None);
@@ -944,11 +1008,18 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
     fn into_view(self) -> Self::View {
         // stats view
         let ranker_result = self.ranker.result();
-        let stats = Text::new()
+        let mut stats = Text::new()
             .push_text(&self.theme.separator_left)
             .set_face(self.theme.stats)
+            .push_str(" ", None)
+            .take();
+        let marked_count = self.marked.with(|marked| marked.len());
+        if marked_count > 0 {
+            stats.push_fmt(format_args!("{}/", marked_count));
+        }
+        stats
             .push_fmt(format_args!(
-                " {}/{} {:.2?}",
+                "{}/{} {:.2?}",
                 ranker_result.len(),
                 ranker_result.haystack_len(),
                 ranker_result.duration(),
@@ -959,8 +1030,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
                     Some(glyph) => text.put_glyph(glyph.clone()),
                     None => text.push_str(name, None),
                 };
-            })
-            .take();
+            });
 
         // rank new data and update item list if needed
         self.ranker.needle_set(self.input.get().collect());
@@ -971,13 +1041,14 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             } else {
                 self.list
                     .items()
-                    .ranker_result
+                    .ranked_items
                     .get_haystack_index(self.list.cursor())
                     .and_then(|haystack_index| ranker_result.find_match_index(haystack_index))
             };
             // update list with new results
             let old_items = self.list.items_set(SweepItems::new(
                 ranker_result,
+                self.marked.clone(),
                 self.haystack_context.clone(),
             ));
             if let Some(cursor) = cursor {
@@ -1173,8 +1244,12 @@ where
                             state.prompt_icon = new_icon;
                         }
                         Current(resolve) => {
-                            let current = state.list.current().map(|item| item.result.haystack);
-                            mem::drop(resolve.send(current));
+                            let current = state.list.current().map(|item| item.item.haystack);
+                            _ = resolve.send(current);
+                        }
+                        Marked(resolve) => {
+                            let items = state.marked.with_mut(|marked| marked.take()).collect();
+                            _ = resolve.send(items);
                         }
                         CursorSet { position } => {
                             state.list.cursor_set(position);
@@ -1204,10 +1279,11 @@ where
                             state_help.take();
                             SweepKeyEvent::Nothing
                         }
-                        SweepKeyEvent::Event(SweepEvent::Select(Some(action_desc))) => {
+                        SweepKeyEvent::Event(SweepEvent::Select(actions_descs)) => {
                             state_help.take();
-                            if let Some(action) = state.key_actions.get(&action_desc.name).cloned()
-                            {
+                            if let Some(action) = actions_descs.first().and_then(|action_desc| {
+                                state.key_actions.get(&action_desc.name).cloned()
+                            }) {
                                 state.apply(action)
                             } else {
                                 SweepKeyEvent::Nothing
@@ -1269,20 +1345,26 @@ where
 }
 
 struct SweepItems<H: Haystack> {
-    ranker_result: Arc<RankerResult<H>>,
+    ranked_items: Arc<RankedItems<H>>,
+    marked_items: Arc<RwLock<MarkedItems<H>>>,
     haystack_context: H::Context,
 }
 
 impl<H: Haystack> SweepItems<H> {
-    fn new(ranker_result: Arc<RankerResult<H>>, haystack_context: H::Context) -> Self {
+    fn new(
+        ranked_items: Arc<RankedItems<H>>,
+        marked_items: Arc<RwLock<MarkedItems<H>>>,
+        haystack_context: H::Context,
+    ) -> Self {
         Self {
-            ranker_result,
+            ranked_items,
+            marked_items,
             haystack_context,
         }
     }
 
     fn generation(&self) -> usize {
-        self.ranker_result.generation()
+        self.ranked_items.generation()
     }
 }
 
@@ -1290,20 +1372,25 @@ impl<H: Haystack> ListItems for SweepItems<H> {
     type Item = SweepItem<H>;
 
     fn len(&self) -> usize {
-        self.ranker_result.len()
+        self.ranked_items.len()
     }
 
     fn get(&self, index: usize, theme: Theme) -> Option<Self::Item> {
-        self.ranker_result.get(index).map(|result| SweepItem {
-            result: result.clone(),
+        self.ranked_items.get(index).map(|item| SweepItem {
+            item: item.clone(),
             theme,
             haystack_context: self.haystack_context.clone(),
         })
     }
+
+    fn is_marked(&self, item: &Self::Item) -> bool {
+        self.marked_items
+            .with(|marked| marked.contains_id(item.item.id))
+    }
 }
 
 struct SweepItem<H: Haystack> {
-    result: ScoreResult<H>,
+    item: RankedItem<H>,
     theme: Theme,
     haystack_context: H::Context,
 }
@@ -1312,9 +1399,64 @@ impl<H: Haystack> IntoView for SweepItem<H> {
     type View = BoxView<'static>;
 
     fn into_view(self) -> Self::View {
-        self.result
+        self.item
             .haystack
-            .view(&self.haystack_context, &self.result.positions, &self.theme)
+            .view(&self.haystack_context, &self.item.positions, &self.theme)
+    }
+}
+
+/// Set of marked (multi-selected) items
+struct MarkedItems<H> {
+    items: BTreeMap<usize, H>,
+    ids: HashMap<RankedItemId, usize>,
+    index: usize,
+}
+
+impl<H> Default for MarkedItems<H> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<H> MarkedItems<H> {
+    fn new() -> Self {
+        Self {
+            items: Default::default(),
+            ids: Default::default(),
+            index: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    fn toggle(&mut self, item: RankedItem<H>) {
+        let id = item.id;
+        match self.ids.get(&id) {
+            Some(index) => {
+                self.items.remove(index);
+                self.ids.remove(&id);
+            }
+            None => {
+                self.ids.insert(id, self.index);
+                self.items.insert(self.index, item.haystack);
+                self.index += 1;
+            }
+        }
+    }
+
+    fn take(&mut self) -> impl Iterator<Item = H> {
+        self.ids.clear();
+        std::mem::take(&mut self.items).into_values()
+    }
+
+    fn contains_id(&self, id: RankedItemId) -> bool {
+        self.ids.contains_key(&id)
     }
 }
 

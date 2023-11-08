@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use surf_n_term::{
-    rasterize::{PathBuilder, SVG_COLORS},
+    rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
     view::{
         Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
         Tree, View, ViewContext,
@@ -26,6 +26,7 @@ pub struct Theme {
     pub list_default: Face,
     pub list_selected: Face,
     pub list_selected_indicator: Text,
+    pub list_marked_indicator: Text,
     pub list_text: Face,
     pub list_highlight: Face,
     pub list_inactive: Face,
@@ -59,17 +60,34 @@ impl Theme {
             },
             FaceAttrs::EMPTY,
         );
-        let list_selected_indicator = Text::new()
+        let indicator_path = PathBuilder::new()
+            .move_to((50.0, 50.0))
+            .circle(20.0)
+            .build();
+        let list_marked_indicator = Text::new()
             .set_face(Face::default().with_fg(Some(accent)))
             .put_glyph(Glyph::new(
-                PathBuilder::new()
-                    .move_to((50.0, 50.0))
-                    .circle(20.0)
-                    .build(),
+                indicator_path
+                    .stroke(StrokeStyle {
+                        width: 5.0,
+                        line_join: Default::default(),
+                        line_cap: Default::default(),
+                    })
+                    .clone(),
                 Default::default(),
                 Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
                 Size::new(1, 3),
-                " ● ".to_owned(),
+                " \u{25CB} ".to_owned(), // white circle
+            ))
+            .take();
+        let list_selected_indicator = Text::new()
+            .set_face(Face::default().with_fg(Some(accent)))
+            .put_glyph(Glyph::new(
+                indicator_path,
+                Default::default(),
+                Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
+                Size::new(1, 3),
+                " \u{25CF} ".to_owned(), // black circle
             ))
             .take();
         let list_text = Face::default().with_fg(list_selected.fg);
@@ -103,6 +121,7 @@ impl Theme {
             list_default,
             list_selected,
             list_selected_indicator,
+            list_marked_indicator,
             list_text,
             list_highlight,
             list_inactive,
@@ -153,6 +172,9 @@ impl Theme {
         let list_selected_indicator = Text::new()
             .push_str(" > ", Some(Face::default().with_fg(Some(accent))))
             .take();
+        let list_marked_indicator = Text::new()
+            .push_str(" * ", Some(Face::default().with_fg(Some(accent))))
+            .take();
         let list_text = Face::default().with_fg(list_selected.fg);
         let mut named_colors = SVG_COLORS.clone();
         named_colors.insert("fg".to_owned(), fg);
@@ -168,6 +190,7 @@ impl Theme {
             list_default: default,
             list_selected,
             list_selected_indicator,
+            list_marked_indicator,
             list_text,
             list_highlight: cursor,
             list_inactive: Face::default().with_fg(Some(color2)),
@@ -661,6 +684,9 @@ pub trait ListItems {
     /// Get entry in the list by it's index
     fn get(&self, index: usize, theme: Theme) -> Option<Self::Item>;
 
+    /// Whether item is marked (multi-select)
+    fn is_marked(&self, item: &Self::Item) -> bool;
+
     /// Check if list is empty
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -804,6 +830,7 @@ impl<T: ListItems> List<T> {
 
 struct ListItemView {
     view: BoxView<'static>,
+    marked: bool,
     pointed: bool,
 }
 
@@ -837,6 +864,9 @@ where
                 let mut surf = surf.view_mut(row..row + height, ..);
                 surf.erase(self.theme.list_selected);
                 surf.draw_view(ctx, &self.theme.list_selected_indicator)?;
+            } else if item_data.marked {
+                let mut surf = surf.view_mut(row..row + height, ..);
+                surf.draw_view(ctx, &self.theme.list_marked_indicator)?;
             }
 
             item_data
@@ -888,6 +918,7 @@ where
 
             // create view and calculate layout
             let pointed = index == self.cursor;
+            let marked = self.items.is_marked(&item);
             let view = item.into_view().boxed();
             let mut layout = view.layout(ctx, child_ct);
 
@@ -901,7 +932,11 @@ where
 
             // insert layout
             children_height += layout.size().height;
-            layout.set_data(ListItemView { view, pointed });
+            layout.set_data(ListItemView {
+                view,
+                pointed,
+                marked,
+            });
             layouts.push_back(layout);
 
             if children_height > height {
@@ -1006,6 +1041,10 @@ mod tests {
         fn get(&self, index: usize, _theme: Theme) -> Option<Self::Item> {
             let value = self.0.get(index)?;
             Some(value.to_string())
+        }
+
+        fn is_marked(&self, _item: &Self::Item) -> bool {
+            false
         }
     }
 

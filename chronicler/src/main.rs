@@ -61,10 +61,10 @@ async fn main() -> Result<(), Error> {
         ArgsSubcommand::Cmd(_args) => {
             let mut navigator =
                 Navigator::new(options, db_path, NavigatorState::CmdHistory).await?;
-            let entry = navigator.run(query).await?;
+            let items = navigator.run(query).await?;
             std::mem::drop(navigator);
-            if let Some(entry) = entry {
-                print!("{}", entry);
+            for item in items {
+                print!("{}", item);
             }
         }
         ArgsSubcommand::Update(args) if args.show_db_path => {
@@ -86,10 +86,10 @@ async fn main() -> Result<(), Error> {
                         .await?
                 }
             };
-            let entry = navigator.run(query).await?;
+            let items = navigator.run(query).await?;
             std::mem::drop(navigator);
-            if let Some(entry) = entry {
-                print!("{entry}");
+            for item in items {
+                print!("{}", item);
             }
         }
         ArgsSubcommand::Setup(args) => {

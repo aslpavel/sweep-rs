@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import base64
+import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
@@ -132,12 +133,12 @@ class SweepSize(NamedTuple):
 
 @dataclass
 class SweepSelect(Generic[I]):
-    """Event generated on item select"""
+    """Event generated on item(s) select"""
 
-    item: Optional[I]
+    items: List[I]
 
-    def __init__(self, item: Optional[I]):
-        self.item = item
+    def __init__(self, items: List[I]):
+        self.items = items
 
 
 class Icon(NamedTuple):
@@ -453,7 +454,7 @@ async def sweep(
     fields: Optional[Dict[int, Any]] = None,
     init: Optional[Callable[[Sweep[I]], Awaitable[None]]] = None,
     **options: Any,
-) -> Optional[I]:
+) -> List[I]:
     """Convenience wrapper around `Sweep`
 
     Useful when you only need to select one candidate from a list of items
@@ -485,9 +486,9 @@ async def sweep(
         # wait events
         async for event in sweep:
             if isinstance(event, SweepSelect):
-                return event.item
+                return event.items
 
-    return None
+    return []
 
 
 class Sweep(Generic[I]):
@@ -649,7 +650,9 @@ class Sweep(Generic[I]):
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
-                    yield SweepSelect(self._item_get(event.params.get("item")))
+                    yield SweepSelect(
+                        [self._item_get(item) for item in event.params.get("items", [])]
+                    )
                 elif event.method == "bind":
                     tag = event.params.get("tag", "")
                     handler = self._binds.get(tag)
@@ -658,7 +661,7 @@ class Sweep(Generic[I]):
                     else:
                         item = await handler(self, tag)
                         if item is not None:
-                            yield SweepSelect(item)
+                            yield SweepSelect([item])
                 elif event.method == "resize":
                     size = SweepSize.from_json(event.params)
                     self._size = size
@@ -739,6 +742,10 @@ class Sweep(Generic[I]):
     async def items_current(self) -> Optional[I]:
         """Get currently selected item if any"""
         return self._item_get(await self._peer.items_current())
+
+    async def items_marked(self) -> List[I]:
+        """Take currently marked items"""
+        return [self._item_get(item) for item in await self._peer.items_marked()]
 
     async def cursor_set(self, position: int) -> None:
         """Set cursor to specified position"""
@@ -1268,7 +1275,7 @@ class Event(Generic[E]):
                 if handler(event):
                     self._handlers.add(handler)
             except Exception as error:
-                sys.stderr.write(
+                warnings.warn(
                     f"handler {handler} failed with error: {repr(error)}\n"
                 )
                 pass
@@ -1651,7 +1658,7 @@ async def main(args: Optional[List[str]] = None) -> None:
         border=opts.border,
     )
 
-    if result is None:
+    if not result:
         pass
     elif opts.json:
         json.dump(result, sys.stdout)

@@ -151,16 +151,24 @@ async fn main() -> Result<(), Error> {
             });
         };
         while let Some(event) = sweep.next_event().await {
-            if let SweepEvent::Select(result) = event {
-                if result.is_none() && !args.no_match_use_input {
+            if let SweepEvent::Select(items) = event {
+                if items.is_empty() && !args.no_match_use_input {
                     continue;
                 }
                 let input = sweep.query_get().await?;
                 std::mem::drop(sweep); // cleanup terminal
-                let result = match result {
-                    Some(candidate) if args.json => serde_json::to_string(&candidate)?,
-                    Some(candidate) => candidate.to_string(),
-                    None => input,
+                let result = if args.json {
+                    serde_json::to_string(&items)?
+                } else {
+                    use std::fmt::Write as _;
+                    let mut result = String::new();
+                    for item in &items {
+                        write!(&mut result, "{}", item)?;
+                    }
+                    if result.is_empty() {
+                        write!(&mut result, "{}", input)?;
+                    }
+                    result
                 };
                 output.write_all(result.as_bytes()).await?;
                 break;
