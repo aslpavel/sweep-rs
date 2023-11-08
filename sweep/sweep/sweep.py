@@ -745,7 +745,8 @@ class Sweep(Generic[I]):
 
     async def items_marked(self) -> List[I]:
         """Take currently marked items"""
-        return [self._item_get(item) for item in await self._peer.items_marked()]
+        items = await self._peer.items_marked()
+        return [self._item_get(item) for item in items]
 
     async def cursor_set(self, position: int) -> None:
         """Set cursor to specified position"""
@@ -1275,9 +1276,7 @@ class Event(Generic[E]):
                 if handler(event):
                     self._handlers.add(handler)
             except Exception as error:
-                warnings.warn(
-                    f"handler {handler} failed with error: {repr(error)}\n"
-                )
+                warnings.warn(f"handler {handler} failed with error: {repr(error)}\n")
                 pass
         futures = self._futures.copy()
         self._futures.clear()

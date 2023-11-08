@@ -468,7 +468,7 @@ where
             move |_params: Value| {
                 let sweep = sweep.clone();
                 async move {
-                    let items = serde_json::to_value(sweep.items_current().await?)?;
+                    let items = serde_json::to_value(sweep.items_marked().await?)?;
                     Ok(items)
                 }
             }
