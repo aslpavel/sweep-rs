@@ -4,6 +4,7 @@ use crate::{
     walk::{path_ignore_for_path, walk, PathItem},
 };
 use anyhow::Error;
+use async_trait::async_trait;
 use futures::{future, stream, Stream, StreamExt, TryStreamExt};
 use std::{
     collections::HashMap,
@@ -11,10 +12,10 @@ use std::{
     io::Write,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 use sweep::{
-    surf_n_term::Glyph, Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
+    surf_n_term::{Glyph, Key},
+    Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -73,115 +74,42 @@ impl fmt::Display for NavigatorItem {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum NavigatorState {
-    /// Show specified path
-    Path(PathBuf),
-    /// Show command history
-    CmdHistory,
-    /// Show path history
-    PathHistory,
-}
-
 pub struct Navigator {
     sweep: Sweep<NavigatorItem>,
     history: History,
-    state: NavigatorState,
     update_task: Option<AbortJoinHandle<()>>,
 }
 
 impl Navigator {
-    pub async fn new(
-        options: SweepOptions,
-        db_path: impl AsRef<Path>,
-        state: NavigatorState,
-    ) -> Result<Self, Error> {
+    pub async fn new(options: SweepOptions, db_path: impl AsRef<Path>) -> Result<Self, Error> {
         let sweep = Sweep::new((), options)?;
-        NavigatorBind::bind(&sweep)?;
+        sweep.scorer_by_name(Some("substr".to_owned())).await?;
+        sweep.bind(
+            vec!["tab".parse()?],
+            TAG_COMPLETE.to_owned(),
+            "Complete string or follow directory".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+i".parse()?],
+            TAG_COMPLETE.to_owned(),
+            "Complete string or follow directory".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+r".parse()?],
+            TAG_COMMAND_HISTORY_MODE.to_owned(),
+            "Switch to command history view".to_owned(),
+        );
+        sweep.bind(
+            vec!["ctrl+f".parse()?],
+            TAG_PATH_HISTORY_MODE.to_owned(),
+            "Switch to path history view".to_owned(),
+        );
+
         Ok(Self {
             sweep,
             history: History::new(db_path).await?,
-            state,
             update_task: None,
         })
-    }
-
-    async fn switch_mode(
-        &mut self,
-        state: NavigatorState,
-        query: Option<&str>,
-    ) -> Result<(), Error> {
-        use NavigatorState::*;
-        if let Some(query) = query {
-            self.sweep.query_set(query);
-        }
-        self.state = state;
-        match &self.state {
-            Path(path) => {
-                self.sweep
-                    .prompt_set(Some(path_collapse(path)), Some(PATH_NAV_ICON.clone()));
-                self.sweep.keep_order(Some(true));
-                self.list_update(
-                    walk(
-                        path.clone(),
-                        Some(path_ignore_for_path(path.as_path()).await),
-                    )
-                    .try_filter(|item| {
-                        future::ready(item.path.as_os_str().len() >= item.root_length)
-                    })
-                    .map_ok(NavigatorItem::Path),
-                );
-            }
-            CmdHistory => {
-                self.sweep
-                    .prompt_set(Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
-                self.sweep.keep_order(Some(false));
-                // NOTE: I have not found a way to create static stream from connection
-                //       pool even though it is clone-able.
-                let history = self
-                    .history
-                    .entries_unique_cmd()
-                    .map_ok(NavigatorItem::History)
-                    .collect::<Vec<_>>()
-                    .await;
-                self.list_update(stream::iter(history));
-            }
-            PathHistory => {
-                self.sweep
-                    .prompt_set(Some("PATH".to_owned()), Some(PATH_HISTORY_ICON.clone()));
-                self.sweep.keep_order(Some(true));
-                let mut history = Vec::new();
-                let current_dir = std::env::current_dir();
-                if let Ok(current_dir) = &current_dir {
-                    history.push(NavigatorItem::Path(PathItem {
-                        root_length: 0,
-                        path: current_dir.clone(),
-                        metadata: None,
-                        ignore: None,
-                    }));
-                };
-                let current_dir = current_dir.unwrap_or_default();
-                self.history
-                    .path_entries()
-                    .for_each(|item| {
-                        if let Ok(item) = item {
-                            let path: PathBuf = item.path.into();
-                            if path != current_dir {
-                                history.push(NavigatorItem::Path(PathItem {
-                                    root_length: 0,
-                                    path,
-                                    metadata: None,
-                                    ignore: None,
-                                }))
-                            }
-                        }
-                        future::ready(())
-                    })
-                    .await;
-                self.list_update(stream::iter(history).map(Ok))
-            }
-        }
-        Ok(())
     }
 
     // Abort current item list update and start a new one
@@ -204,127 +132,297 @@ impl Navigator {
         );
     }
 
-    // Go to parent directory
-    async fn cmd_goto_parent(&mut self) -> Result<(), Error> {
-        use NavigatorState::*;
-        if let Path(path) = &self.state {
-            if let Some(path) = path.parent().map(PathBuf::from) {
-                self.switch_mode(Path(path), Some("")).await?;
+    async fn path_complete(&self) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
+        let (current, query) =
+            tokio::try_join!(self.sweep.items_current(), self.sweep.query_get())?;
+
+        if query.starts_with('~') || query.starts_with('/') {
+            // navigate path from query string
+            let (path, query) = get_path_and_query(query).await;
+            Ok(Some(PathMode::new(path, query)))
+        } else if let Some(NavigatorItem::Path(path_item)) = current {
+            // navigate to currently pointed directory
+            let is_dir = if let Some(metadata) = path_item.metadata {
+                metadata.is_dir()
+            } else {
+                tokio::fs::metadata(&path_item.path)
+                    .await
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+            };
+            if is_dir {
+                Ok(Some(PathMode::new(path_item.path, String::new())))
+            } else {
+                Ok(None)
             }
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 
-    // Complete either with current item of or current query
-    async fn cmd_complete(&mut self) -> Result<(), Error> {
-        if matches!(
-            &self.state,
-            NavigatorState::Path(_) | NavigatorState::PathHistory
-        ) {
-            let (current, query) =
-                tokio::try_join!(self.sweep.items_current(), self.sweep.query_get())?;
-            if query.starts_with('~') || query.starts_with('/') || current.is_none() {
-                let (path, query) = get_path_and_query(query).await;
-                self.switch_mode(NavigatorState::Path(path), Some(query.as_ref()))
-                    .await?;
-            } else if let Some(NavigatorItem::Path(item)) = current {
-                let is_dir = if let Some(metadata) = item.metadata {
-                    metadata.is_dir()
-                } else {
-                    tokio::fs::metadata(&item.path)
-                        .await
-                        .map(|m| m.is_dir())
-                        .unwrap_or(false)
-                };
-                if is_dir {
-                    self.switch_mode(NavigatorState::Path(item.path), Some(""))
-                        .await?;
-                }
-            }
+    pub async fn run(
+        &mut self,
+        query: Option<&str>,
+        mut mode: Box<dyn NavigatorMode>,
+    ) -> Result<Vec<NavigatorItem>, Error> {
+        mode.enter(self).await?;
+        if let Some(query) = query {
+            self.sweep.query_set(query);
         }
-        Ok(())
-    }
-
-    pub async fn run(&mut self, query: Option<&str>) -> Result<Vec<NavigatorItem>, Error> {
-        self.switch_mode(self.state.clone(), query).await?;
         while let Some(event) = self.sweep.next_event().await {
             match event {
+                SweepEvent::Resize(_) => {}
                 SweepEvent::Select(result) => return Ok(result),
-                SweepEvent::Bind(bind) => match bind.parse()? {
-                    NavigatorBind::GotoParent => self.cmd_goto_parent().await?,
-                    NavigatorBind::Completion => self.cmd_complete().await?,
-                    NavigatorBind::ShowCommandHistory => {
-                        self.switch_mode(NavigatorState::CmdHistory, Some(""))
-                            .await?
+                SweepEvent::Bind(tag) => match tag.as_str() {
+                    TAG_COMMAND_HISTORY_MODE => {
+                        mode.exit(self).await?;
+                        mode = CmdHistoryMode::new(None);
+                        mode.enter(self).await?;
                     }
-                    NavigatorBind::ShowPathHistory => {
-                        self.switch_mode(NavigatorState::PathHistory, Some(""))
-                            .await?
+                    TAG_PATH_HISTORY_MODE => {
+                        mode.exit(self).await?;
+                        mode = PathHistoryMode::new();
+                        mode.enter(self).await?;
+                    }
+                    _ => {
+                        if let Some(new_mode) = mode.handler(self, tag).await? {
+                            mode.exit(self).await?;
+                            mode = new_mode;
+                            mode.enter(self).await?;
+                        }
                     }
                 },
-                SweepEvent::Resize(_) => {}
             }
         }
         Ok(Vec::new())
     }
 }
 
-const CMD_GOTO_PARENT: &str = "chronicler.path.goto.parent";
-const CMD_COMPLETE: &str = "chronicler.path.complete";
-const CMD_PATH_HISTORY: &str = "chronicler.path.history";
-const CMD_COMMAND_HISTORY: &str = "chronicler.cmd.history";
+#[async_trait]
+pub trait NavigatorMode {
+    /// Enter mode
+    async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error>;
 
-enum NavigatorBind {
-    GotoParent,
-    Completion,
-    ShowCommandHistory,
-    ShowPathHistory,
+    /// Destroy mode
+    async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error>;
+
+    /// Handle key binding
+    async fn handler(
+        &mut self,
+        navigator: &mut Navigator,
+        tag: String,
+    ) -> Result<Option<Box<dyn NavigatorMode>>, Error>;
 }
 
-impl NavigatorBind {
-    fn bind(sweep: &Sweep<NavigatorItem>) -> Result<(), Error> {
-        sweep.bind(
-            vec!["backspace".parse()?],
-            CMD_GOTO_PARENT.to_owned(),
-            "Go to parent directory".to_owned(),
-        );
-        sweep.bind(
-            vec!["tab".parse()?],
-            CMD_COMPLETE.to_owned(),
-            "Complete string or follow directory".to_owned(),
-        );
-        sweep.bind(
-            vec!["ctrl+i".parse()?],
-            CMD_COMPLETE.to_owned(),
-            "Complete string or follow directory".to_owned(),
-        );
-        sweep.bind(
-            vec!["ctrl+r".parse()?],
-            CMD_COMMAND_HISTORY.to_owned(),
-            "Switch to command history view".to_owned(),
-        );
-        sweep.bind(
-            vec!["ctrl+f".parse()?],
-            CMD_PATH_HISTORY.to_owned(),
-            "Switch to path history view".to_owned(),
-        );
-        Ok(())
+pub struct CmdHistoryMode {
+    session: Option<String>,
+}
+
+impl CmdHistoryMode {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(session: Option<String>) -> Box<dyn NavigatorMode> {
+        Box::new(Self { session })
     }
 }
 
-impl FromStr for NavigatorBind {
-    type Err = Error;
+#[async_trait]
+impl NavigatorMode for CmdHistoryMode {
+    async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
+        navigator
+            .sweep
+            .prompt_set(Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
+        navigator.sweep.keep_order(Some(true));
+        navigator.sweep.bind(
+            Key::chord("alt+g s")?,
+            TAG_GOTO_SESSION.to_owned(),
+            "Go to parent directory".to_owned(),
+        );
 
-    fn from_str(bind: &str) -> Result<Self, Self::Err> {
-        match bind {
-            CMD_GOTO_PARENT => Ok(Self::GotoParent),
-            CMD_COMPLETE => Ok(Self::Completion),
-            CMD_COMMAND_HISTORY => Ok(Self::ShowCommandHistory),
-            CMD_PATH_HISTORY => Ok(Self::ShowPathHistory),
-            cmd => Err(anyhow::anyhow!("unhandled bind command: {}", cmd)),
+        // NOTE: I have not found a way to create static stream from connection
+        //       pool even though it is clone-able.
+        let history = if let Some(session) = &self.session {
+            navigator
+                .history
+                .entries_session(session.clone())
+                .map_ok(NavigatorItem::History)
+                .collect::<Vec<_>>()
+                .await
+        } else {
+            navigator
+                .history
+                .entries_unique_cmd()
+                .map_ok(NavigatorItem::History)
+                .collect::<Vec<_>>()
+                .await
+        };
+        navigator.list_update(stream::iter(history));
+        Ok(())
+    }
+
+    async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
+        navigator
+            .sweep
+            .bind(Key::chord("alt+g s")?, String::new(), String::new());
+        Ok(())
+    }
+
+    async fn handler(
+        &mut self,
+        navigator: &mut Navigator,
+        tag: String,
+    ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
+        match tag.as_str() {
+            TAG_GOTO_SESSION => {
+                let current = navigator.sweep.items_current().await?;
+                let Some(NavigatorItem::History(entry)) = current else {
+                    return Ok(None);
+                };
+                Ok(Some(CmdHistoryMode::new(Some(entry.session))))
+            }
+            _ => Ok(None),
         }
     }
 }
+
+pub struct PathMode {
+    path: PathBuf,
+    query: String,
+}
+
+impl PathMode {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(path: PathBuf, query: String) -> Box<dyn NavigatorMode> {
+        Box::new(Self { path, query })
+    }
+}
+
+#[async_trait]
+impl NavigatorMode for PathMode {
+    async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
+        navigator
+            .sweep
+            .prompt_set(Some(path_collapse(&self.path)), Some(PATH_NAV_ICON.clone()));
+        navigator.sweep.keep_order(Some(true));
+        navigator.sweep.query_set(self.query.clone());
+
+        navigator.sweep.bind(
+            vec!["backspace".parse()?],
+            TAG_GOTO_PARENT.to_owned(),
+            "Go to parent directory".to_owned(),
+        );
+
+        navigator.list_update(
+            walk(
+                self.path.clone(),
+                Some(path_ignore_for_path(self.path.as_path()).await),
+            )
+            .try_filter(|item| future::ready(item.path.as_os_str().len() >= item.root_length))
+            .map_ok(NavigatorItem::Path),
+        );
+
+        Ok(())
+    }
+
+    async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
+        navigator
+            .sweep
+            .bind(vec!["backspace".parse()?], String::new(), String::new());
+        Ok(())
+    }
+
+    async fn handler(
+        &mut self,
+        navigator: &mut Navigator,
+        tag: String,
+    ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
+        match tag.as_str() {
+            TAG_COMPLETE => navigator.path_complete().await,
+            TAG_GOTO_PARENT => {
+                if let Some(path) = self.path.parent().map(PathBuf::from) {
+                    if self.path != path {
+                        return Ok(Some(PathMode::new(path, String::new())));
+                    }
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+pub struct PathHistoryMode {}
+
+impl PathHistoryMode {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new() -> Box<dyn NavigatorMode> {
+        Box::new(Self {})
+    }
+}
+
+#[async_trait]
+impl NavigatorMode for PathHistoryMode {
+    async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
+        navigator
+            .sweep
+            .prompt_set(Some("PATH".to_owned()), Some(PATH_HISTORY_ICON.clone()));
+        navigator.sweep.keep_order(Some(true));
+
+        let mut history = Vec::new();
+        // Add current directory as the first item
+        let current_dir = std::env::current_dir();
+        if let Ok(current_dir) = &current_dir {
+            history.push(NavigatorItem::Path(PathItem {
+                root_length: 0,
+                path: current_dir.clone(),
+                metadata: None,
+                ignore: None,
+            }));
+        };
+        let current_dir = current_dir.unwrap_or_default();
+        navigator
+            .history
+            .path_entries()
+            .for_each(|item| {
+                if let Ok(item) = item {
+                    let path: PathBuf = item.path.into();
+                    if path != current_dir {
+                        history.push(NavigatorItem::Path(PathItem {
+                            root_length: 0,
+                            path,
+                            metadata: None,
+                            ignore: None,
+                        }))
+                    }
+                }
+                future::ready(())
+            })
+            .await;
+        navigator.list_update(stream::iter(history).map(Ok));
+
+        Ok(())
+    }
+
+    async fn exit(&mut self, _navigator: &mut Navigator) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn handler(
+        &mut self,
+        navigator: &mut Navigator,
+        tag: String,
+    ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
+        match tag.as_str() {
+            TAG_COMPLETE => navigator.path_complete().await,
+            _ => Ok(None),
+        }
+    }
+}
+
+const TAG_PATH_HISTORY_MODE: &str = "chronicler.mode.path";
+const TAG_COMMAND_HISTORY_MODE: &str = "chronicler.mode.cmd";
+const TAG_COMPLETE: &str = "chronicler.complete";
+const TAG_GOTO_PARENT: &str = "chronicler.goto.parent";
+const TAG_GOTO_SESSION: &str = "chronicler.goto.session";
 
 lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =

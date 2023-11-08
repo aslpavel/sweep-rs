@@ -185,6 +185,16 @@ impl History {
             .map_err(Error::from)
     }
 
+    pub fn entries_session(
+        &self,
+        session: String,
+    ) -> impl Stream<Item = Result<HistoryEntry, Error>> + '_ {
+        sqlx::query_as(LIST_SESSION_QUERY)
+            .bind(session)
+            .fetch(&self.pool)
+            .map_err(Error::from)
+    }
+
     pub fn entries_unique_cmd(&self) -> impl Stream<Item = Result<HistoryEntry, Error>> + '_ {
         sqlx::query_as(LIST_UNIQUE_CMD_QUERY)
             .fetch(&self.pool)
@@ -260,6 +270,10 @@ CREATE INDEX IF NOT EXISTS history_end_ts ON history(end_ts);
 
 const LIST_QUERY: &str = r#"
 SELECT * FROM history ORDER BY end_ts DESC;
+"#;
+
+const LIST_SESSION_QUERY: &str = r#"
+SELECT * FROM history WHERE session = $1 ORDER BY end_ts DESC;
 "#;
 
 const LIST_UNIQUE_CMD_QUERY: &str = r#"

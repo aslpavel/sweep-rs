@@ -7,7 +7,7 @@ mod walk;
 
 use anyhow::Error;
 use history::History;
-use navigator::{Navigator, NavigatorState};
+use navigator::{CmdHistoryMode, Navigator, PathHistoryMode, PathMode};
 use sweep::{SweepOptions, Theme};
 use time::{format_description::FormatItem, macros::format_description};
 
@@ -59,12 +59,11 @@ async fn main() -> Result<(), Error> {
 
     match args.subcommand {
         ArgsSubcommand::Cmd(_args) => {
-            let mut navigator =
-                Navigator::new(options, db_path, NavigatorState::CmdHistory).await?;
-            let items = navigator.run(query).await?;
+            let mut navigator = Navigator::new(options, db_path).await?;
+            let items = navigator.run(query, CmdHistoryMode::new(None)).await?;
             std::mem::drop(navigator);
             for item in items {
-                print!("{}", item);
+                println!("{}", item);
             }
         }
         ArgsSubcommand::Update(args) if args.show_db_path => {
@@ -79,17 +78,15 @@ async fn main() -> Result<(), Error> {
             print!("{id}")
         }
         ArgsSubcommand::Path(args) => {
-            let mut navigator = match args.path {
-                None => Navigator::new(options, db_path, NavigatorState::PathHistory).await?,
-                Some(path) => {
-                    Navigator::new(options, db_path, NavigatorState::Path(path.canonicalize()?))
-                        .await?
-                }
+            let mut navigator = Navigator::new(options, db_path).await?;
+            let mode = match args.path {
+                None => PathHistoryMode::new(),
+                Some(path) => PathMode::new(path.canonicalize()?, String::new()),
             };
-            let items = navigator.run(query).await?;
+            let items = navigator.run(query, mode).await?;
             std::mem::drop(navigator);
             for item in items {
-                print!("{}", item);
+                println!("{}", item);
             }
         }
         ArgsSubcommand::Setup(args) => {
