@@ -48,7 +48,7 @@ fi
 # post-exec command
 function _chronicler_hist_end {
     local return_value="$?"
-    if [[ ! -n "$_chronicler_hist_id" ]]; then
+    if [[ -z "$_chronicler_hist_id" ]]; then
         return
     fi
     local now=${EPOCHREALTIME:-$(date +%s.01)}

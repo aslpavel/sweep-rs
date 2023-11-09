@@ -173,25 +173,18 @@ impl Navigator {
             match event {
                 SweepEvent::Resize(_) => {}
                 SweepEvent::Select(result) => return Ok(result),
-                SweepEvent::Bind(tag) => match tag.as_str() {
-                    TAG_COMMAND_HISTORY_MODE => {
+                SweepEvent::Bind(tag) => {
+                    let mode_next = match tag.as_str() {
+                        TAG_COMMAND_HISTORY_MODE => Some(CmdHistoryMode::new(None)),
+                        TAG_PATH_HISTORY_MODE => Some(PathHistoryMode::new()),
+                        _ => mode.handler(self, tag).await?,
+                    };
+                    if let Some(mode_next) = mode_next {
                         mode.exit(self).await?;
-                        mode = CmdHistoryMode::new(None);
+                        mode = mode_next;
                         mode.enter(self).await?;
                     }
-                    TAG_PATH_HISTORY_MODE => {
-                        mode.exit(self).await?;
-                        mode = PathHistoryMode::new();
-                        mode.enter(self).await?;
-                    }
-                    _ => {
-                        if let Some(new_mode) = mode.handler(self, tag).await? {
-                            mode.exit(self).await?;
-                            mode = new_mode;
-                            mode.enter(self).await?;
-                        }
-                    }
-                },
+                }
             }
         }
         Ok(Vec::new())
@@ -487,7 +480,10 @@ fn path_collapse(path: &Path) -> String {
     let mut result: Vec<u8> = Vec::new();
     (|| {
         result.write_all(parts[0].as_bytes())?;
-        write!(&mut result, "/\u{2026}")?;
+        if !path.has_root() {
+            write!(&mut result, "/")?;
+        }
+        write!(&mut result, "\u{2026}")?;
         for part in parts[parts.len() - 4..].iter() {
             write!(&mut result, "/")?;
             result.write_all(part.as_bytes())?;
