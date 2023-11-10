@@ -1,3 +1,5 @@
+use crate::navigator::FAILED_ICON;
+
 use super::DATE_FORMAT;
 use anyhow::{Context, Error};
 use futures::{Stream, TryStreamExt};
@@ -10,7 +12,10 @@ use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
     haystack_default_view,
-    surf_n_term::view::{Align, Container, Flex, Justify, Text, View},
+    surf_n_term::{
+        view::{Align, Container, Flex, Justify, Text, View},
+        Face, FaceAttrs,
+    },
     Haystack, HaystackPreview, Theme,
 };
 
@@ -52,25 +57,32 @@ impl Haystack for HistoryEntry {
         theme: &Theme,
     ) -> Box<dyn View> {
         let cmd = haystack_default_view(self, positions, theme);
-        if theme.show_preview {
-            cmd.boxed()
-        } else {
-            let mut view = Flex::row()
-                .justify(Justify::SpaceBetween)
-                .add_flex_child(1.0, cmd);
+
+        let mut right = Text::new();
+        if self.status != 0 {
+            right.with_face(
+                Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),
+                |right| {
+                    right.put_glyph(FAILED_ICON.clone());
+                },
+            );
+        }
+        if !theme.show_preview {
             if let Ok(date) = self
                 .start_dt()
                 .and_then(|date| Ok(date.format(DATE_FORMAT)?))
             {
-                view.push_child(
-                    Text::new()
-                        .push_str(&date, Some(theme.list_inactive))
-                        .put_char(' ')
-                        .take(),
-                );
+                right
+                    .push_str(&date, Some(theme.list_inactive))
+                    .put_char(' ');
             }
-            view.boxed()
         }
+
+        Flex::row()
+            .justify(Justify::SpaceBetween)
+            .add_flex_child(1.0, cmd)
+            .add_child(right)
+            .boxed()
     }
 
     fn preview(

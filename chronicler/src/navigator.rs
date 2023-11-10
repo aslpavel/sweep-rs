@@ -430,6 +430,9 @@ lazy_static::lazy_static! {
 
     static ref CMD_HISTORY_ICON: &'static Glyph = ICONS.get("material-console")
         .expect("failed to find path navigation icon");
+
+    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("material-close-circle-outline")
+        .expect("faield to fined failed icon");
 }
 
 /// Find longest existing path from the input and use reminder as query
