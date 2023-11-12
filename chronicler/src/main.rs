@@ -77,11 +77,15 @@ async fn main() -> Result<(), Error> {
         ArgsSubcommand::Update(args) if args.show_db_path => {
             print!("{}", db_path.canonicalize()?.to_string_lossy())
         }
-        ArgsSubcommand::Update(_args) => {
+        ArgsSubcommand::Update(args) => {
             let history = History::new(db_path).await?;
             let mut update_str = String::new();
             std::io::stdin().read_to_string(&mut update_str)?;
-            let update = update_str.parse()?;
+            let update = if args.json {
+                serde_json::from_str(&update_str)?
+            } else {
+                update_str.parse()?
+            };
             let id = history.update(update).await?;
             history.close().await?;
             print!("{id}")
@@ -122,6 +126,10 @@ struct ArgsUpdate {
     /// return path to the database
     #[argh(switch)]
     show_db_path: bool,
+
+    /// json input format
+    #[argh(switch)]
+    json: bool,
 }
 
 /// List path

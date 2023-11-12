@@ -116,6 +116,7 @@ impl Haystack for HistoryEntry {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct HistoryUpdate {
     pub id: Option<i64>,
     pub cmd: Option<String>,
@@ -174,7 +175,8 @@ impl History {
             .journal_mode(SqliteJournalMode::Wal)
             .create_if_missing(true)
             .filename(path)
-            .thread_name(|index| format!("hist-sqlite-{index}"));
+            .thread_name(|index| format!("hist-sqlite-{index}"))
+            .optimize_on_close(true, None);
         let pool = SqlitePool::connect_lazy_with(options);
         sqlx::query(CREATE_TABLE_QUERY)
             .execute(&mut *pool.acquire().await?)
@@ -305,7 +307,7 @@ SELECT cwd as path, COUNT(cwd) as count FROM history GROUP BY cwd ORDER BY COUNT
 "#;
 
 const INSERT_QUERY: &str = r#"
-INSERT INTO history (cmd, return, cwd, hostname, user, start_ts, end_ts, session)
+INSERT OR ABORT INTO history (cmd, return, cwd, hostname, user, start_ts, end_ts, session)
 VALUES (
     $1, -- cmd
     COALESCE($2, -1), -- return
