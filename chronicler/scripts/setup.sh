@@ -78,7 +78,7 @@ function _chronicler_readline_extend() {
     fi
 }
 
-function _chronicle_complete() {
+function _chronicler_complete() {
     READLINE_LINE=""
     IFS=$'\x0c' read -ra items <<< "$1"
     for item in "${items[@]}"; do
@@ -117,12 +117,12 @@ function _chronicle_complete() {
 
 # bind cmd history
 function _chronicler_hist_show {
-    _chronicle_complete "$("$_chronicler_bin" --query "$READLINE_LINE" cmd)"
+    _chronicler_complete "$("$_chronicler_bin" --query "$READLINE_LINE" cmd)"
 }
 bind -x '"\C-r": _chronicler_hist_show'
 
 # bind path history
 function _chronicler_path_show {
-    _chronicle_complete "$("$_chronicler_bin" --query "$READLINE_LINE" path)"
+    _chronicler_complete "$("$_chronicler_bin" --query "$READLINE_LINE" path)"
 }
 bind -x '"\C-f": _chronicler_path_show'

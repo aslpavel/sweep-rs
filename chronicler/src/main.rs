@@ -81,7 +81,8 @@ async fn main() -> Result<(), Error> {
             let history = History::new(db_path).await?;
             let mut update_str = String::new();
             std::io::stdin().read_to_string(&mut update_str)?;
-            let id = history.update(update_str.parse()?).await?;
+            let update = update_str.parse()?;
+            let id = history.update(update).await?;
             history.close().await?;
             print!("{id}")
         }
