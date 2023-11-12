@@ -24,6 +24,27 @@ pub enum NavigatorItem {
     History(HistoryEntry),
 }
 
+impl NavigatorItem {
+    pub fn tag(&self) -> &str {
+        match self {
+            NavigatorItem::History(_) => "R", // run
+            NavigatorItem::Path(entry) => {
+                let is_dir = entry
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.is_dir())
+                    .or_else(|| Some(entry.path.metadata().ok()?.is_dir()))
+                    .unwrap_or(false);
+                if is_dir {
+                    "D" // dir
+                } else {
+                    "F" // file
+                }
+            }
+        }
+    }
+}
+
 impl Haystack for NavigatorItem {
     type Context = ();
 

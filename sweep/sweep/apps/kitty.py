@@ -89,7 +89,8 @@ async def main(args: Optional[List[str]] = None) -> None:
     if opts.json:
         json.dump(result, sys.stdout)
     else:
-        print(result)
+        for item in result:
+            print(item)
 
 
 if __name__ == "__main__":

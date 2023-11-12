@@ -7,7 +7,7 @@ mod walk;
 
 use anyhow::Error;
 use history::History;
-use navigator::{CmdHistoryMode, Navigator, PathHistoryMode, PathMode};
+use navigator::{CmdHistoryMode, Navigator, NavigatorItem, PathHistoryMode, PathMode};
 use sweep::{SweepOptions, Theme};
 use time::{format_description::FormatItem, macros::format_description};
 
@@ -62,9 +62,17 @@ async fn main() -> Result<(), Error> {
             let mut navigator = Navigator::new(options, db_path).await?;
             let items = navigator.run(query, CmdHistoryMode::new(None)).await?;
             std::mem::drop(navigator);
-            for item in items {
-                println!("{}", item);
-            }
+            print_items(&items);
+        }
+        ArgsSubcommand::Path(args) => {
+            let mut navigator = Navigator::new(options, db_path).await?;
+            let mode = match args.path {
+                None => PathHistoryMode::new(),
+                Some(path) => PathMode::new(path.canonicalize()?, String::new()),
+            };
+            let items = navigator.run(query, mode).await?;
+            std::mem::drop(navigator);
+            print_items(&items);
         }
         ArgsSubcommand::Update(args) if args.show_db_path => {
             print!("{}", db_path.canonicalize()?.to_string_lossy())
@@ -76,18 +84,6 @@ async fn main() -> Result<(), Error> {
             let id = history.update(update_str.parse()?).await?;
             history.close().await?;
             print!("{id}")
-        }
-        ArgsSubcommand::Path(args) => {
-            let mut navigator = Navigator::new(options, db_path).await?;
-            let mode = match args.path {
-                None => PathHistoryMode::new(),
-                Some(path) => PathMode::new(path.canonicalize()?, String::new()),
-            };
-            let items = navigator.run(query, mode).await?;
-            std::mem::drop(navigator);
-            for item in items {
-                println!("{}", item);
-            }
         }
         ArgsSubcommand::Setup(args) => {
             const CHRONICLER_PATTERN: &str = "##CHRONICLER_BIN##";
@@ -102,6 +98,15 @@ async fn main() -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+fn print_items(items: &[NavigatorItem]) {
+    for (index, item) in items.iter().enumerate() {
+        print!("{}={}", item.tag(), item);
+        if index + 1 != items.len() {
+            print!("\x0c")
+        }
+    }
 }
 
 /// Select entry from the cmd history database

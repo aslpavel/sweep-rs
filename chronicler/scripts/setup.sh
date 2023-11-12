@@ -16,7 +16,7 @@ function _chronicler_hist_start {
     fi
     _chronicler_hist_cmd="$cmd"
     local now="${EPOCHREALTIME:-$(date +%s.01)}"
-    local __sep__=$(printf "\x0c")
+    local __sep__=$'\x0c'
     _chronicler_hist_id=$("$_chronicler_bin" update <<-EOF
 cmd
 $cmd
@@ -54,7 +54,7 @@ function _chronicler_hist_end {
     local now=${EPOCHREALTIME:-$(date +%s.01)}
     local id=$_chronicler_hist_id
     unset _chronicler_hist_id
-    local __sep__=$(printf "\x0c")
+    local __sep__=$'\x0c'
     "$_chronicler_bin" update <<-EOF > /dev/null
 id
 $id
@@ -70,40 +70,59 @@ if [[ ! " ${precmd_functions[*]} " =~ " _chronicler_hist_end " ]]; then
     precmd_functions+=(_chronicler_hist_end)
 fi
 
-# bind cmd history
-function _chronicler_hist_show {
-    READLINE_LINE=$("$_chronicler_bin" --query "$READLINE_LINE" cmd)
+function _chronicler_readline_extend() {
+    if [[ -z "$READLINE_LINE" ]]; then
+        READLINE_LINE=$1
+    else
+        READLINE_LINE="${READLINE_LINE}; $1"
+    fi
+}
+
+function _chronicle_complete() {
+    READLINE_LINE=""
+    IFS=$'\x0c' read -ra items <<< "$1"
+    for item in "${items[@]}"; do
+        tag="${item:0:2}"
+        item="${item:2}"
+        item_escape=$(printf "%q" "${item}")
+        case "$tag" in
+            D=) _chronicler_readline_extend "cd $item_escape";;
+            F=)
+                if [[ $(file --mime-type --brief "$item") == text/* ]]; then
+                    _chronicler_readline_extend "${EDITOR:-emacs} $item_escape"
+                else
+                    case "$OSTYPE" in
+                        darwin*)
+                            # MacOS
+                            _chronicler_readline_extend "open $item_escape"
+                            ;;
+                        linux*|bsd*)
+                            # Linux | BSD
+                            _chronicler_readline_extend "xdg-open $item_escape"
+                            ;;
+                        msys*|cygwin*)
+                            # Windows
+                            ;;
+                    esac
+                fi
+            ;;
+            R=)
+                _chronicler_readline_extend "$item"
+            ;;
+        esac
+    done
     READLINE_MARK=0
     READLINE_POINT=${#READLINE_LINE}
+}
+
+# bind cmd history
+function _chronicler_hist_show {
+    _chronicle_complete "$("$_chronicler_bin" --query "$READLINE_LINE" cmd)"
 }
 bind -x '"\C-r": _chronicler_hist_show'
 
 # bind path history
 function _chronicler_path_show {
-    path=$("$_chronicler_bin" --query "$READLINE_LINE" path)
-    path_escape=$(printf "%q" "${path}")
-    if [ -d "$path" ];  then
-        READLINE_LINE="cd $path_escape"
-    elif [ -f "$path" ]; then
-        if [[ $(file --mime-type --brief "$path") == text/* ]]; then
-            READLINE_LINE="${EDITOR:-emacs} $path_escape"
-        else
-            case "$OSTYPE" in
-                darwin*)
-                    # MacOS
-                    READLINE_LINE="open $path_escape"
-                    ;;
-                linux*|bsd*)
-                    # Linux | BSD
-                    READLINE_LINE="xdg-open $path_escape"
-                    ;;
-                msys*|cygwin*)
-                    # Windows
-                    ;;
-            esac
-        fi
-    fi
-    READLINE_MARK=0
-    READLINE_POINT=${#READLINE_LINE}
+    _chronicle_complete "$("$_chronicler_bin" --query "$READLINE_LINE" path)"
 }
 bind -x '"\C-f": _chronicler_path_show'
