@@ -4,10 +4,6 @@
 use anyhow::{Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
-#[cfg(not(target_os = "macos"))]
-use std::io::IsTermain;
-#[cfg(not(target_os = "macos"))]
-use std::os::unix::io::AsFd;
 use std::{
     collections::VecDeque,
     fs::File,
@@ -22,6 +18,9 @@ use sweep::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
+
+#[cfg(not(target_os = "macos"))]
+use std::{io::IsTerminal, os::unix::io::AsFd};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
