@@ -50,6 +50,13 @@ async fn main() -> Result<(), Error> {
         .db
         .or_else(|| Some(dirs::data_dir()?.join(HISTORY_DB)))
         .ok_or_else(|| anyhow::anyhow!("faield to determine home directory"))?;
+    let db_dir = db_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("failed determine db directory"))?;
+    if !db_dir.exists() {
+        std::fs::create_dir_all(db_dir)?;
+    }
+
     let options = SweepOptions {
         theme: args.theme,
         tty_path: args.tty_path,
@@ -75,7 +82,7 @@ async fn main() -> Result<(), Error> {
             print_items(&items);
         }
         ArgsSubcommand::Update(args) if args.show_db_path => {
-            print!("{}", db_path.canonicalize()?.to_string_lossy())
+            print!("{}", db_path.to_string_lossy())
         }
         ArgsSubcommand::Update(args) => {
             let history = History::new(db_path).await?;
