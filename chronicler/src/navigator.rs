@@ -251,6 +251,11 @@ impl NavigatorMode for CmdHistoryMode {
             TAG_GOTO_SESSION.to_owned(),
             "Go to parent directory".to_owned(),
         );
+        navigator.sweep.bind(
+            Key::chord("alt+g d")?,
+            TAG_GOTO_DIRECTORY.to_owned(),
+            "Go to current working directory of the command".to_owned(),
+        );
 
         // NOTE: I have not found a way to create static stream from connection
         //       pool even though it is clone-able.
@@ -285,14 +290,13 @@ impl NavigatorMode for CmdHistoryMode {
         navigator: &mut Navigator,
         tag: String,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
+        let current = navigator.sweep.items_current().await?;
+        let Some(NavigatorItem::History(entry)) = current else {
+            return Ok(None);
+        };
         match tag.as_str() {
-            TAG_GOTO_SESSION => {
-                let current = navigator.sweep.items_current().await?;
-                let Some(NavigatorItem::History(entry)) = current else {
-                    return Ok(None);
-                };
-                Ok(Some(CmdHistoryMode::new(Some(entry.session))))
-            }
+            TAG_GOTO_SESSION => Ok(Some(CmdHistoryMode::new(Some(entry.session)))),
+            TAG_GOTO_DIRECTORY => Ok(Some(PathMode::new(entry.cwd.into(), String::new()))),
             _ => Ok(None),
         }
     }
@@ -437,6 +441,7 @@ const TAG_COMMAND_HISTORY_MODE: &str = "chronicler.mode.cmd";
 const TAG_COMPLETE: &str = "chronicler.complete";
 const TAG_GOTO_PARENT: &str = "chronicler.goto.parent";
 const TAG_GOTO_SESSION: &str = "chronicler.goto.session";
+const TAG_GOTO_DIRECTORY: &str = "chronicler.goto.directory";
 
 lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =
