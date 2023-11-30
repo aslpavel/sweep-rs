@@ -29,7 +29,7 @@ use surf_n_term::{
     encoder::ColorDepth,
     view::{
         Align, BoxView, Container, Flex, IntoView, Margins, Text, View, ViewContext,
-        ViewDeserializer,
+        ViewDeserializer, ViewLayoutStore,
     },
     Glyph, Key, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal,
     Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize, TerminalSurfaceExt,
@@ -1179,6 +1179,7 @@ where
     }))?;
 
     // render loop
+    let mut layout_store = ViewLayoutStore::new();
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, mut view| {
         // handle events
@@ -1321,10 +1322,10 @@ where
         let ctx = ViewContext::new(term)?;
         if let Some(state) = state_help.as_mut() {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
-                .in_scope(|| state_surf.draw_view(&ctx, state))?;
+                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?;
         } else {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
-                .in_scope(|| state_surf.draw_view(&ctx, &mut state))?;
+                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?;
         }
 
         Ok(TerminalAction::Wait)

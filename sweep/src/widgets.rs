@@ -1,7 +1,7 @@
 use crate::{common::LockExt, haystack_default_view, Haystack, HaystackPreview, Positions};
 use std::{
     cmp::max,
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt::Write as _,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -10,7 +10,7 @@ use surf_n_term::{
     rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
     view::{
         Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
-        Tree, View, ViewContext,
+        Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
     BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
     SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
@@ -543,11 +543,11 @@ impl Input {
 }
 
 impl<'a> View for &'a Input {
-    fn render<'b>(
+    fn render(
         &self,
         ctx: &ViewContext,
-        surf: &'b mut TerminalSurface<'b>,
-        layout: &Tree<Layout>,
+        surf: TerminalSurface<'_>,
+        layout: ViewLayout<'_>,
     ) -> Result<(), Error> {
         if layout.size().is_empty() {
             return Ok(());
@@ -571,10 +571,15 @@ impl<'a> View for &'a Input {
         Ok(())
     }
 
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+    fn layout(
+        &self,
+        _ctx: &ViewContext,
+        ct: BoxConstraint,
+        mut layout: ViewMutLayout<'_>,
+    ) -> Result<(), Error> {
         let size = ct.max().width * ct.max().height;
         if size < 2 {
-            return Tree::leaf(Layout::new());
+            return Ok(());
         }
         // fix render offset
         self.view_state.with_mut(|st| {
@@ -584,7 +589,8 @@ impl<'a> View for &'a Input {
                 st.offset = self.before.len() - size + 1;
             }
         });
-        Tree::leaf(Layout::new().with_size(ct.max()))
+        *layout = Layout::new().with_size(ct.max());
+        Ok(())
     }
 }
 
@@ -839,11 +845,11 @@ where
     T: ListItems + Send + Sync,
     T::Item: 'static,
 {
-    fn render<'b>(
+    fn render(
         &self,
         ctx: &ViewContext,
-        surf: &'b mut TerminalSurface<'b>,
-        layout: &Tree<Layout>,
+        surf: TerminalSurface<'_>,
+        layout: ViewLayout<'_>,
     ) -> Result<(), Error> {
         if layout.size().is_empty() {
             return Ok(());
@@ -852,7 +858,7 @@ where
 
         // render items and scroll-bar (last layout in the list)
         surf.erase(self.theme.list_default);
-        for item_layout in layout.children.iter() {
+        for item_layout in layout.children() {
             let row = item_layout.pos().row;
             let height = item_layout.size().height;
             let item_data = item_layout
@@ -863,29 +869,37 @@ where
             if item_data.pointed {
                 let mut surf = surf.view_mut(row..row + height, ..);
                 surf.erase(self.theme.list_selected);
-                surf.draw_view(ctx, &self.theme.list_selected_indicator)?;
+                surf.draw_view(ctx, None, &self.theme.list_selected_indicator)?;
             } else if item_data.marked {
                 let mut surf = surf.view_mut(row..row + height, ..);
-                surf.draw_view(ctx, &self.theme.list_marked_indicator)?;
+                surf.draw_view(ctx, None, &self.theme.list_marked_indicator)?;
             }
 
             item_data
                 .view
-                .render(ctx, &mut surf.as_mut(), item_layout)?;
+                .render(ctx, surf.as_mut(), item_layout.view())?;
         }
 
         Ok(())
     }
 
-    fn layout(&self, ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
+    fn layout(
+        &self,
+        ctx: &ViewContext,
+        ct: BoxConstraint,
+        mut layout: ViewMutLayout<'_>,
+    ) -> Result<(), Error> {
         // indicator (tag on the left side of the highlighted item)
-        let indicator_layout = self.theme.list_selected_indicator.layout(ctx, ct);
+        let indicator_layout =
+            self.theme
+                .list_selected_indicator
+                .layout_new(ctx, ct, layout.store_mut())?;
         let indicator_width = indicator_layout.size().width;
 
         let height = ct.max().height;
         let width = ct.max().width;
         if height < 1 || width < indicator_width {
-            return Tree::leaf(Layout::new());
+            return Ok(());
         }
 
         // adjust offset so item pointed by cursor will be visible
@@ -906,9 +920,9 @@ where
             Size::new(0, width - indicator_width),
             Size::new(height, width - indicator_width),
         );
-        let mut layouts: VecDeque<Tree<Layout>> = VecDeque::new();
         let mut children_height = 0;
         let mut children_removed = 0;
+        let mut children_count = 0;
         // looping over items starting from offset
         for index in offset..offset + 2 * height {
             let item = match self.items().get(index, self.theme.clone()) {
@@ -920,24 +934,25 @@ where
             let pointed = index == self.cursor;
             let marked = self.items.is_marked(&item);
             let view = item.into_view().boxed();
-            let mut layout = view.layout(ctx, child_ct);
+            let mut child_layout = layout.push_default();
+            children_count += 1;
+            view.layout(ctx, child_ct, child_layout.view_mut())?;
 
             // make sure item height is at least one, otherwise it will result
             // in missing cursor
-            let size = layout.size();
-            layout.value.set_size(Size {
+            let size = child_layout.size();
+            child_layout.set_size(Size {
                 height: max(size.height, 1),
                 ..size
             });
 
             // insert layout
-            children_height += layout.size().height;
-            layout.set_data(ListItemView {
+            children_height += child_layout.size().height;
+            child_layout.set_data(ListItemView {
                 view,
                 pointed,
                 marked,
             });
-            layouts.push_back(layout);
 
             if children_height > height {
                 // cursor is rendered, all height is taken
@@ -947,14 +962,15 @@ where
                 // cursor is not rendered, remove children from the top until
                 // we have some space available
                 while children_height > height {
-                    if index == self.cursor && layouts.len() == 1 {
+                    if index == self.cursor && children_count == 1 {
                         // do not remove the item if it is pointed by cursor
                         break;
                     }
-                    match layouts.pop_front() {
+                    match layout.pop() {
                         Some(layout) => {
                             children_height -= layout.size().height;
                             children_removed += 1;
+                            children_count -= 1;
                         }
                         None => break,
                     }
@@ -966,21 +982,21 @@ where
         self.view_state.with_mut(|st| {
             *st = ListState {
                 offset: offset + children_removed,
-                visible_count: layouts.len(),
+                visible_count: children_count,
             }
         });
 
         // compute view offsets
         let mut view_offset = 0;
-        for layout in layouts.iter_mut() {
-            layout.set_pos(Position::new(view_offset, indicator_width));
-            view_offset += layout.size().height;
+        let mut child_layout_opt = layout.child_mut();
+        while let Some(mut child_layout) = child_layout_opt.take() {
+            child_layout.set_pos(Position::new(view_offset, indicator_width));
+            view_offset += child_layout.size().height;
+            child_layout_opt = child_layout.sibling();
         }
 
-        Tree::new(
-            Layout::new().with_size(Size::new(height, width)),
-            layouts.into(),
-        )
+        *layout = Layout::new().with_size(Size::new(height, width));
+        Ok(())
     }
 }
 
@@ -993,11 +1009,11 @@ struct ListScrollBar {
 }
 
 impl View for ListScrollBar {
-    fn render<'a>(
+    fn render(
         &self,
         ctx: &ViewContext,
-        surf: &'a mut TerminalSurface<'a>,
-        layout: &Tree<Layout>,
+        surf: TerminalSurface<'_>,
+        layout: ViewLayout<'_>,
     ) -> Result<(), Error> {
         let state = self.state.with(|st| *st);
         ScrollBar::new(
@@ -1010,8 +1026,14 @@ impl View for ListScrollBar {
         .render(ctx, surf, layout)
     }
 
-    fn layout(&self, _ctx: &ViewContext, ct: BoxConstraint) -> Tree<Layout> {
-        Tree::leaf(Layout::new().with_size(Size::new(ct.max().height, 1)))
+    fn layout(
+        &self,
+        _ctx: &ViewContext,
+        ct: BoxConstraint,
+        mut layout: ViewMutLayout<'_>,
+    ) -> Result<(), Error> {
+        *layout = Layout::new().with_size(Size::new(ct.max().height, 1));
+        Ok(())
     }
 }
 
