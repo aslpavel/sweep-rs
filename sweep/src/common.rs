@@ -79,7 +79,7 @@ where
             type Value = Vec<S::Value>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("sequence")
+                formatter.write_str("sequence or null")
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -92,9 +92,16 @@ where
                 }
                 Ok(items)
             }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Vec::new())
+            }
         }
 
-        deserializer.deserialize_seq(VecVisitor { seed: self.0 })
+        deserializer.deserialize_any(VecVisitor { seed: self.0 })
     }
 }
 
@@ -106,4 +113,24 @@ pub fn json_from_slice_seed<'de, 'a: 'de, S: DeserializeSeed<'de>>(
 
     let mut deserializer = Deserializer::new(SliceRead::new(slice));
     seed.deserialize(&mut deserializer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::de::StrRead;
+    use std::marker::PhantomData;
+
+    #[test]
+    fn test_vec_deseed() -> Result<(), anyhow::Error> {
+        let mut deserializer = serde_json::Deserializer::new(StrRead::new("[1, 2, 3]"));
+        let result = VecDeserializeSeed(PhantomData::<i32>).deserialize(&mut deserializer)?;
+        assert_eq!(result, vec![1, 2, 3]);
+
+        let mut deserializer = serde_json::Deserializer::new(StrRead::new("null"));
+        let result = VecDeserializeSeed(PhantomData::<i32>).deserialize(&mut deserializer)?;
+        assert_eq!(result, Vec::<i32>::new());
+
+        Ok(())
+    }
 }

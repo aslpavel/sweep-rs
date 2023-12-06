@@ -1134,18 +1134,18 @@ mod tests {
         let candidate_string = serde_json::to_string(&candidate)?;
         let value_string = serde_json::to_string(&value)?;
         // note that glyph uses pointer equality
-        println!("=== mark ===: 1");
+        println!("1.");
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
             serde_json::to_value(ctx.candidate_from_json(candidate_string.as_bytes())?).unwrap()
         );
-        println!("=== mark ===: 2");
+        println!("2.");
         println!("{}", value_string);
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
             serde_json::to_value(ctx.candidate_from_json(value_string.as_bytes())?).unwrap(),
         );
-        println!("=== mark ===: 3");
+        println!("3.");
         assert_eq!(
             serde_json::to_value(&candidate).unwrap(),
             serde_json::to_value(ctx.candidate_from_value(value)?).unwrap()
