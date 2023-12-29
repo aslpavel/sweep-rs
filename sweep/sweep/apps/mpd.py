@@ -222,7 +222,7 @@ class Database:
         album_name = song.album or ""
         albums = self.artists.get(artist)
         if albums is None:
-            albums = {}
+            albums = dict[str, Album]()
             self.artists[artist] = albums
         album = albums.get(album_name)
         if album is None:
