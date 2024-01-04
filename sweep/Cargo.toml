@@ -3,7 +3,7 @@ authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 build = "build.rs"
 edition = "2021"
 name = "sweep"
-version = "0.15.5"
+version = "0.15.6"
 include = ["**/*.rs", "src/icons.json", "Cargo.toml", "Cargo.lock", "README.md"]
 
 [lib]

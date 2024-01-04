@@ -130,8 +130,15 @@ enum SweepRequest<H> {
         position: usize,
     },
     ScorerByName(Option<String>, oneshot::Sender<bool>),
+    ScorerSet(ScorerBuilder),
     PreviewSet(Option<bool>),
     FooterSet(Option<Arc<dyn View>>),
+    HaystackExtend(Vec<H>),
+    HaystackClear,
+    HaystackReverse,
+    RankerKeepOrder(Option<bool>),
+    StatePush,
+    StatePop,
 }
 
 #[derive(Clone, Debug)]
@@ -178,6 +185,16 @@ where
         self.waker.clone()
     }
 
+    /// Create new state and put on the top of the stack of active states
+    pub fn state_push(&self) {
+        self.send_request(SweepRequest::StatePush)
+    }
+
+    /// Remove state at the top of the stack and active on below it
+    pub fn state_pop(&self) {
+        self.send_request(SweepRequest::StatePop)
+    }
+
     /// Toggle preview associated with the current item
     pub fn preview_set(self, value: Option<bool>) {
         self.send_request(SweepRequest::PreviewSet(value));
@@ -189,8 +206,8 @@ where
         HS: IntoIterator,
         H: From<HS::Item>,
     {
-        self.ranker
-            .haystack_extend(items.into_iter().map(From::from).collect())
+        let items = items.into_iter().map(From::from).collect();
+        self.send_request(SweepRequest::HaystackExtend(items))
     }
 
     /// Extend list of searchable items from stream
@@ -210,7 +227,7 @@ where
 
     /// Clear list of searchable items
     pub fn items_clear(&self) {
-        self.ranker.haystack_clear()
+        self.send_request(SweepRequest::HaystackClear)
     }
 
     /// Get currently selected items
@@ -229,7 +246,7 @@ where
 
     /// Reverse haystack
     pub fn items_reverse(&self) {
-        self.ranker.haystack_reverse()
+        self.send_request(SweepRequest::HaystackReverse)
     }
 
     /// Set needle to the specified string
@@ -246,12 +263,12 @@ where
 
     /// Set scorer used for ranking
     pub fn scorer_set(&self, scorer: ScorerBuilder) {
-        self.ranker.scorer_set(scorer)
+        self.send_request(SweepRequest::ScorerSet(scorer))
     }
 
     /// Whether to keep order of elements or not
     pub fn keep_order(&self, toggle: Option<bool>) {
-        self.ranker.keep_order(toggle)
+        self.send_request(SweepRequest::RankerKeepOrder(toggle))
     }
 
     /// Switch scorer, if name is not provided next scorer is chosen
@@ -313,7 +330,6 @@ where
 }
 
 pub struct SweepInner<H: Haystack> {
-    ranker: Ranker<H>,
     waker: TerminalWaker,
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
@@ -333,31 +349,17 @@ impl<H: Haystack> SweepInner<H> {
         let term = SystemTerminal::open(&options.tty_path)
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
-        let ranker = Ranker::new({
-            let waker = waker.clone();
-            move |_| waker.wake().is_ok()
-        });
-        ranker.scorer_set(options.scorers[0].clone());
-        ranker.keep_order(Some(options.keep_order));
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
-            let ranker = ranker.clone();
             move || {
-                sweep_ui_worker(
-                    options,
-                    term,
-                    ranker,
-                    requests_recv,
-                    events_send,
-                    haystack_context,
+                sweep_ui_worker(options, term, requests_recv, events_send, haystack_context).map(
+                    |result| {
+                        let _ = terminate_send.send(());
+                        result
+                    },
                 )
-                .map(|result| {
-                    let _ = terminate_send.send(());
-                    result
-                })
             }
         })?;
         Ok(SweepInner {
-            ranker,
             waker,
             ui_worker: Some(worker),
             requests: requests_send,
@@ -578,6 +580,24 @@ where
             }
         });
 
+        // state_push
+        peer.register("state_push", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                sweep.state_push();
+                future::ok(Value::Null)
+            }
+        });
+
+        // state_push
+        peer.register("state_pop", {
+            let sweep = self.clone();
+            move |_params: Value| {
+                sweep.state_pop();
+                future::ok(Value::Null)
+            }
+        });
+
         // setup
         setup(peer.clone());
 
@@ -789,6 +809,24 @@ impl<H> SweepState<H>
 where
     H: Haystack,
 {
+    fn new_from_options(
+        options: &SweepOptions,
+        waker: TerminalWaker,
+        haystack_context: H::Context,
+    ) -> Self {
+        let ranker = Ranker::new(move |_| waker.wake().is_ok());
+        ranker.scorer_set(options.scorers[0].clone());
+        ranker.keep_order(Some(options.keep_order));
+        SweepState::new(
+            options.prompt.clone(),
+            options.prompt_icon.clone(),
+            ranker,
+            options.theme.clone(),
+            options.scorers.clone(),
+            haystack_context,
+        )
+    }
+
     fn new(
         prompt: String,
         prompt_icon: Option<Glyph>,
@@ -1120,7 +1158,6 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
 fn sweep_ui_worker<H>(
     mut options: SweepOptions,
     mut term: SystemTerminal,
-    ranker: Ranker<H>,
     requests: Receiver<SweepRequest<H>>,
     events: mpsc::UnboundedSender<SweepEvent<H>>,
     haystack_context: H::Context,
@@ -1159,14 +1196,8 @@ where
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
 
-    let mut state = SweepState::new(
-        options.prompt.clone(),
-        options.prompt_icon.clone(),
-        ranker,
-        options.theme.clone(),
-        options.scorers,
-        haystack_context,
-    );
+    let mut state = SweepState::new_from_options(&options, term.waker(), haystack_context.clone());
+    let mut state_stack: Vec<SweepState<H>> = Vec::new();
     let mut state_help: Option<SweepState<ActionDesc>> = None;
 
     let sweep_size = Size {
@@ -1269,6 +1300,27 @@ where
                             });
                         }
                         FooterSet(view) => state.footer = view,
+                        ScorerSet(scorer) => state.ranker.scorer_set(scorer),
+                        HaystackExtend(items) => state.ranker.haystack_extend(items),
+                        HaystackClear => state.ranker.haystack_clear(),
+                        HaystackReverse => state.ranker.haystack_reverse(),
+                        RankerKeepOrder(toggle) => state.ranker.keep_order(toggle),
+                        StatePush => {
+                            let state_old = std::mem::replace(
+                                &mut state,
+                                SweepState::new_from_options(
+                                    &options,
+                                    term.waker(),
+                                    haystack_context.clone(),
+                                ),
+                            );
+                            state_stack.push(state_old);
+                        }
+                        StatePop => {
+                            if let Some(state_new) = state_stack.pop() {
+                                state = state_new;
+                            }
+                        }
                     }
                 }
             }

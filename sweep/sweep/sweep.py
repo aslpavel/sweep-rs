@@ -808,6 +808,14 @@ class Sweep(Generic[I]):
             self._binds.pop(tag, None)
         await self._peer.bind(key=key, tag=tag, desc=desc)
 
+    async def state_push(self) -> None:
+        """Push new empty state"""
+        await self._peer.state_push()
+
+    async def state_pop(self) -> None:
+        """Pop previous state from the stack"""
+        await self._peer.state_pop()
+
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
     """Create unix server socket and accept one connection"""
