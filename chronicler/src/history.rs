@@ -6,7 +6,7 @@ use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
-    FromRow, Row, SqlitePool,
+    FromRow, SqlitePool,
 };
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
@@ -228,7 +228,7 @@ impl History {
         let mut conn = self.pool.acquire().await?;
         match entry.id {
             None => {
-                let id = sqlx::query(INSERT_QUERY)
+                let result = sqlx::query(INSERT_QUERY)
                     .bind(entry.cmd)
                     .bind(entry.status)
                     .bind(entry.cwd)
@@ -237,10 +237,10 @@ impl History {
                     .bind(entry.start_ts)
                     .bind(entry.end_ts)
                     .bind(entry.session)
-                    .fetch_one(&mut *conn)
+                    .execute(&mut *conn)
                     .await
                     .context("insert query")?;
-                Ok(id.try_get(0)?)
+                Ok(result.last_insert_rowid())
             }
             Some(id) => {
                 sqlx::query(UPDATE_QUERY)
@@ -307,7 +307,7 @@ SELECT cwd as path, COUNT(cwd) as count FROM history GROUP BY cwd ORDER BY COUNT
 "#;
 
 const INSERT_QUERY: &str = r#"
-INSERT OR ABORT INTO history (cmd, return, cwd, hostname, user, start_ts, end_ts, session)
+INSERT INTO history (cmd, return, cwd, hostname, user, start_ts, end_ts, session)
 VALUES (
     $1, -- cmd
     COALESCE($2, -1), -- return
@@ -317,7 +317,7 @@ VALUES (
     $6, -- start_ts
     COALESCE($7, $6), -- end_ts
     $8  -- session
-) RETURNING id;
+);
 "#;
 
 const UPDATE_QUERY: &str = r#"

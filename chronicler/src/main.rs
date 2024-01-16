@@ -93,7 +93,9 @@ async fn main() -> Result<(), Error> {
             } else {
                 update_str.parse()?
             };
+            tracing::info!(?update, "[main.update]");
             let id = history.update(update).await?;
+            tracing::info!(?id, "[main.update]");
             history.close().await?;
             print!("{id}")
         }
