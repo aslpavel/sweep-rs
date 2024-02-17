@@ -982,6 +982,7 @@ where
             .lookup_state(&mut self.key_map_state, key)
             .cloned()
         {
+            tracing::debug!(?action, "[SweepState.handle_key]");
             // do not generate Backspace, when input is not empty
             let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
             if key == backspace && self.input.get().count() == 0 {

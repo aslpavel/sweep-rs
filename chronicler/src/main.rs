@@ -67,7 +67,9 @@ async fn main() -> Result<(), Error> {
     match args.subcommand {
         ArgsSubcommand::Cmd(_args) => {
             let mut navigator = Navigator::new(options, db_path).await?;
-            let items = navigator.run(query, CmdHistoryMode::new(None)).await?;
+            let items = navigator
+                .run(query, CmdHistoryMode::new(None, None))
+                .await?;
             std::mem::drop(navigator);
             print_items(&items);
         }

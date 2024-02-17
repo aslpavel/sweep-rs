@@ -195,8 +195,9 @@ impl Navigator {
                 SweepEvent::Resize(_) => {}
                 SweepEvent::Select(result) => return Ok(result),
                 SweepEvent::Bind(tag) => {
+                    tracing::debug!(?tag, "[Navigator.run]");
                     let mode_next = match tag.as_str() {
-                        TAG_COMMAND_HISTORY_MODE => Some(CmdHistoryMode::new(None)),
+                        TAG_COMMAND_HISTORY_MODE => Some(CmdHistoryMode::new(None, None)),
                         TAG_PATH_HISTORY_MODE => Some(PathHistoryMode::new()),
                         _ => mode.handler(self, tag).await?,
                     };
@@ -230,12 +231,13 @@ pub trait NavigatorMode {
 
 pub struct CmdHistoryMode {
     session: Option<String>,
+    cwd: Option<String>,
 }
 
 impl CmdHistoryMode {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(session: Option<String>) -> Box<dyn NavigatorMode> {
-        Box::new(Self { session })
+    pub fn new(session: Option<String>, cwd: Option<String>) -> Box<dyn NavigatorMode> {
+        Box::new(Self { session, cwd })
     }
 }
 
@@ -249,32 +251,38 @@ impl NavigatorMode for CmdHistoryMode {
         navigator.sweep.bind(
             Key::chord("alt+g s")?,
             TAG_GOTO_SESSION.to_owned(),
-            "Go to parent directory".to_owned(),
+            "Go to session of the current command".to_owned(),
         );
         navigator.sweep.bind(
             Key::chord("alt+g d")?,
             TAG_GOTO_DIRECTORY.to_owned(),
             "Go to current working directory of the command".to_owned(),
         );
+        navigator.sweep.bind(
+            Key::chord("alt+g c")?,
+            TAG_FILTER_CWD.to_owned(),
+            "Keep only commands that were executed in the current directory".to_owned(),
+        );
 
-        // NOTE: I have not found a way to create static stream from connection
-        //       pool even though it is clone-able.
         let history = if let Some(session) = &self.session {
-            navigator
-                .history
-                .entries_session(session.clone())
-                .map_ok(NavigatorItem::History)
-                .collect::<Vec<_>>()
-                .await
+            navigator.history.entries_session(session.clone()).boxed()
         } else {
-            navigator
-                .history
-                .entries_unique_cmd()
+            navigator.history.entries_unique_cmd().boxed()
+        };
+        let history = if let Some(cwd) = self.cwd.clone() {
+            tracing::debug!(?cwd, "[CmdHistoryMode.enter] filter cwd");
+            history
+                .try_filter(move |entry| future::ready(entry.cwd == cwd))
+                .boxed()
+        } else {
+            history
+        };
+        navigator.list_update(stream::iter(
+            history
                 .map_ok(NavigatorItem::History)
                 .collect::<Vec<_>>()
-                .await
-        };
-        navigator.list_update(stream::iter(history));
+                .await,
+        ));
         Ok(())
     }
 
@@ -290,13 +298,36 @@ impl NavigatorMode for CmdHistoryMode {
         navigator: &mut Navigator,
         tag: String,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
-        let current = navigator.sweep.items_current().await?;
-        let Some(NavigatorItem::History(entry)) = current else {
-            return Ok(None);
-        };
         match tag.as_str() {
-            TAG_GOTO_SESSION => Ok(Some(CmdHistoryMode::new(Some(entry.session)))),
-            TAG_GOTO_DIRECTORY => Ok(Some(PathMode::new(entry.cwd.into(), String::new()))),
+            TAG_GOTO_SESSION => {
+                let session = if self.session.is_none() {
+                    let current = navigator.sweep.items_current().await?;
+                    let Some(NavigatorItem::History(entry)) = current else {
+                        return Ok(None);
+                    };
+                    Some(entry.session)
+                } else {
+                    None
+                };
+                Ok(Some(CmdHistoryMode::new(session, None)))
+            }
+            TAG_FILTER_CWD => {
+                let dir = if self.cwd.is_none() {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|dir| dir.to_string_lossy().into_owned())
+                } else {
+                    None
+                };
+                Ok(Some(CmdHistoryMode::new(self.session.clone(), dir)))
+            }
+            TAG_GOTO_DIRECTORY => {
+                let current = navigator.sweep.items_current().await?;
+                let Some(NavigatorItem::History(entry)) = current else {
+                    return Ok(None);
+                };
+                Ok(Some(PathMode::new(entry.cwd.into(), String::new())))
+            }
             _ => Ok(None),
         }
     }
@@ -442,6 +473,7 @@ const TAG_COMPLETE: &str = "chronicler.complete";
 const TAG_GOTO_PARENT: &str = "chronicler.goto.parent";
 const TAG_GOTO_SESSION: &str = "chronicler.goto.session";
 const TAG_GOTO_DIRECTORY: &str = "chronicler.goto.directory";
+const TAG_FILTER_CWD: &str = "chronicler.filter.cwd";
 
 lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =
