@@ -1029,7 +1029,7 @@ impl FromStr for FieldSelector {
 mod tests {
     use super::*;
     use serde_json::json;
-    use surf_n_term::{Face, Glyph, Path};
+    use surf_n_term::Path;
 
     #[test]
     fn test_select() -> Result<(), Error> {
