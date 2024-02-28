@@ -231,13 +231,16 @@ pub trait NavigatorMode {
 
 pub struct CmdHistoryMode {
     session: Option<String>,
-    cwd: Option<String>,
+    filter_path: Option<String>,
 }
 
 impl CmdHistoryMode {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(session: Option<String>, cwd: Option<String>) -> Box<dyn NavigatorMode> {
-        Box::new(Self { session, cwd })
+    pub fn new(session: Option<String>, filter_path: Option<String>) -> Box<dyn NavigatorMode> {
+        Box::new(Self {
+            session,
+            filter_path,
+        })
     }
 }
 
@@ -269,19 +272,29 @@ impl NavigatorMode for CmdHistoryMode {
         } else {
             navigator.history.entries_unique_cmd().boxed()
         };
-        let history = if let Some(cwd) = self.cwd.clone() {
-            tracing::debug!(?cwd, "[CmdHistoryMode.enter] filter cwd");
+        let history = if let Some(filter_path) = self.filter_path.clone() {
+            tracing::debug!(?filter_path, "[CmdHistoryMode.enter] filter path");
             history
-                .try_filter(move |entry| future::ready(entry.cwd == cwd))
+                .try_filter(move |entry| future::ready(entry.cwd == filter_path))
                 .boxed()
         } else {
             history
         };
+
+        // keep commands executed in the current directory at the top
+        let cwd = std::env::current_dir()
+            .map_or_else(|_| String::new(), |cwd| cwd.to_string_lossy().into_owned());
+        let mut history = history.collect::<Vec<_>>().await;
+        history.sort_by_key(|entry| {
+            entry
+                .as_ref()
+                .map_or_else(|_| true, |entry| entry.cwd != cwd)
+        });
+
         navigator.list_update(stream::iter(
             history
-                .map_ok(NavigatorItem::History)
-                .collect::<Vec<_>>()
-                .await,
+                .into_iter()
+                .map(|entry| entry.map(NavigatorItem::History)),
         ));
         Ok(())
     }
@@ -312,7 +325,7 @@ impl NavigatorMode for CmdHistoryMode {
                 Ok(Some(CmdHistoryMode::new(session, None)))
             }
             TAG_FILTER_CWD => {
-                let dir = if self.cwd.is_none() {
+                let dir = if self.filter_path.is_none() {
                     std::env::current_dir()
                         .ok()
                         .map(|dir| dir.to_string_lossy().into_owned())
