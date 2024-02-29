@@ -106,9 +106,8 @@ async fn main() -> Result<(), Error> {
             let chronicler_path = std::env::current_exe()?;
             let chronicler_bin = chronicler_path.to_str().unwrap_or("chronicler");
             let setup = match args.shell {
-                Shell::Bash => {
-                    include_str!("../scripts/setup.sh").replace(CHRONICLER_PATTERN, chronicler_bin)
-                }
+                Shell::Bash => include_str!("../scripts/bash-integration.sh")
+                    .replace(CHRONICLER_PATTERN, chronicler_bin),
             };
             print!("{setup}")
         }

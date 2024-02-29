@@ -3,23 +3,33 @@ _chronicler_db=$("$_chronicler_bin" update --show-db-path)
 
 # chronicler session
 if [ -f /proc/sys/kernel/random/uuid ]; then
-    _chronicler_hist_session=$(< /proc/sys/kernel/random/uuid)
+    _chronicler_session=$(< /proc/sys/kernel/random/uuid)
 else
-    _chronicler_hist_session=$(dd if=/dev/urandom bs=33 count=1 2>/dev/null | base64)
+    _chronicler_session=$(dd if=/dev/urandom bs=33 count=1 2>/dev/null | base64)
 fi
 
-# pre-exec command
+# get currently executing command
+function _chronicler_curr_cmd() {
+    local last_cmd
+    last_cmd=$(HISTTIMEFORMAT= builtin history 1)
+    last_cmd="${last_cmd#*[[:digit:]]*[[:space:]]}" # remove leading history number and spaces
+    builtin printf "%s" "${last_cmd//[[:cntrl:]]}"  # remove any control characters
+}
+
+# create entry in the chronicler database
 function _chronicler_hist_start {
-    local cmd="$1"
-    if [[ "$_chronicler_hist_cmd" == "$cmd" ]]; then
+    local curr_cmd
+    curr_cmd=$(_chronicler_curr_cmd)
+    if [[ "$_chronicler_prev_cmd" == "$curr_cmd" ]]; then
+        unset _chronicler_hist_id
         return
     fi
-    _chronicler_hist_cmd="$cmd"
+    _chronicler_prev_cmd="$curr_cmd"
     local now="${EPOCHREALTIME:-$(date +%s.01)}"
     local __sep__=$'\x0c'
     _chronicler_hist_id=$("$_chronicler_bin" update <<-EOF
 cmd
-$cmd
+$curr_cmd
 $__sep__
 cwd
 $PWD
@@ -37,15 +47,15 @@ end_ts
 $now
 $__sep__
 session
-$_chronicler_hist_session
+$_chronicler_session
 EOF
 )
 }
-if [[ ! " ${preexec_functions[*]} " =~ " _chronicler_hist_start " ]]; then
-    preexec_functions+=(_chronicler_hist_start)
+if [[ ! $PS0 =~ "_chronicler_hist_start" ]]; then
+    PS0="${PS0}\$(_chronicler_hist_start)"
 fi
 
-# post-exec command
+# update entry in the chronicler database
 function _chronicler_hist_end {
     local return_value="$?"
     if [[ -z "$_chronicler_hist_id" ]]; then
@@ -66,11 +76,11 @@ return
 $return_value
 EOF
 }
-if [[ ! " ${precmd_functions[*]} " =~ " _chronicler_hist_end " ]]; then
-    precmd_functions+=(_chronicler_hist_end)
+if [[ ! " ${PROMPT_COMMAND[*]} " =~ ' _chronicler_hist_end ' ]]; then
+    PROMPT_COMMAND+=(_chronicler_hist_end)
 fi
 
-function _chronicler_readline_extend() {
+function _chronicler_readline_extend {
     if [[ -z "$READLINE_LINE" ]]; then
         READLINE_LINE=$1
     else
@@ -78,9 +88,10 @@ function _chronicler_readline_extend() {
     fi
 }
 
-function _chronicler_complete() {
+function _chronicler_complete {
     READLINE_LINE=""
     IFS=$'\x0c' read -ra items <<< "$1"
+    local tag item item_escape mimetype
     for item in "${items[@]}"; do
         tag="${item:0:2}"
         item="${item:2}"
