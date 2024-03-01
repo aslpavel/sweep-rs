@@ -10,15 +10,15 @@ fi
 
 # create pipe bound to fd=42 to send id from `_chronicler_hist_start` to `_chronicler_hist_end`
 _chronicler_pipe="/tmp/chronicler-$_chronicler_session.pipe"
-mkfifo $_chronicler_pipe
-exec 42<>$_chronicler_pipe
-rm -f $_chronicler_pipe
+mkfifo "$_chronicler_pipe"
+exec 42<>"$_chronicler_pipe"
+rm -f "$_chronicler_pipe"
 unset _chronicler_pipe
 
 # get currently executing command
 function _chronicler_curr_cmd() {
     local last_cmd
-    last_cmd=$(HISTTIMEFORMAT= builtin history 1)
+    last_cmd=$(HISTTIMEFORMAT="" builtin history 1)
     last_cmd="${last_cmd##*([[:space:]])+([[:digit:]])+([[:space:]])}" # remove leading history number and spaces
     builtin printf "%s" "${last_cmd//[[:cntrl:]]}"  # remove any control characters
 }
@@ -56,7 +56,7 @@ session
 $_chronicler_session
 EOF
 )
-    printf "$hist_id\n" >&42
+    printf "%s\n" "$hist_id" >&42
 }
 if [[ ! $PS0 =~ "_chronicler_hist_start" ]]; then
     PS0="${PS0}\$(_chronicler_hist_start)"
@@ -66,7 +66,7 @@ fi
 function _chronicler_hist_end {
     local return_value="$?" # keep this the first command
     local hist_id
-    read -t 0.01 -u 42 hist_id
+    read -r -t 0.01 -u 42 hist_id
     if [[ -z "$hist_id" ]]; then
         return
     fi
