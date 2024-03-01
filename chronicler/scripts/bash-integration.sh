@@ -8,26 +8,32 @@ else
     _chronicler_session=$(dd if=/dev/urandom bs=33 count=1 2>/dev/null | base64)
 fi
 
+# create pipe bound to fd=42 to send id from `_chronicler_hist_start` to `_chronicler_hist_end`
+_chronicler_pipe="/tmp/chronicler-$_chronicler_session.pipe"
+mkfifo $_chronicler_pipe
+exec 42<>$_chronicler_pipe
+rm -f $_chronicler_pipe
+unset _chronicler_pipe
+
 # get currently executing command
 function _chronicler_curr_cmd() {
     local last_cmd
     last_cmd=$(HISTTIMEFORMAT= builtin history 1)
-    last_cmd="${last_cmd#*[[:digit:]]*[[:space:]]}" # remove leading history number and spaces
+    last_cmd="${last_cmd##*([[:space:]])+([[:digit:]])+([[:space:]])}" # remove leading history number and spaces
     builtin printf "%s" "${last_cmd//[[:cntrl:]]}"  # remove any control characters
 }
 
 # create entry in the chronicler database
 function _chronicler_hist_start {
-    local curr_cmd
+    local curr_cmd hist_id
     curr_cmd=$(_chronicler_curr_cmd)
     if [[ "$_chronicler_prev_cmd" == "$curr_cmd" ]]; then
-        unset _chronicler_hist_id
         return
     fi
     _chronicler_prev_cmd="$curr_cmd"
     local now="${EPOCHREALTIME:-$(date +%s.01)}"
     local __sep__=$'\x0c'
-    _chronicler_hist_id=$("$_chronicler_bin" update <<-EOF
+    hist_id=$("$_chronicler_bin" update <<-EOF
 cmd
 $curr_cmd
 $__sep__
@@ -50,6 +56,7 @@ session
 $_chronicler_session
 EOF
 )
+    printf "$hist_id\n" >&42
 }
 if [[ ! $PS0 =~ "_chronicler_hist_start" ]]; then
     PS0="${PS0}\$(_chronicler_hist_start)"
@@ -57,17 +64,17 @@ fi
 
 # update entry in the chronicler database
 function _chronicler_hist_end {
-    local return_value="$?"
-    if [[ -z "$_chronicler_hist_id" ]]; then
+    local return_value="$?" # keep this the first command
+    local hist_id
+    read -t 0.01 -u 42 hist_id
+    if [[ -z "$hist_id" ]]; then
         return
     fi
     local now=${EPOCHREALTIME:-$(date +%s.01)}
-    local id=$_chronicler_hist_id
-    unset _chronicler_hist_id
     local __sep__=$'\x0c'
     "$_chronicler_bin" update <<-EOF > /dev/null
 id
-$id
+$hist_id
 $__sep__
 end_ts
 $now
