@@ -1,3 +1,12 @@
+[project]
+name = "sweep"
+version = "0.1.0"
+description = "RPC binding to sweep binary"
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
 [tool.pyright]
 typeCheckingMode = "strict"
 extraPaths = ["scripts"]

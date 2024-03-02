@@ -1,4 +1,4 @@
-use crate::navigator::FAILED_ICON;
+use crate::navigator::{NavigatorContext, FAILED_ICON, FOLDER_ICON};
 
 use super::DATE_FORMAT;
 use anyhow::{Context, Error};
@@ -41,7 +41,7 @@ impl HistoryEntry {
 }
 
 impl Haystack for HistoryEntry {
-    type Context = ();
+    type Context = NavigatorContext;
 
     fn haystack_scope<S>(&self, scope: S)
     where
@@ -52,13 +52,21 @@ impl Haystack for HistoryEntry {
 
     fn view(
         &self,
-        _ctx: &Self::Context,
+        ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &Theme,
     ) -> Box<dyn View> {
         let cmd = haystack_default_view(self, positions, theme);
 
         let mut right = Text::new();
+        if self.cwd == ctx.cwd.as_str() {
+            right.with_face(
+                Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),
+                |right| {
+                    right.put_glyph(FOLDER_ICON.clone());
+                },
+            );
+        }
         if self.status != 0 {
             right.with_face(
                 Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),

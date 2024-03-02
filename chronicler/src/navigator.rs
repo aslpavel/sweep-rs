@@ -12,6 +12,7 @@ use std::{
     io::Write,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use sweep::{
     surf_n_term::{Glyph, Key},
@@ -22,6 +23,11 @@ use sweep::{
 pub enum NavigatorItem {
     Path(PathItem),
     History(HistoryEntry),
+}
+
+#[derive(Debug, Clone)]
+pub struct NavigatorContext {
+    pub cwd: Arc<String>,
 }
 
 impl NavigatorItem {
@@ -46,7 +52,7 @@ impl NavigatorItem {
 }
 
 impl Haystack for NavigatorItem {
-    type Context = ();
+    type Context = NavigatorContext;
 
     fn haystack_scope<S>(&self, scope: S)
     where
@@ -103,7 +109,13 @@ pub struct Navigator {
 
 impl Navigator {
     pub async fn new(options: SweepOptions, db_path: impl AsRef<Path>) -> Result<Self, Error> {
-        let sweep = Sweep::new((), options)?;
+        let ctx = NavigatorContext {
+            cwd: Arc::new(
+                std::env::current_dir()
+                    .map_or_else(|_| String::new(), |cwd| cwd.to_string_lossy().into_owned()),
+            ),
+        };
+        let sweep = Sweep::new(ctx, options)?;
         sweep.scorer_by_name(Some("substr".to_owned())).await?;
         sweep.bind(
             vec!["tab".parse()?],
@@ -503,7 +515,10 @@ lazy_static::lazy_static! {
         .expect("failed to find path navigation icon");
 
     pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("material-close-circle-outline")
-        .expect("faield to fined failed icon");
+        .expect("faield to find failed icon");
+
+    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("material-folder-open-outline")
+        .expect("faield to find folder icon");
 }
 
 /// Find longest existing path from the input and use reminder as query

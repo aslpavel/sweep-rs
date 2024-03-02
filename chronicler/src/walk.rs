@@ -1,4 +1,5 @@
 use super::DATE_FORMAT;
+use crate::navigator::NavigatorContext;
 use anyhow::Error;
 use futures::{
     ready,
@@ -96,7 +97,7 @@ impl fmt::Debug for PathItem {
 }
 
 impl Haystack for PathItem {
-    type Context = ();
+    type Context = NavigatorContext;
 
     fn haystack_scope<S>(&self, mut scope: S)
     where
