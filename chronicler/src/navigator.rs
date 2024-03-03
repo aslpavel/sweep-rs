@@ -450,9 +450,11 @@ impl NavigatorMode for PathHistoryMode {
                 path: current_dir.clone(),
                 metadata: None,
                 ignore: None,
+                visits: None,
             }));
         };
         let current_dir = current_dir.unwrap_or_default();
+        let mut current_visits = 0;
         navigator
             .history
             .path_entries()
@@ -465,12 +467,18 @@ impl NavigatorMode for PathHistoryMode {
                             path,
                             metadata: None,
                             ignore: None,
+                            visits: Some(item.count),
                         }))
+                    } else {
+                        current_visits = item.count;
                     }
                 }
                 future::ready(())
             })
             .await;
+        if let Some(NavigatorItem::Path(entry)) = history.get_mut(0) {
+            entry.visits = Some(current_visits);
+        }
         navigator.list_update(stream::iter(history).map(Ok));
 
         Ok(())

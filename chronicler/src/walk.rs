@@ -9,7 +9,7 @@ use futures::{
 use globset::{GlobBuilder, GlobMatcher};
 use std::{
     collections::{HashSet, VecDeque},
-    fmt,
+    fmt::{self, Write},
     fs::Metadata,
     future::Future,
     os::unix::fs::MetadataExt,
@@ -18,7 +18,7 @@ use std::{
     task::Poll,
 };
 use sweep::{
-    surf_n_term::view::{Text, View},
+    surf_n_term::view::{BoxView, Flex, Justify, Text, View},
     Haystack,
 };
 use time::OffsetDateTime;
@@ -35,6 +35,8 @@ pub struct PathItem {
     pub metadata: Option<Metadata>,
     /// Ignore matcher
     pub ignore: Option<PathIgnoreArc>,
+    /// Number of visits (coming from history)
+    pub visits: Option<i64>,
 }
 
 impl PathItem {
@@ -69,6 +71,7 @@ impl PathItem {
                     metadata,
                     root_length: self.root_length,
                     ignore: ignore.clone(),
+                    visits: None,
                 };
                 if ignore
                     .as_ref()
@@ -111,6 +114,25 @@ impl Haystack for PathItem {
         if self.is_dir() {
             scope('/')
         }
+    }
+
+    fn view(
+        &self,
+        _ctx: &Self::Context,
+        positions: &sweep::Positions,
+        theme: &sweep::Theme,
+    ) -> BoxView<'static> {
+        let path = sweep::haystack_default_view(self, positions, theme);
+        let mut right = Text::new();
+        right.set_face(theme.list_inactive);
+        if let Some(visits) = self.visits {
+            write!(&mut right, "{visits} ").expect("in memory write failed");
+        }
+        Flex::row()
+            .justify(Justify::SpaceBetween)
+            .add_child(path)
+            .add_child(right)
+            .boxed()
     }
 
     fn preview(
@@ -169,6 +191,7 @@ pub fn walk<'caller>(
                 path: root,
                 metadata: metadata.ok(),
                 ignore,
+                visits: None,
             };
             bounded_unfold(64, Some(init), |item| async move {
                 let children = match item.unfold().await {
