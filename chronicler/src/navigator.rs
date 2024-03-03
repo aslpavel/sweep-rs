@@ -522,10 +522,10 @@ lazy_static::lazy_static! {
     static ref CMD_HISTORY_ICON: &'static Glyph = ICONS.get("material-console")
         .expect("failed to find path navigation icon");
 
-    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("material-close-circle-outline")
+    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("fluent-dismiss-circle")
         .expect("faield to find failed icon");
 
-    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("material-folder-open-outline")
+    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("fluent-folder")
         .expect("faield to find folder icon");
 }
 
