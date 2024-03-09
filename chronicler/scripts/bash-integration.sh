@@ -106,6 +106,9 @@ function _chronicler_complete {
         case "$tag" in
             D=) _chronicler_readline_extend "cd $item_escape";;
             F=)
+                if [[ ! -e $item ]]; then
+                    continue
+                fi
                 mimetype=$(file --mime-type --brief "$item")
                 if [[ $mimetype == text/* || $mimetype == "application/json" ]]; then
                     _chronicler_readline_extend "${EDITOR:-emacs} $item_escape"
