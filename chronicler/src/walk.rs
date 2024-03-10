@@ -108,9 +108,13 @@ impl Haystack for PathItem {
         S: FnMut(char),
     {
         let path = self.path.to_string_lossy();
-        let skip = if !ctx.home_dir.is_empty() && path.starts_with(ctx.home_dir.deref()) {
+        let home_dir_len = ctx.home_dir.chars().count();
+        let skip = if !ctx.home_dir.is_empty()
+            && self.root_length < home_dir_len
+            && path.starts_with(ctx.home_dir.deref())
+        {
             scope('~');
-            ctx.home_dir.chars().count()
+            home_dir_len - self.root_length
         } else {
             0
         };
