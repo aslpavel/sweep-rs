@@ -4,5 +4,6 @@
   "python.testing.pytestEnabled": false,
   "python.testing.unittestEnabled": true,
   "python.analysis.extraPaths": ["${workspaceFolder}/sweep/sweep"],
-  "python.analysis.diagnosticMode": "workspace"
+  "python.analysis.diagnosticMode": "workspace",
+  "cSpell.words": ["gruvbox"]
 }

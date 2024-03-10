@@ -43,7 +43,7 @@ impl HistoryEntry {
 impl Haystack for HistoryEntry {
     type Context = NavigatorContext;
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {
@@ -56,10 +56,10 @@ impl Haystack for HistoryEntry {
         positions: &sweep::Positions,
         theme: &Theme,
     ) -> Box<dyn View> {
-        let cmd = haystack_default_view(self, positions, theme);
+        let cmd = haystack_default_view(ctx, self, positions, theme);
 
         let mut right = Text::new();
-        if self.cwd == ctx.cwd.as_str() {
+        if self.cwd == *ctx.cwd {
             right.with_face(
                 Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),
                 |right| {

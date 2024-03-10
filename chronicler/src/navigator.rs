@@ -27,7 +27,8 @@ pub enum NavigatorItem {
 
 #[derive(Debug, Clone)]
 pub struct NavigatorContext {
-    pub cwd: Arc<String>,
+    pub cwd: Arc<str>,
+    pub home_dir: Arc<str>,
 }
 
 impl NavigatorItem {
@@ -54,14 +55,14 @@ impl NavigatorItem {
 impl Haystack for NavigatorItem {
     type Context = NavigatorContext;
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.haystack_scope(scope),
-            History(history) => history.haystack_scope(scope),
+            Path(path) => path.haystack_scope(ctx, scope),
+            History(history) => history.haystack_scope(ctx, scope),
         }
     }
 
@@ -110,10 +111,15 @@ pub struct Navigator {
 impl Navigator {
     pub async fn new(options: SweepOptions, db_path: impl AsRef<Path>) -> Result<Self, Error> {
         let ctx = NavigatorContext {
-            cwd: Arc::new(
-                std::env::current_dir()
-                    .map_or_else(|_| String::new(), |cwd| cwd.to_string_lossy().into_owned()),
-            ),
+            cwd: std::env::current_dir()
+                .map_or_else(
+                    |_| String::new(),
+                    |path| path.to_string_lossy().into_owned(),
+                )
+                .into(),
+            home_dir: dirs::home_dir()
+                .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
+                .into(),
         };
         let sweep = Sweep::new(ctx, options)?;
         sweep.scorer_by_name(Some("substr".to_owned())).await?;

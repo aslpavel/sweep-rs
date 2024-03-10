@@ -814,7 +814,7 @@ where
         waker: TerminalWaker,
         haystack_context: H::Context,
     ) -> Self {
-        let ranker = Ranker::new(move |_| waker.wake().is_ok());
+        let ranker = Ranker::new(haystack_context.clone(), move |_| waker.wake().is_ok());
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
         SweepState::new(
@@ -1024,7 +1024,7 @@ where
         let mut entries: Vec<_> = descriptions.into_values().collect();
         entries.sort_by_key(|desc| self.key_actions.get(&desc.name));
 
-        let ranker = Ranker::new(move |_| term_waker.wake().is_ok());
+        let ranker = Ranker::new((), move |_| term_waker.wake().is_ok());
         ranker.keep_order(Some(true));
         ranker.haystack_extend(entries);
         SweepState::new(

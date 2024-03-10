@@ -316,7 +316,7 @@ impl<'a> Iterator for SplitInclusive<'a> {
 impl Haystack for Candidate {
     type Context = CandidateContext;
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {

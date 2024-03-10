@@ -17,13 +17,13 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 
     /// Scope function is called with all characters one after another that will
     /// be searchable by [Scorer]
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
     where
         S: FnMut(char);
 
     /// Creates haystack view from matched positions and theme
-    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
-        haystack_default_view(self, positions, theme).boxed()
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
+        haystack_default_view(ctx, self, positions, theme).boxed()
     }
 
     /// Large preview of pointed item
@@ -62,14 +62,15 @@ impl HaystackPreview {
     }
 }
 
-pub fn haystack_default_view(
-    haystack: &impl Haystack,
+pub fn haystack_default_view<H: Haystack>(
+    ctx: &H::Context,
+    haystack: &H,
     positions: &Positions,
     theme: &Theme,
 ) -> Text {
     let mut text = Text::new();
     let mut index = 0;
-    haystack.haystack_scope(|char| {
+    haystack.haystack_scope(ctx, |char| {
         text.set_face(if positions.get(index) {
             theme.list_highlight
         } else {
@@ -84,7 +85,7 @@ pub fn haystack_default_view(
 impl Haystack for String {
     type Context = ();
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {
@@ -95,7 +96,7 @@ impl Haystack for String {
 impl Haystack for &'static str {
     type Context = ();
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {
@@ -121,7 +122,7 @@ pub trait Scorer: Send + Sync + Debug {
     fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool;
 
     /// Generic implementation over anything that implements `Haystack` trait.
-    fn score<H>(&self, haystack: H) -> Option<ScoreResult<H>>
+    fn score<H>(&self, ctx: &H::Context, haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
         Self: Sized,
@@ -129,7 +130,7 @@ pub trait Scorer: Send + Sync + Debug {
         HAYSTACK.with(|target| {
             let mut target = target.borrow_mut();
             target.clear();
-            haystack.haystack_scope(|char| target.extend(char::to_lowercase(char)));
+            haystack.haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
             let mut score = Score::MIN;
             let mut positions = Positions::new(target.len());
             self.score_ref(target.as_slice(), &mut score, &mut positions)
@@ -715,23 +716,23 @@ mod tests {
         let needle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
-        let result = scorer.score(" on/e two".to_string()).unwrap();
+        let result = scorer.score(&(), " on/e two".to_string()).unwrap();
         assert_eq!(result.positions, ps([1, 2, 4]));
         assert!((result.score.0 - 2.665).abs() < 0.001);
 
-        assert!(scorer.score("two".to_string()).is_none());
+        assert!(scorer.score(&(), "two".to_string()).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
         let needle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score(" one babababcd ".to_string()).unwrap();
+        let score = scorer.score(&(), " one babababcd ".to_string()).unwrap();
         assert_eq!(score.positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
 
         let needle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score("one".to_string()).unwrap();
+        let score = scorer.score(&(), "one".to_string()).unwrap();
         assert_eq!(score.positions, ps([0]));
     }
 

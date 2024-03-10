@@ -252,14 +252,14 @@ pub struct ActionDesc {
 impl Haystack for ActionDesc {
     type Context = ();
 
-    fn haystack_scope<S>(&self, scope: S)
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
         S: FnMut(char),
     {
         self.name.chars().for_each(scope);
     }
 
-    fn view(&self, _ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             (|| {
@@ -279,7 +279,7 @@ impl Haystack for ActionDesc {
         }
         Flex::row()
             .justify(Justify::SpaceBetween)
-            .add_flex_child(1.0, haystack_default_view(self, positions, theme))
+            .add_flex_child(1.0, haystack_default_view(ctx, self, positions, theme))
             .add_child(chords_text)
             .boxed()
     }

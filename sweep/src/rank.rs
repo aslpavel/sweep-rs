@@ -39,7 +39,7 @@ impl<H> Ranker<H>
 where
     H: Haystack,
 {
-    pub fn new<N>(notify: N) -> Self
+    pub fn new<N>(ctx: H::Context, notify: N) -> Self
     where
         N: Fn(Arc<RankedItems<H>>) -> bool + Send + 'static,
     {
@@ -49,7 +49,7 @@ where
             .name("sweep-ranker".to_string())
             .spawn({
                 let result = result.clone();
-                move || ranker_worker(receiver, result, notify)
+                move || ranker_worker(ctx, receiver, result, notify)
             })
             .expect("failed to start sweep-ranker thread");
         Self { sender, result }
@@ -106,6 +106,7 @@ where
 }
 
 fn ranker_worker<H, N>(
+    ctx: H::Context,
     receiver: Receiver<RankerCmd<H>>,
     result: Arc<Mutex<Arc<RankedItems<H>>>>,
     notify: N,
@@ -193,7 +194,7 @@ fn ranker_worker<H, N>(
                 matches.clear();
                 // score new matches
                 matches.extend((offset..haystack.with(|hs| hs.len())).rev().map(Match::new));
-                rank(scorer.clone(), &haystack, &mut matches, false);
+                rank(&ctx, scorer.clone(), &haystack, &mut matches, false);
                 // copy previous matches
                 matches.extend(matches_prev.iter().rev().cloned());
                 matches.reverse();
@@ -208,7 +209,7 @@ fn ranker_worker<H, N>(
                 matches.clear();
                 // score previous matches
                 matches.extend(matches_prev.iter().cloned());
-                rank(scorer.clone(), &haystack, &mut matches, !keep_order);
+                rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
                 matches
             }
             All => {
@@ -216,7 +217,7 @@ fn ranker_worker<H, N>(
                 matches.clear();
                 // score all haystack elements
                 matches.extend((0..haystack.with(|hs| hs.len())).map(Match::new));
-                rank(scorer.clone(), &haystack, &mut matches, !keep_order);
+                rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
                 matches
             }
         };
@@ -423,8 +424,13 @@ thread_local! {
     static TARGET: Cell<Vec<char>> = Default::default();
 }
 
-fn rank<S, H>(scorer: S, hastack: &Arc<RwLock<Vec<H>>>, matches: &mut Vec<Match>, sort: bool)
-where
+fn rank<S, H>(
+    ctx: &H::Context,
+    scorer: S,
+    hastack: &Arc<RwLock<Vec<H>>>,
+    matches: &mut Vec<Match>,
+    sort: bool,
+) where
     S: Scorer + Clone,
     H: Haystack,
 {
@@ -441,7 +447,7 @@ where
                     let mut target = target_cell.take();
                     target.clear();
                     haystack[item.haystack_index]
-                        .haystack_scope(|char| target.extend(char::to_lowercase(char)));
+                        .haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
                     let mut score = Score::MIN;
                     let mut positions = Positions::new(target.len());
                     if scorer.score_ref(target.as_slice(), &mut score, &mut positions) {
@@ -532,7 +538,7 @@ mod tests {
     fn ranker_test() -> Result<(), Error> {
         let timeout = Duration::from_millis(100);
         let (send, recv) = unbounded();
-        let ranker = Ranker::new(move |result| send.send(result).is_ok());
+        let ranker = Ranker::new((), move |result| send.send(result).is_ok());
 
         ranker.haystack_extend(vec!["one", "two", "tree"]);
         let result = recv.recv_timeout(timeout)?;

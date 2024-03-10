@@ -12,6 +12,7 @@ use std::{
     fmt::{self, Write},
     fs::Metadata,
     future::Future,
+    ops::Deref,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::Arc,
@@ -102,14 +103,20 @@ impl fmt::Debug for PathItem {
 impl Haystack for PathItem {
     type Context = NavigatorContext;
 
-    fn haystack_scope<S>(&self, mut scope: S)
+    fn haystack_scope<S>(&self, ctx: &Self::Context, mut scope: S)
     where
         S: FnMut(char),
     {
         let path = self.path.to_string_lossy();
+        let skip = if !ctx.home_dir.is_empty() && path.starts_with(ctx.home_dir.deref()) {
+            scope('~');
+            ctx.home_dir.chars().count()
+        } else {
+            0
+        };
         match path.get(self.root_length..) {
-            Some(path) => path.chars().for_each(&mut scope),
-            None => path.chars().for_each(&mut scope),
+            Some(path) => path.chars().skip(skip).for_each(&mut scope),
+            None => path.chars().skip(skip).for_each(&mut scope),
         }
         if self.is_dir() {
             scope('/')
@@ -118,11 +125,11 @@ impl Haystack for PathItem {
 
     fn view(
         &self,
-        _ctx: &Self::Context,
+        ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &sweep::Theme,
     ) -> BoxView<'static> {
-        let path = sweep::haystack_default_view(self, positions, theme);
+        let path = sweep::haystack_default_view(ctx, self, positions, theme);
         let mut right = Text::new();
         right.set_face(theme.list_inactive);
         if let Some(visits) = self.visits {
