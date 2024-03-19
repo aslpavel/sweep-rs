@@ -382,7 +382,7 @@ const SCORE_MATCH_CAPITAL: f32 = 0.7;
 const SCORE_MATCH_DOT: f32 = 0.6;
 
 thread_local! {
-    static DATA_CELL: RefCell<Vec<f32>> = RefCell::new(Vec::new());
+    static DATA_CELL: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 }
 
 impl FuzzyScorer {
