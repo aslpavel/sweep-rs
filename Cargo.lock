@@ -245,7 +245,7 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chronicler"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "argh",
@@ -1895,9 +1895,9 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "surf_n_term"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa83d2da2a9d56544ccfaf451b3dfcba13d3ea0d9433267c0aecb82b8fa94a82"
+checksum = "7a599c5b1b43c67a65ac75749c57f7263cf33c666c83b014fae07a748582b05d"
 dependencies = [
  "either",
  "fnv",
