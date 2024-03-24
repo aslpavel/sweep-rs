@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Asynchronous JSON-RPC implementation to communicate with sweep command
-"""
+"""Asynchronous JSON-RPC implementation to communicate with sweep command"""
+
 # pyright: strict
 from __future__ import annotations
 import asyncio
@@ -141,67 +141,6 @@ class SweepSelect(Generic[I]):
         self.items = items
 
 
-class Icon(NamedTuple):
-    """SVG icon"""
-
-    # only these characters are allowed to be in the svg path
-    PATH_CHARS = set("+-e0123456789.,MmZzLlHhVvCcSsQqTtAa\r\t\n ")
-
-    path: str
-    view_box: Optional[Tuple[float, float, float, float]] = None
-    fill_rule: Optional[str] = None
-    size: Optional[Tuple[int, int]] = None
-    fallback: Optional[str] = None
-
-    @staticmethod
-    def from_str_or_file(str_or_file: str) -> Optional[Icon]:
-        """Create sweep icon either by reading it from file or parsing from string"""
-        if os.path.exists(str_or_file):
-            with open(str_or_file, "r") as file:
-                str_or_file = file.read()
-        try:
-            return Icon.from_json(json.loads(str_or_file))
-        except json.JSONDecodeError:
-            return Icon.from_json(str_or_file)
-
-    @staticmethod
-    def from_json(obj: Any) -> Optional[Icon]:
-        """Create icon from JSON object"""
-
-        def is_path(path: str) -> bool:
-            if set(path) - Icon.PATH_CHARS:
-                return False
-            return True
-
-        if isinstance(obj, dict):
-            obj = cast(Dict[str, Any], obj)
-            path = obj.get("path")
-            if isinstance(path, str) and is_path(path):
-                return Icon(
-                    path=path,
-                    view_box=obj.get("view_box"),
-                    fill_rule=obj.get("fill_rule"),
-                    size=obj.get("size"),
-                    fallback=obj.get("fallback"),
-                )
-        elif isinstance(obj, str) and is_path(obj):
-            return Icon(obj)
-        return None
-
-    def to_json(self) -> Dict[str, Any]:
-        """Create JSON object out sweep icon struct"""
-        obj: Dict[str, Any] = dict(path=self.path)
-        if self.view_box is not None:
-            obj["view_box"] = self.view_box
-        if self.fill_rule is not None:
-            obj["fill_rule"] = self.fill_rule
-        if self.size is not None:
-            obj["size"] = self.size
-        if self.fallback:
-            obj["fallback"] = self.fallback
-        return obj
-
-
 @dataclass
 class Field:
     """Filed structure used to construct `Candidate`"""
@@ -262,8 +201,7 @@ class Field:
 
 @runtime_checkable
 class ToCandidate(Protocol):
-    def to_candidate(self) -> Candidate:
-        ...
+    def to_candidate(self) -> Candidate: ...
 
 
 @dataclass
@@ -427,6 +365,11 @@ FiledResolver = Callable[[int], Awaitable[Optional[Field]]]
 
 @dataclass
 class Bind(Generic[I]):
+    """Bind structure
+
+    If handler returns not None then this value is returned as selected
+    """
+
     key: str
     tag: str
     desc: str
@@ -1324,8 +1267,11 @@ class Event(Generic[E]):
 
 class View(ABC):
     @abstractmethod
-    def to_json(self) -> Dict[str, Any]:
-        ...
+    def to_json(self) -> Dict[str, Any]: ...
+
+    def trace_layout(self, msg: str) -> View:
+        """Print debug message with constraints and calculated layout"""
+        return TraceLayout(self, msg)
 
 
 class Direction(Enum):
@@ -1348,6 +1294,93 @@ class Align(Enum):
     END = "end"
     EXPAND = "expand"
     SHRINK = "shrink"
+
+
+@dataclass
+class Icon(View):
+    """SVG icon"""
+
+    # only these characters are allowed to be in the svg path
+    PATH_CHARS = set("+-e0123456789.,MmZzLlHhVvCcSsQqTtAa\r\t\n ")
+
+    def __init__(
+        self,
+        path: str,
+        view_box: Optional[Tuple[float, float, float, float]] = None,
+        fill_rule: Optional[str] = None,
+        size: Optional[Tuple[int, int]] = None,
+        fallback: Optional[str] = None,
+    ):
+        self.path = path
+        self.view_box = view_box
+        self.fill_rule = fill_rule
+        self.size = size
+        self.fallback = fallback
+
+    @staticmethod
+    def from_str_or_file(str_or_file: str) -> Optional[Icon]:
+        """Create sweep icon either by reading it from file or parsing from string"""
+        if os.path.exists(str_or_file):
+            with open(str_or_file, "r") as file:
+                str_or_file = file.read()
+        try:
+            return Icon.from_json(json.loads(str_or_file))
+        except json.JSONDecodeError:
+            return Icon.from_json(str_or_file)
+
+    @staticmethod
+    def from_json(obj: Any) -> Optional[Icon]:
+        """Create icon from JSON object"""
+
+        def is_path(path: str) -> bool:
+            if set(path) - Icon.PATH_CHARS:
+                return False
+            return True
+
+        if isinstance(obj, dict):
+            obj = cast(Dict[str, Any], obj)
+            path = obj.get("path")
+            if isinstance(path, str) and is_path(path):
+                return Icon(
+                    path=path,
+                    view_box=obj.get("view_box"),
+                    fill_rule=obj.get("fill_rule"),
+                    size=obj.get("size"),
+                    fallback=obj.get("fallback"),
+                )
+        elif isinstance(obj, str) and is_path(obj):
+            return Icon(obj)
+        return None
+
+    def to_json(self) -> Dict[str, Any]:
+        """Create JSON object out sweep icon struct"""
+        obj: Dict[str, Any] = dict(path=self.path, type="glyph")
+        if self.view_box is not None:
+            obj["view_box"] = self.view_box
+        if self.fill_rule is not None:
+            obj["fill_rule"] = self.fill_rule
+        if self.size is not None:
+            obj["size"] = self.size
+        if self.fallback:
+            obj["fallback"] = self.fallback
+        return obj
+
+
+@dataclass
+class TraceLayout(View):
+    _view: View
+    _msg: str
+
+    def __init__(self, view: View, msg: str) -> None:
+        self._view = view
+        self._msg = msg
+
+    def to_json(self) -> Dict[str, Any]:
+        return {
+            "type": "trace-layout",
+            "msg": self._msg,
+            "view": self._view.to_json(),
+        }
 
 
 class FlexChild(NamedTuple):

@@ -1,5 +1,5 @@
-"""Demo program that shows different functionality
-"""
+"""Demo program that shows different functionality"""
+
 # pyright: strict
 from __future__ import annotations
 import asyncio
@@ -99,7 +99,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     os.environ["RUST_LOG"] = os.environ.get("RUST_LOG", "debug")
 
     # Bindings
-    @Bind.decorator("ctrl+q", "user.custom.action", "My awesome custom action")
+    @Bind[Any].decorator("ctrl+q", "user.custom.action", "My awesome custom action")
     async def ctrl_q_action(_sweep: Any, _tag: str) -> Optional[Any]:
         return ctrl_q_action
 

@@ -198,9 +198,9 @@ impl Candidate {
                 let waker = waker.clone();
                 async move {
                     let field: Field = params.take(0, "field")?;
-                    let ref_id_opt: Option<usize> = params.take_opt(1, "id")?;
+                    let ref_id_opt: Option<i64> = params.take_opt(1, "id")?;
                     let ref_id = ctx.inner.with_mut(move |inner| {
-                        let ref_id = ref_id_opt.unwrap_or(inner.field_refs.len());
+                        let ref_id = ref_id_opt.unwrap_or(inner.field_refs.len() as i64);
                         inner.field_refs.insert(FieldRef(ref_id), field);
                         ref_id
                     });
@@ -635,7 +635,7 @@ impl<'de, 'a> de::Visitor<'de> for &'a CandidateContext {
 /// Mainly used avoid constant sending of glyphs (icons)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct FieldRef(pub(crate) usize);
+pub struct FieldRef(pub(crate) i64);
 
 /// Single theme-able part of the haystack
 #[derive(Clone, Serialize)]
