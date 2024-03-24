@@ -21,6 +21,7 @@ use sweep::{
 
 #[derive(Clone, Debug, FromRow)]
 pub struct HistoryEntry {
+    #[allow(unused)]
     pub id: i64,
     pub cmd: String,
     #[sqlx(rename = "return")]
