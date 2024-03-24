@@ -197,7 +197,13 @@ impl Candidate {
                 let ctx = ctx.clone();
                 let waker = waker.clone();
                 async move {
-                    let field: Field = params.take(0, "field")?;
+                    let field: Field = {
+                        let ctx_inner = ctx.inner.read().expect("lock poisoned");
+                        let field_seed = FieldDeserializer {
+                            colors: &ctx_inner.named_colors,
+                        };
+                        params.take_seed(field_seed, 0, "field")?
+                    };
                     let ref_id_opt: Option<i64> = params.take_opt(1, "id")?;
                     let ref_id = ctx.inner.with_mut(move |inner| {
                         let ref_id = ref_id_opt.unwrap_or(inner.field_refs.len() as i64);
