@@ -78,6 +78,7 @@ impl Theme {
                 Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
                 Size::new(1, 3),
                 " \u{25CB} ".to_owned(), // white circle
+                None,
             ))
             .take();
         let list_selected_indicator = Text::new()
@@ -88,6 +89,7 @@ impl Theme {
                 Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
                 Size::new(1, 3),
                 " \u{25CF} ".to_owned(), // black circle
+                None,
             ))
             .take();
         let list_text = Face::default().with_fg(list_selected.fg);

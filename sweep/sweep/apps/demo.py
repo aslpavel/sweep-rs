@@ -2,15 +2,28 @@
 
 # pyright: strict
 from __future__ import annotations
-import asyncio
+
 import argparse
-import shlex
+import asyncio
 import os
+import shlex
 from typing import Any, List, Optional
 
-from .. import Text, Container, Icon, Candidate, Field, Bind, sweep, Sweep, Align
+from .. import (
+    Align,
+    Bind,
+    Candidate,
+    Container,
+    Field,
+    Flex,
+    Icon,
+    IconFrame,
+    Justify,
+    Sweep,
+    Text,
+    sweep,
+)
 from . import sweep_default_cmd
-
 
 ICON_BEER = Icon(
     path="M8.5 10A.75.75 0 0 0 7 10v7a.75.75 0 0 0 1.5 0v-7ZM11.5 10a.75.75 0 0 "
@@ -64,7 +77,7 @@ ICON_SOFA = Icon(
     "C5 6.45 5.45 6 6 6H10C10.55 6 11 6.45 11 7V14H6V12C6 11.12 5.61 10.33 5 9.78"
     "V7M22 17C22 17.55 21.55 18 21 18H3C2.45 18 2 17.55 2 17V12"
     "C2 11.45 2.45 11 3 11S4 11.45 4 12V16H20V12C20 11.45 20.45 11 21 11S22 11.45 22 12V17Z",
-    size=(1, 3),
+    size=(4, 10),
     view_box=(0, 0, 24, 24),
     fallback="[S]",
 )
@@ -115,7 +128,20 @@ async def main(args: Optional[List[str]] = None) -> None:
     # Dynamic field references
     async def field_resolver(ref: int) -> Optional[Field]:
         if ref == ref_sofa:
-            return Field(glyph=ICON_SOFA)
+            glyph = ICON_SOFA.frame(
+                IconFrame(fill_color="gruv-aqua-2", border_color="gruv-aqua-1")
+                .border_radius(10)
+                .padding(10)
+                .border_width(3)
+            )
+            view = (
+                Container(
+                    Flex.row().push(glyph, align=Align.CENTER).justify(Justify.CENTER)
+                )
+                .vertical(Align.EXPAND)
+                .trace_layout("sofa-layout")
+            )
+            return Field(view=view)
 
     async def init(sweep: Sweep[Any]) -> None:
         view = (
@@ -168,7 +194,8 @@ async def main(args: Optional[List[str]] = None) -> None:
         # dynamic preview
         Candidate()
         .target_push("Item with lazily fetched preview")
-        .preview_push("This icon is lazy loaded - ")
+        .preview_push("This icon is lazy loaded\n")
+        .preview_flex_set(0.5)
         .preview_push(ref=ref_sofa),
     ]
 

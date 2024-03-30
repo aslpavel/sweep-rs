@@ -28,16 +28,12 @@ from typing import (
     Awaitable,
     Callable,
     Coroutine,
-    Deque,
-    Dict,
     Generator,
     Generic,
     Iterable,
-    List,
     NamedTuple,
     Optional,
     Protocol,
-    Set,
     Tuple,
     TypeVar,
     Union,
@@ -56,6 +52,7 @@ __all__ = [
     "Field",
     "Flex",
     "Icon",
+    "IconFrame",
     "Image",
     "Justify",
     "Size",
@@ -84,10 +81,10 @@ class Size(NamedTuple):
         height = None
         width = None
         if isinstance(obj, list):
-            obj = cast(List[Any], obj)
+            obj = cast(list[Any], obj)
             height, width = obj
         elif isinstance(obj, dict):
-            obj = cast(Dict[str, Any], obj)
+            obj = cast(dict[str, Any], obj)
             height = obj.get("height")
             width = obj.get("width")
         if (
@@ -124,7 +121,7 @@ class SweepSize(NamedTuple):
     def from_json(obj: Any) -> SweepSize:
         if not isinstance(obj, dict):
             raise ValueError(f"Invalid SweepSize: {obj}")
-        obj = cast(Dict[str, Any], obj)
+        obj = cast(dict[str, Any], obj)
         cells = Size.from_json(obj.get("cells"))
         pixels = Size.from_json(obj.get("pixels"))
         pixels_per_cell = Size.from_json(obj.get("pixels_per_cell"))
@@ -135,9 +132,9 @@ class SweepSize(NamedTuple):
 class SweepSelect(Generic[I]):
     """Event generated on item(s) select"""
 
-    items: List[I]
+    items: list[I]
 
-    def __init__(self, items: List[I]):
+    def __init__(self, items: list[I]):
         self.items = items
 
 
@@ -153,7 +150,7 @@ class Field:
     ref: Optional[int] = None
 
     def __repr__(self) -> str:
-        attrs: List[str] = []
+        attrs: list[str] = []
         if self.text:
             attrs.append(f"text={repr(self.text)}")
         if not self.active:
@@ -168,9 +165,9 @@ class Field:
             attrs.append(f"ref={self.ref}")
         return f'Field({", ".join(attrs)})'
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         """Convert field to JSON"""
-        obj: Dict[str, Any] = dict(text=self.text)
+        obj: dict[str, Any] = dict(text=self.text)
         if not self.active:
             obj["active"] = False
         if self.glyph:
@@ -188,7 +185,7 @@ class Field:
         """Create field from JSON object"""
         if not isinstance(obj, dict):
             return
-        obj = cast(Dict[str, Any], obj)
+        obj = cast(dict[str, Any], obj)
         active = obj.get("active")
         return Field(
             text=obj.get("text") or "",
@@ -208,12 +205,12 @@ class ToCandidate(Protocol):
 class Candidate:
     """Convenient sweep item implementation"""
 
-    target: Optional[List[Field]] = None
-    extra: Optional[Dict[str, Any]] = None
-    right: Optional[List[Field]] = None
+    target: Optional[list[Field]] = None
+    extra: Optional[dict[str, Any]] = None
+    right: Optional[list[Field]] = None
     right_offset: int = 0
     right_face: Optional[str] = None
-    preview: Optional[List[Any]] = None
+    preview: Optional[list[Any]] = None
     preview_flex: float = 0.0
 
     def to_candidate(self):
@@ -287,7 +284,7 @@ class Candidate:
         return self
 
     def __repr__(self) -> str:
-        attrs: List[str] = []
+        attrs: list[str] = []
         if self.target is not None:
             attrs.append(f"target={self.target}")
         if self.extra is not None:
@@ -304,9 +301,9 @@ class Candidate:
             attrs.append(f"preview_flex={self.preview_flex}")
         return f'Candidate({", ".join(attrs)})'
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         """Convert candidate to JSON object"""
-        obj: Dict[str, Any] = self.extra.copy() if self.extra else {}
+        obj: dict[str, Any] = self.extra.copy() if self.extra else {}
         if self.target:
             obj["target"] = [field.to_json() for field in self.target]
         if self.right:
@@ -329,18 +326,18 @@ class Candidate:
         if not isinstance(obj, dict):
             return
 
-        def fields_from_json(fields_obj: Any) -> Optional[List[Field]]:
+        def fields_from_json(fields_obj: Any) -> Optional[list[Field]]:
             if not isinstance(fields_obj, list):
                 return None
-            fields: List[Field] = []
-            for field_obj in cast(List[Any], fields_obj):
+            fields: list[Field] = []
+            for field_obj in cast(list[Any], fields_obj):
                 field = Field.from_json(field_obj)
                 if field is None:
                     continue
                 fields.append(field)
             return fields or None
 
-        obj = cast(Dict[str, Any], obj)
+        obj = cast(dict[str, Any], obj)
         target = fields_from_json(obj.pop("target", None))
         right = fields_from_json(obj.pop("right", None))
         right_offset = obj.pop("offset", None) or 0
@@ -393,11 +390,11 @@ class Bind(Generic[I]):
 async def sweep(
     items: Iterable[I],
     prompt_icon: Optional[Icon | str] = None,
-    binds: Optional[List[Bind[I]]] = None,
-    fields: Optional[Dict[int, Any]] = None,
+    binds: Optional[list[Bind[I]]] = None,
+    fields: Optional[dict[int, Any]] = None,
     init: Optional[Callable[[Sweep[I]], Awaitable[None]]] = None,
     **options: Any,
-) -> List[I]:
+) -> list[I]:
     """Convenience wrapper around `Sweep`
 
     Useful when you only need to select one candidate from a list of items
@@ -461,19 +458,19 @@ class Sweep(Generic[I]):
         "_size",
     ]
 
-    _args: List[str]
+    _args: list[str]
     _proc: Optional[Process]
     _io_sock: Optional[socket.socket]
     _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
-    _items: List[I]
-    _binds: Dict[str, BindHandler[I]]
+    _items: list[I]
+    _binds: dict[str, BindHandler[I]]
     _field_resolver: Optional[FiledResolver]
     _size: Optional[SweepSize]
 
     def __init__(
         self,
-        sweep: List[str] = ["sweep"],
+        sweep: list[str] = ["sweep"],
         prompt: str = "INPUT",
         query: Optional[str] = None,
         nth: Optional[str] = None,
@@ -491,7 +488,7 @@ class Sweep(Generic[I]):
         border: Optional[int] = None,
         field_resolver: Optional[FiledResolver] = None,
     ) -> None:
-        args: List[str] = []
+        args: list[str] = []
         args.extend(["--prompt", prompt])
         args.extend(["--height", str(height)])
         if query is not None:
@@ -528,7 +525,7 @@ class Sweep(Generic[I]):
         self._size = None
         self._items = []
         self._binds = {}
-        self._field_known: Set[int] = set()
+        self._field_known: set[int] = set()
         self._field_resolver = field_resolver
 
     async def __aenter__(self) -> Sweep[I]:
@@ -575,7 +572,7 @@ class Sweep(Generic[I]):
     def _item_get(self, item: Any) -> I:
         """Return stored item if it was converted to Candidate"""
         if isinstance(item, dict):
-            item_dict = cast(Dict[str, Any], item)
+            item_dict = cast(dict[str, Any], item)
             item_index: Optional[int] = item_dict.get("_sweep_item_index")
             if item_index is not None and item_index < len(self._items):
                 return self._items[item_index]  # type: ignore
@@ -658,7 +655,7 @@ class Sweep(Generic[I]):
         """Extend list of searchable items"""
         time_start = time.monotonic()
         time_limit = 0.05
-        batch: List[I | Dict[str, Any]] = []
+        batch: list[I | dict[str, Any]] = []
         for item in items:
             if isinstance(item, ToCandidate):
                 candidate = item.to_candidate()
@@ -686,7 +683,7 @@ class Sweep(Generic[I]):
         """Get currently selected item if any"""
         return self._item_get(await self._peer.items_current())
 
-    async def items_marked(self) -> List[I]:
+    async def items_marked(self) -> list[I]:
         """Take currently marked items"""
         items = await self._peer.items_marked()
         return [self._item_get(item) for item in items]
@@ -710,7 +707,7 @@ class Sweep(Generic[I]):
         icon: Optional[Icon] = None,
     ) -> None:
         """Set prompt label and icon"""
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
         if prompt is not None:
             attrs["prompt"] = prompt
         if icon is not None:
@@ -797,7 +794,7 @@ class RpcRequest(NamedTuple):
     id: RpcId
 
     def serialize(self) -> bytes:
-        request: Dict[str, Any] = {
+        request: dict[str, Any] = {
             "jsonrpc": "2.0",
             "method": self.method,
         }
@@ -808,7 +805,7 @@ class RpcRequest(NamedTuple):
         return json.dumps(request).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcRequest]:
+    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcRequest]:
         method = obj.get("method")
         if not isinstance(method, str):
             return None
@@ -823,7 +820,7 @@ class RpcResult(NamedTuple):
     id: RpcId
 
     def serialize(self) -> bytes:
-        response: Dict[str, Any] = {
+        response: dict[str, Any] = {
             "jsonrpc": "2.0",
             "result": self.result,
         }
@@ -832,7 +829,7 @@ class RpcResult(NamedTuple):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcResult]:
+    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcResult]:
         if "result" not in obj:
             return None
         return RpcResult(obj.get("result"), obj.get("id"))
@@ -862,7 +859,7 @@ class RpcError(Exception):
         }
         if self.data is not None:
             error["data"] = self.data
-        response: Dict[str, Any] = {
+        response: dict[str, Any] = {
             "jsonrpc": "2.0",
             "error": error,
         }
@@ -871,8 +868,8 @@ class RpcError(Exception):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: Dict[str, Any]) -> Optional[RpcError]:
-        error: Optional[Dict[str, Any]] = obj.get("error")
+    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcError]:
+        error: Optional[dict[str, Any]] = obj.get("error")
         if error is None:
             return None
         code = error.get("code")
@@ -928,7 +925,7 @@ class RpcError(Exception):
 
 RpcResponse = Union[RpcError, RpcResult]
 RpcMessage = Union[RpcRequest, RpcResponse]
-RpcParams = Union[List[Any], Dict[str, Any], None]
+RpcParams = Union[list[Any], dict[str, Any], None]
 RpcHandler = Callable[..., Any]
 
 
@@ -944,10 +941,10 @@ class RpcPeer:
         "_events",
     ]
 
-    _handlers: Dict[str, RpcHandler]  # registered handlers
-    _requests: Dict[RpcId, Future[Any]]  # unanswered requests
+    _handlers: dict[str, RpcHandler]  # registered handlers
+    _requests: dict[RpcId, Future[Any]]  # unanswered requests
     _requests_next_id: int  # index used for next request
-    _write_queue: Deque[RpcMessage]  # messages to be send to the other peer
+    _write_queue: deque[RpcMessage]  # messages to be send to the other peer
     _write_notify: Event[None]  # event used to wake up writer
     _is_terminated: bool  # whether peer was terminated
     _serve_task: Optional[Future[Any]]  # running serve task
@@ -1096,8 +1093,8 @@ class RpcPeer:
     async def _handle_request(self, request: RpcRequest, handler: RpcHandler) -> None:
         """Coroutine handling incoming request"""
         # convert params to either args or kwargs
-        args: List[Any] = []
-        kwargs: Dict[str, Any] = {}
+        args: list[Any] = []
+        kwargs: dict[str, Any] = {}
         if isinstance(request.params, list):
             args = request.params
         elif isinstance(request.params, dict):
@@ -1173,7 +1170,7 @@ class RpcPeerIter:
     __slots__ = ["peer", "events"]
 
     peer: RpcPeer
-    events: Deque[RpcRequest]
+    events: deque[RpcRequest]
 
     def __init__(self, peer: RpcPeer) -> None:
         self.peer = peer
@@ -1215,8 +1212,8 @@ class Event(Generic[E]):
     __slots__ = ["_handlers", "_futures"]
 
     def __init__(self) -> None:
-        self._handlers: Set[Callable[[E], bool]] = set()
-        self._futures: Set[Future[E]] = set()
+        self._handlers: set[Callable[[E], bool]] = set()
+        self._futures: set[Future[E]] = set()
 
     def __call__(self, event: E) -> None:
         """Raise new event"""
@@ -1267,7 +1264,7 @@ class Event(Generic[E]):
 
 class View(ABC):
     @abstractmethod
-    def to_json(self) -> Dict[str, Any]: ...
+    def to_json(self) -> dict[str, Any]: ...
 
     def trace_layout(self, msg: str) -> View:
         """Print debug message with constraints and calculated layout"""
@@ -1296,7 +1293,113 @@ class Align(Enum):
     SHRINK = "shrink"
 
 
-@dataclass
+_4Float = Tuple[float, float, float, float]
+
+
+def _4float(
+    a: float,
+    b: Optional[float] = None,
+    c: Optional[float] = None,
+    d: Optional[float] = None,
+    /,
+) -> _4Float:
+    if b is None:
+        return (a, a, a, a)
+    elif c is None:
+        return (a, b, a, b)
+    elif d is None:
+        return (a, b, c, b)
+    return (a, b, c, d)
+
+
+@dataclass(repr=True)
+class IconFrame:
+    def __init__(
+        self,
+        margins: Optional[_4Float] = None,
+        border_width: Optional[_4Float] = None,
+        border_radius: Optional[_4Float] = None,
+        border_color: Optional[str] = None,
+        padding: Optional[_4Float] = None,
+        fill_color: Optional[str] = None,
+    ) -> None:
+        self._margins = margins
+        self._border_width = border_width
+        self._border_radius = border_radius
+        self._border_color = border_color
+        self._padding = padding
+        self._fill_color = fill_color
+
+    def margins(
+        self,
+        a: float,
+        b: Optional[float] = None,
+        c: Optional[float] = None,
+        d: Optional[float] = None,
+        /,
+    ) -> IconFrame:
+        self._margins = _4float(a, b, c, d)
+        return self
+
+    def border_width(
+        self,
+        a: float,
+        b: Optional[float] = None,
+        c: Optional[float] = None,
+        d: Optional[float] = None,
+        /,
+    ) -> IconFrame:
+        self._border_width = _4float(a, b, c, d)
+        return self
+
+    def border_radius(
+        self,
+        a: float,
+        b: Optional[float] = None,
+        c: Optional[float] = None,
+        d: Optional[float] = None,
+        /,
+    ) -> IconFrame:
+        self._border_radius = _4float(a, b, c, d)
+        return self
+
+    def border_color(self, color: Optional[str]) -> IconFrame:
+        self._border_color = color
+        return self
+
+    def padding(
+        self,
+        a: float,
+        b: Optional[float] = None,
+        c: Optional[float] = None,
+        d: Optional[float] = None,
+        /,
+    ) -> IconFrame:
+        self._padding = _4float(a, b, c, d)
+        return self
+
+    def fill_color(self, color: Optional[str]) -> IconFrame:
+        self._fill_color = color
+        return self
+
+    def to_json(self) -> dict[str, Any]:
+        obj = dict[str, Any]()
+        if self._margins:
+            obj["margins"] = self._margins
+        if self._border_width:
+            obj["border_width"] = self._border_width
+        if self._border_radius:
+            obj["border_radius"] = self._border_radius
+        if self._border_color:
+            obj["border_color"] = self._border_color
+        if self._padding:
+            obj["padding"] = self._padding
+        if self._fill_color:
+            obj["fill_color"] = self._fill_color
+        return obj
+
+
+@dataclass(repr=True)
 class Icon(View):
     """SVG icon"""
 
@@ -1306,16 +1409,22 @@ class Icon(View):
     def __init__(
         self,
         path: str,
-        view_box: Optional[Tuple[float, float, float, float]] = None,
+        view_box: Optional[_4Float] = None,
         fill_rule: Optional[str] = None,
         size: Optional[Tuple[int, int]] = None,
         fallback: Optional[str] = None,
-    ):
-        self.path = path
-        self.view_box = view_box
-        self.fill_rule = fill_rule
-        self.size = size
+        frame: Optional[IconFrame] = None,
+    ) -> None:
+        self._path = path
+        self._view_box = view_box
+        self._fill_rule = fill_rule
+        self._size = size
         self.fallback = fallback
+        self._frame = frame
+
+    def frame(self, frame: IconFrame) -> Icon:
+        self._frame = frame
+        return self
 
     @staticmethod
     def from_str_or_file(str_or_file: str) -> Optional[Icon]:
@@ -1338,7 +1447,7 @@ class Icon(View):
             return True
 
         if isinstance(obj, dict):
-            obj = cast(Dict[str, Any], obj)
+            obj = cast(dict[str, Any], obj)
             path = obj.get("path")
             if isinstance(path, str) and is_path(path):
                 return Icon(
@@ -1352,17 +1461,19 @@ class Icon(View):
             return Icon(obj)
         return None
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         """Create JSON object out sweep icon struct"""
-        obj: Dict[str, Any] = dict(path=self.path, type="glyph")
-        if self.view_box is not None:
-            obj["view_box"] = self.view_box
-        if self.fill_rule is not None:
-            obj["fill_rule"] = self.fill_rule
-        if self.size is not None:
-            obj["size"] = self.size
+        obj: dict[str, Any] = dict(path=self._path, type="glyph")
+        if self._view_box is not None:
+            obj["view_box"] = self._view_box
+        if self._fill_rule is not None:
+            obj["fill_rule"] = self._fill_rule
+        if self._size is not None:
+            obj["size"] = self._size
         if self.fallback:
             obj["fallback"] = self.fallback
+        if self._frame:
+            obj["frame"] = self._frame.to_json()
         return obj
 
 
@@ -1375,7 +1486,7 @@ class TraceLayout(View):
         self._view = view
         self._msg = msg
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "type": "trace-layout",
             "msg": self._msg,
@@ -1392,7 +1503,7 @@ class FlexChild(NamedTuple):
 
 @dataclass
 class Flex(View):
-    _children: List[FlexChild]
+    _children: list[FlexChild]
     _justify: Justify
     _direction: Direction
 
@@ -1423,10 +1534,10 @@ class Flex(View):
         self._children.append(FlexChild(child, flex, face, align))
         return self
 
-    def to_json(self) -> Dict[str, Any]:
-        children_json: List[Dict[str, Any]] = []
+    def to_json(self) -> dict[str, Any]:
+        children_json: list[dict[str, Any]] = []
         for child in self._children:
-            child_json: Dict[str, Any] = {}
+            child_json: dict[str, Any] = {}
             if child.flex is not None:
                 child_json["flex"] = child.flex
             if child.align != Align.START:
@@ -1495,8 +1606,8 @@ class Container(View):
         self._size = (height, width)
         return self
 
-    def to_json(self) -> Dict[str, Any]:
-        obj: Dict[str, Any] = dict(type="container", child=self._child.to_json())
+    def to_json(self) -> dict[str, Any]:
+        obj: dict[str, Any] = dict(type="container", child=self._child.to_json())
         if self._face is not None:
             obj["face"] = self._face
         if self._vertical != Align.START:
@@ -1511,7 +1622,7 @@ class Container(View):
 
 
 class Text(View):
-    _chunks: List[Text] | str
+    _chunks: list[Text] | str
     _face: Optional[str]
     _glyph: Optional[Icon]
 
@@ -1539,7 +1650,7 @@ class Text(View):
             self._glyph = None
         return self
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         def to_json_rec(text: Text) -> Any:
             chunks = (
                 [to_json_rec(chunk) for chunk in text._chunks]
@@ -1548,7 +1659,7 @@ class Text(View):
             )
             if text._glyph is None and text._face is None:
                 return chunks
-            obj: Dict[str, Any] = dict(text=chunks)
+            obj: dict[str, Any] = dict(text=chunks)
             if text._glyph is not None:
                 obj["glyph"] = text._glyph.to_json()
             if text._face is not None:
@@ -1586,7 +1697,7 @@ class Image(View):
         self._channels = channels
         self._data = base64.b64encode(mem).decode()
 
-    def to_json(self) -> Dict[str, Any]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "type": "image",
             "size": self._size,
@@ -1601,7 +1712,7 @@ class Image(View):
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: Optional[list[str]] = None) -> None:
     import shlex
     import argparse
 
@@ -1670,7 +1781,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    candidates: List[Any]
+    candidates: list[Any]
     if opts.json:
         candidates = json.load(opts.input)
     else:

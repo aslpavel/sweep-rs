@@ -1089,6 +1089,7 @@ mod tests {
                 width: 2,
             },
             String::new(),
+            None,
         );
         let face: Face = "bg=#00ff00".parse()?;
         let candidate = Candidate::new(
