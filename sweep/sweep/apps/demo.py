@@ -49,7 +49,7 @@ ICON_COCKTAIL = Icon(
     ".75 0 1 0 1.47.294l.88-4.397ZM12.135 8H6.5V6.5h5.935l-.3 1.5Z",
     view_box=(0, 0, 24, 24),
     size=(1, 3),
-    fallback="[C]",
+    fallback="[C] ",
 )
 ICON_BACKPACK = Icon(
     path="M12 2a3.75 3.75 0 0 0-3.736 3.424A7.999 7.999 0 0 0 4 12.5v6.25A3.25 3.25"
