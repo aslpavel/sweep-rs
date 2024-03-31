@@ -926,13 +926,12 @@ dependencies = [
 
 [[package]]
 name = "libredox"
-version = "0.0.1"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85c833ca1e66078851dba29046874e38f08b2c883700aa29a03ddd3b23814ee8"
+checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
 dependencies = [
  "bitflags 2.5.0",
  "libc",
- "redox_syscall",
 ]
 
 [[package]]
@@ -1369,9 +1368,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35adab35420b4d0a843a918c9e08770f5390edf102e36eb46b3f59bb568bac53"
+checksum = "57fb9c781fd844601843392af569a83213ecb734b6c0be4e68cf1ab59f273a67"
 dependencies = [
  "bytemuck",
  "lazy_static",
@@ -1411,9 +1410,9 @@ dependencies = [
 
 [[package]]
 name = "redox_users"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a18479200779601e498ada4e8c1e1f50e3ee19deb0259c25825a98b5603b2cb4"
+checksum = "bd283d9651eeda4b2a83a43c1c91b266c40fd76ecd39a50a8c630ae69dc72891"
 dependencies = [
  "getrandom",
  "libredox",
@@ -1895,9 +1894,9 @@ checksum = "81cdd64d312baedb58e21336b31bc043b77e01cc99033ce76ef539f78e965ebc"
 
 [[package]]
 name = "surf_n_term"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db7d926e5bd65084f2a251ee5fb83ffd5a3f05794a32603ad33158662d5ebef2"
+checksum = "74125a1d9e91902cb9a8a2c5842d7717c1338bdc033baa0f4f6a8d3aec95a5df"
 dependencies = [
  "either",
  "fnv",
@@ -1917,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.16.3"
+version = "0.16.4"
 dependencies = [
  "anyhow",
  "argh",
