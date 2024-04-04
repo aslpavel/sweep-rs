@@ -44,7 +44,7 @@ lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =
         serde_json::from_str(include_str!("./icons.json"))
             .expect("invalid icons.json file");
-    static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("broom")
+    static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("prompt")
         .expect("failed to get prompt default icon");
     static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
         .expect("failed to get keyboard icon");
@@ -1058,11 +1058,11 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         }
         stats
             .push_fmt(format_args!(
-                "{}/{} {:.2?}",
+                "{}/{} ",
                 ranker_result.len(),
                 ranker_result.haystack_len(),
-                ranker_result.duration(),
             ))
+            .push_fmt(format_args!("{:.0?}", ranker_result.duration()))
             .with_face(Default::default(), |text| {
                 let name = ranker_result.scorer().name();
                 match ICONS.get(name) {

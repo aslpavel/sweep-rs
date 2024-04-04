@@ -519,19 +519,19 @@ lazy_static::lazy_static! {
         serde_json::from_str(include_str!("./icons.json"))
             .expect("invalid icons.json file");
 
-    static ref PATH_HISTORY_ICON: &'static Glyph = ICONS.get("material-folder-clock-outline")
+    static ref PATH_HISTORY_ICON: &'static Glyph = ICONS.get("path-history")
         .expect("failed to find path history icon");
 
-    static ref PATH_NAV_ICON: &'static Glyph = ICONS.get("material-folder-search-outline")
+    static ref PATH_NAV_ICON: &'static Glyph = ICONS.get("path-navigation")
         .expect("failed to find path navigation icon");
 
-    static ref CMD_HISTORY_ICON: &'static Glyph = ICONS.get("material-console")
+    static ref CMD_HISTORY_ICON: &'static Glyph = ICONS.get("cmd-history")
         .expect("failed to find path navigation icon");
 
-    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("fluent-dismiss-circle")
+    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("failed")
         .expect("faield to find failed icon");
 
-    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("fluent-folder")
+    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("folder")
         .expect("faield to find folder icon");
 }
 
