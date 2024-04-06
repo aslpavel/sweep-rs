@@ -1,4 +1,7 @@
-use crate::navigator::{NavigatorContext, FAILED_ICON, FOLDER_ICON};
+use crate::{
+    navigator::{NavigatorContext, FAILED_ICON, FOLDER_ICON},
+    utils::Table,
+};
 
 use super::DATE_FORMAT;
 use anyhow::{Context, Error};
@@ -115,12 +118,50 @@ impl Haystack for HistoryEntry {
         })()
         .expect("in memory write failed");
 
-        let view = Container::new(text.take())
+        let left_face = Face::default()
+            // .with_fg(Some(theme.accent))
+            // .with_bg(Some(theme.accent.with_alpha(0.05)))
+            .with_attrs(FaceAttrs::BOLD);
+        let mut table = Table::new(10, Some(left_face), None);
+        table.push(
+            Text::new().push_str("Status", None).take(),
+            Text::new().push_fmt(format_args!("{}", self.status)).take(),
+        );
+        if let Some(date) = self
+            .start_dt()
+            .ok()
+            .and_then(|date| date.format(&DATE_FORMAT).ok())
+        {
+            table.push(
+                Text::new().push_str("Date", None).take(),
+                Text::new().push_str(date.as_str(), None).take(),
+            )
+        }
+        table.push(
+            Text::new().push_str("Duration", None).take(),
+            Text::new()
+                .push_fmt(format_args!("{:.3}s", self.end_ts - self.start_ts))
+                .take(),
+        );
+        table.push(
+            Text::new().push_str("User", None).take(),
+            Text::new().push_str(&self.user, None).take(),
+        );
+        table.push(
+            Text::new().push_str("Hostname", None).take(),
+            Text::new().push_str(&self.hostname, None).take(),
+        );
+        table.push(
+            Text::new().push_str("Directory", None).take(),
+            Text::new().push_str(&self.cwd, None).take(),
+        );
+
+        let view = Container::new(table)
             .with_horizontal(Align::Expand)
             .with_vertical(Align::Expand)
             .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
             .boxed();
-        Some(HaystackPreview::new(view, Some(0.6)))
+        Some(HaystackPreview::new(view, Some(0.7)))
     }
 }
 

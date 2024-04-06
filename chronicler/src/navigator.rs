@@ -12,9 +12,10 @@ use std::{
     io::Write,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 use sweep::{
+    common::LockExt,
     surf_n_term::{Glyph, Key},
     Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
 };
@@ -29,6 +30,34 @@ pub enum NavigatorItem {
 pub struct NavigatorContext {
     pub cwd: Arc<str>,
     pub home_dir: Arc<str>,
+    users_cache: Arc<RwLock<HashMap<u32, Option<uzers::User>>>>,
+    groups_cache: Arc<RwLock<HashMap<u32, Option<uzers::Group>>>>,
+}
+
+impl NavigatorContext {
+    pub fn get_group_by_gid(&self, gid: u32) -> Option<uzers::Group> {
+        match self.groups_cache.with(|groups| groups.get(&gid).cloned()) {
+            Some(group) => group,
+            None => {
+                let group = uzers::get_group_by_gid(gid);
+                self.groups_cache
+                    .with_mut(|groups| groups.insert(gid, group.clone()));
+                group
+            }
+        }
+    }
+
+    pub fn get_user_by_uid(&self, uid: u32) -> Option<uzers::User> {
+        match self.users_cache.with(|users| users.get(&uid).cloned()) {
+            Some(user) => user,
+            None => {
+                let user = uzers::get_user_by_uid(uid);
+                self.users_cache
+                    .with_mut(|users| users.insert(uid, user.clone()));
+                user
+            }
+        }
+    }
 }
 
 impl NavigatorItem {
@@ -120,6 +149,8 @@ impl Navigator {
             home_dir: dirs::home_dir()
                 .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
                 .into(),
+            users_cache: Default::default(),
+            groups_cache: Default::default(),
         };
         let sweep = Sweep::new(ctx, options)?;
         sweep.scorer_by_name(Some("substr".to_owned())).await?;

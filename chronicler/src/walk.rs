@@ -19,7 +19,10 @@ use std::{
     task::Poll,
 };
 use sweep::{
-    surf_n_term::view::{BoxView, Flex, Justify, Text, View},
+    surf_n_term::{
+        view::{BoxView, Flex, Justify, Text, View},
+        Face, FaceAttrs,
+    },
     Haystack,
 };
 use time::OffsetDateTime;
@@ -148,38 +151,43 @@ impl Haystack for PathItem {
 
     fn preview(
         &self,
-        _ctx: &Self::Context,
+        ctx: &Self::Context,
         _positions: &sweep::Positions,
         _theme: &sweep::Theme,
     ) -> Option<sweep::HaystackPreview> {
         let metadata = self.metadata.as_ref()?;
+        let left_face = Some(Face::default().with_attrs(FaceAttrs::BOLD));
         let mut text = Text::new()
-            .push_fmt(format_args!(
-                "Mode:     {}\n",
-                unix_mode::to_string(metadata.mode())
-            ))
-            .push_fmt(format_args!(
-                "Size:     {:.2}\n",
-                SizeDisplay::new(metadata.len())
-            ))
+            .push_str("Mode     ", left_face)
+            .push_fmt(format_args!("{}\n", unix_mode::to_string(metadata.mode())))
+            .push_str("Size     ", left_face)
+            .push_fmt(format_args!("{:.2}\n", SizeDisplay::new(metadata.len())))
             .take();
+        text.push_str("Owner    ", left_face);
+        match ctx.get_user_by_uid(metadata.uid()) {
+            None => text.push_fmt(format_args!("{}", metadata.uid())),
+            Some(user) => text.push_fmt(format_args!("{}", user.name().to_string_lossy())),
+        };
+        text.push_str(":", None);
+        match ctx.get_group_by_gid(metadata.gid()) {
+            None => text.push_fmt(format_args!("{}", metadata.uid())),
+            Some(group) => text.push_fmt(format_args!("{}", group.name().to_string_lossy())),
+        };
+        text.push_str("\n", None);
         if let Ok(created) = metadata.created() {
-            text.push_fmt(format_args!(
-                "Created:  {}\n",
-                OffsetDateTime::from(created).format(&DATE_FORMAT).ok()?,
-            ));
+            let date = OffsetDateTime::from(created).format(&DATE_FORMAT).ok()?;
+            text.push_str("Created  ", left_face);
+            text.push_fmt(format_args!("{}\n", date));
         }
         if let Ok(modified) = metadata.modified() {
-            text.push_fmt(format_args!(
-                "Modified: {}\n",
-                OffsetDateTime::from(modified).format(&DATE_FORMAT).ok()?,
-            ));
+            let date = OffsetDateTime::from(modified).format(&DATE_FORMAT).ok()?;
+            text.push_str("Modified ", left_face);
+            text.push_fmt(format_args!("{}\n", date));
         }
         if let Ok(accessed) = metadata.accessed() {
-            text.push_fmt(format_args!(
-                "Accessed: {}\n",
-                OffsetDateTime::from(accessed).format(&DATE_FORMAT).ok()?,
-            ));
+            let date = OffsetDateTime::from(accessed).format(&DATE_FORMAT).ok()?;
+            text.push_str("Accessed ", left_face);
+            text.push_fmt(format_args!("{}\n", date));
         }
         Some(sweep::HaystackPreview::new(text.boxed(), None))
     }

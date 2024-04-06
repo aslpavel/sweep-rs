@@ -20,7 +20,7 @@ const HISTORY_DB: &str = "chronicler/history.db";
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const DATE_FORMAT: &[FormatItem<'_>] =
-    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
