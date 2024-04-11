@@ -12,6 +12,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
+use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
     Candidate, CandidateContext, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme,
@@ -110,6 +111,7 @@ async fn main() -> Result<(), Error> {
         SweepOptions {
             height: args.height,
             prompt: args.prompt.clone(),
+            prompt_icon: Some(args.prompt_icon),
             theme,
             keep_order: args.keep_order,
             tty_path: args.tty_path.clone(),
@@ -117,7 +119,6 @@ async fn main() -> Result<(), Error> {
             scorers: VecDeque::new(),
             altscreen: args.altscreen,
             border: args.border,
-            ..SweepOptions::default()
         },
     )?;
     sweep.query_set(args.query.clone());
@@ -213,6 +214,10 @@ pub struct Args {
     /// prompt string
     #[argh(option, short = 'p', default = "\"INPUT\".to_string()")]
     pub prompt: String,
+
+    /// prompt icon `Glyph::form_str`
+    #[argh(option, default = "sweep::PROMPT_DEFAULT_ICON.clone()")]
+    pub prompt_icon: Glyph,
 
     /// initial query string
     #[argh(option, default = "String::new()")]

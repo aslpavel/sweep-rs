@@ -14,7 +14,7 @@ mod candidate;
 pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, FieldSelector};
 
 mod sweep;
-pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions};
+pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepOptions, PROMPT_DEFAULT_ICON};
 
 pub mod rpc;
 

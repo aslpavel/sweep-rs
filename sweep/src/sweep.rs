@@ -44,7 +44,7 @@ lazy_static::lazy_static! {
     static ref ICONS: HashMap<String, Glyph> =
         serde_json::from_str(include_str!("./icons.json"))
             .expect("invalid icons.json file");
-    static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("prompt")
+    pub static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("prompt")
         .expect("failed to get prompt default icon");
     static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
         .expect("failed to get keyboard icon");
