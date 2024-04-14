@@ -21,7 +21,7 @@ use std::{
 use surf_n_term::{
     rasterize::SVG_COLORS,
     view::{
-        Align, ArcView, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
+        Align, ArcView, Axis, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
         ViewDeserializer,
     },
     Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
@@ -340,6 +340,7 @@ impl Haystack for Candidate {
             theme.list_text,
             theme.list_highlight,
             theme.list_inactive,
+            Axis::Horizontal,
         );
 
         // right side
@@ -351,6 +352,7 @@ impl Haystack for Candidate {
             theme.list_text,
             theme.list_highlight,
             theme.list_inactive,
+            Axis::Horizontal,
         );
 
         let mut view = Flex::row()
@@ -390,6 +392,7 @@ impl Haystack for Candidate {
             theme.list_text,
             theme.list_highlight,
             theme.list_text,
+            Axis::Vertical,
         );
         Some(HaystackPreview::new(
             preview.boxed(),
@@ -415,8 +418,9 @@ pub fn fields_view(
     face_default: Face,
     face_highlight: Face,
     face_inactive: Face,
+    flex_axis: Axis,
 ) -> impl View {
-    let mut flex = Flex::column();
+    let mut flex = Flex::new(flex_axis);
     let mut has_views = false;
     let mut text = Text::new();
     for field in fields {
