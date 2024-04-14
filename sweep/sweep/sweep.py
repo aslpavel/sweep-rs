@@ -167,7 +167,9 @@ class Field:
 
     def to_json(self) -> dict[str, Any]:
         """Convert field to JSON"""
-        obj: dict[str, Any] = dict(text=self.text)
+        obj: dict[str, Any] = {}
+        if self.text:
+            obj["text"] = self.text
         if not self.active:
             obj["active"] = False
         if self.glyph:
