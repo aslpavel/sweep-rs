@@ -2,12 +2,14 @@
 
 Lists all available desktop entries on the system
 """
+
 # pyright: strict
 from __future__ import annotations
 
 import argparse
 import asyncio
 import shlex
+import shutil
 import re
 from typing import Any, List, NamedTuple, cast, Optional, Dict
 from gi.repository import Gio  # type: ignore
@@ -54,11 +56,24 @@ TERMINAL_REF = 1
 class DesktopEntry(NamedTuple):
     CLEANUP_RE = re.compile("@@[a-zA-Z]?")
     URL_RE = re.compile("%[uUfF]")
+    TERMINALS = ["xdg-terminal-exec", "kitty", "gnome-terminal", "konsole", "xterm"]
 
     app_info: Any  # Gio.AppInfo https://lazka.github.io/pgi-docs/#Gio-2.0/classes/DesktopAppInfo.html#Gio.DesktopAppInfo
 
+    def find_terminal(self, term: Optional[str] = None) -> Optional[str]:
+        if term is not None:
+            terms = [term, *self.TERMINALS]
+        else:
+            terms = self.TERMINALS
+        for term in terms:
+            cmd = shutil.which(term)
+            if cmd is not None:
+                return cmd
+
     def commandline(
-        self, path: Optional[str] = None, term: str = "kitty"
+        self,
+        path: Optional[str] = None,
+        term: Optional[str] = None,
     ) -> Optional[str]:
         """Get command line required to launch app"""
         cmd: Optional[str] = self.app_info.get_commandline()
@@ -67,8 +82,11 @@ class DesktopEntry(NamedTuple):
         cmd = self.CLEANUP_RE.sub("", cmd)
         cmd = self.URL_RE.sub(path or "", cmd).strip()
         if self.requires_terminal():
-            return f"{term} {cmd}"
-        return cmd
+            term = self.find_terminal(term)
+            if term is not None:
+                return f"{term} {cmd}"
+        else:
+            return cmd
 
     def requires_terminal(self) -> bool:
         """Whether app needs to be run in a terminal"""
