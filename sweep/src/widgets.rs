@@ -2,7 +2,6 @@ use crate::{common::LockExt, haystack_default_view, Haystack, HaystackPreview, P
 use std::{
     cmp::max,
     collections::HashMap,
-    fmt::Write as _,
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -12,8 +11,8 @@ use surf_n_term::{
         Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
         Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
-    BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyMod, KeyName, Position, Size,
-    SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName, Position,
+    Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
 
 #[derive(Clone, Debug)]
@@ -244,7 +243,7 @@ impl FromStr for Theme {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActionDesc {
     /// default binding
-    pub chords: Vec<Vec<Key>>,
+    pub chords: Vec<KeyChord>,
     /// action name
     pub name: String,
     /// action description
@@ -264,20 +263,11 @@ impl Haystack for ActionDesc {
     fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
-            (|| {
-                chords_text
-                    .set_face(Face::default().with_attrs(FaceAttrs::UNDERLINE | FaceAttrs::BOLD));
-                for (index, key) in chord.iter().enumerate() {
-                    if index != 0 {
-                        write!(chords_text, " ")?;
-                    }
-                    write!(chords_text, "{}", key)?;
-                }
-                chords_text.set_face(Face::default());
-                write!(chords_text, " ")?;
-                Ok::<_, Error>(())
-            })()
-            .expect("In memory write failed");
+            chords_text
+                .set_face(Face::default().with_attrs(FaceAttrs::UNDERLINE | FaceAttrs::BOLD))
+                .push_fmt(&chord)
+                .set_face(Face::default())
+                .push_str(" ", None);
         }
         Flex::row()
             .justify(Justify::SpaceBetween)
@@ -324,74 +314,74 @@ impl InputAction {
                 description: "Insert character to the input field".to_owned(),
             },
             CursorForward => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Right,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "input.move.forward".to_owned(),
                 description: "Move cursor forward in the input field".to_owned(),
             },
             CursorBackward => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Left,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "input.move.backward".to_owned(),
                 description: "Move cursor backward in the input field".to_owned(),
             },
             CursorEnd => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('e'),
                     mode: KeyMod::CTRL,
-                }]],
+                }])],
                 name: "input.move.end".to_owned(),
                 description: "Move cursor to the end of the input".to_owned(),
             },
             CursorStart => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('a'),
                     mode: KeyMod::CTRL,
-                }]],
+                }])],
                 name: "input.move.start".to_owned(),
                 description: "Move cursor to the start of the input".to_owned(),
             },
             CursorNextWord => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('f'),
                     mode: KeyMod::ALT,
-                }]],
+                }])],
                 name: "input.move.next_word".to_owned(),
                 description: "Move cursor to the end of the current word".to_owned(),
             },
             CursorPrevWord => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('b'),
                     mode: KeyMod::ALT,
-                }]],
+                }])],
                 name: "input.move.prev_word".to_owned(),
                 description: "Move cursor to the start of the word".to_owned(),
             },
             DeleteBackward => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Backspace,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "input.delete.backward".to_owned(),
                 description: "Delete previous char".to_owned(),
             },
             DeleteForward => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Delete,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "input.delete.forward".to_owned(),
                 description: "Delete next char".to_owned(),
             },
             DeleteEnd => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('k'),
                     mode: KeyMod::CTRL,
-                }]],
+                }])],
                 name: "input.delete.end".to_owned(),
                 description: "Delete all input after cursor".to_owned(),
             },
@@ -444,10 +434,10 @@ impl Input {
         self.theme = theme;
     }
 
-    pub fn apply(&mut self, action: InputAction) {
+    pub fn apply(&mut self, action: &InputAction) {
         use InputAction::*;
         match action {
-            Insert(c) => self.before.push(c),
+            Insert(c) => self.before.push(*c),
             CursorForward => self.before.extend(self.after.pop()),
             CursorBackward => self.after.extend(self.before.pop()),
             CursorEnd => self.before.extend(self.after.drain(..).rev()),
@@ -503,22 +493,22 @@ impl Input {
         match event {
             TerminalEvent::Key(Key { name, mode }) => match *mode {
                 KeyMod::EMPTY => match name {
-                    Char(c) => self.apply(InputAction::Insert(*c)),
-                    Backspace => self.apply(InputAction::DeleteBackward),
-                    Delete => self.apply(InputAction::DeleteForward),
-                    Left => self.apply(InputAction::CursorBackward),
-                    Right => self.apply(InputAction::CursorForward),
+                    Char(c) => self.apply(&InputAction::Insert(*c)),
+                    Backspace => self.apply(&InputAction::DeleteBackward),
+                    Delete => self.apply(&InputAction::DeleteForward),
+                    Left => self.apply(&InputAction::CursorBackward),
+                    Right => self.apply(&InputAction::CursorForward),
                     _ => {}
                 },
                 KeyMod::CTRL => match name {
-                    KeyName::Char('e') => self.apply(InputAction::CursorEnd),
-                    KeyName::Char('a') => self.apply(InputAction::CursorStart),
-                    KeyName::Char('k') => self.apply(InputAction::DeleteEnd),
+                    KeyName::Char('e') => self.apply(&InputAction::CursorEnd),
+                    KeyName::Char('a') => self.apply(&InputAction::CursorStart),
+                    KeyName::Char('k') => self.apply(&InputAction::DeleteEnd),
                     _ => {}
                 },
                 KeyMod::ALT => match name {
-                    KeyName::Char('f') => self.apply(InputAction::CursorNextWord),
-                    KeyName::Char('b') => self.apply(InputAction::CursorPrevWord),
+                    KeyName::Char('f') => self.apply(&InputAction::CursorNextWord),
+                    KeyName::Char('b') => self.apply(&InputAction::CursorPrevWord),
                     _ => {}
                 },
                 _ => {}
@@ -616,61 +606,61 @@ impl ListAction {
         match self {
             ItemNext => ActionDesc {
                 chords: vec![
-                    vec![Key {
+                    KeyChord::from_iter([Key {
                         name: KeyName::Down,
                         mode: KeyMod::EMPTY,
-                    }],
-                    vec![Key {
+                    }]),
+                    KeyChord::from_iter([Key {
                         name: KeyName::Char('n'),
                         mode: KeyMod::CTRL,
-                    }],
+                    }]),
                 ],
                 name: "list.item.next".to_owned(),
                 description: "Move to the next item in the list".to_owned(),
             },
             ItemPrev => ActionDesc {
                 chords: vec![
-                    vec![Key {
+                    KeyChord::from_iter([Key {
                         name: KeyName::Up,
                         mode: KeyMod::EMPTY,
-                    }],
-                    vec![Key {
+                    }]),
+                    KeyChord::from_iter([Key {
                         name: KeyName::Char('p'),
                         mode: KeyMod::CTRL,
-                    }],
+                    }]),
                 ],
                 name: "list.item.prev".to_owned(),
                 description: "Move to the previous item in the list".to_owned(),
             },
             PageNext => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::PageDown,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "list.page.next".to_owned(),
                 description: "Move one page down in the list".to_owned(),
             },
             PagePrev => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::PageUp,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "list.page.prev".to_owned(),
                 description: "Move one page up in the list".to_owned(),
             },
             Home => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Home,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "list.home".to_owned(),
                 description: "Move to the beginning of the list".to_owned(),
             },
             End => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::End,
                     mode: KeyMod::EMPTY,
-                }]],
+                }])],
                 name: "list.end".to_owned(),
                 description: "Move to the end of the list".to_owned(),
             },
@@ -755,7 +745,7 @@ impl<T: ListItems> List<T> {
     }
 
     /// Apply action
-    pub fn apply(&mut self, action: ListAction) {
+    pub fn apply(&mut self, action: &ListAction) {
         use ListAction::*;
         match action {
             ItemNext => self.cursor += 1,
@@ -794,15 +784,15 @@ impl<T: ListItems> List<T> {
         if let TerminalEvent::Key(Key { name, mode }) = event {
             match *mode {
                 KeyMod::EMPTY => match name {
-                    KeyName::Down => self.apply(ListAction::ItemNext),
-                    KeyName::Up => self.apply(ListAction::ItemPrev),
-                    KeyName::PageDown => self.apply(ListAction::PageNext),
-                    KeyName::PageUp => self.apply(ListAction::PagePrev),
+                    KeyName::Down => self.apply(&ListAction::ItemNext),
+                    KeyName::Up => self.apply(&ListAction::ItemPrev),
+                    KeyName::PageDown => self.apply(&ListAction::PageNext),
+                    KeyName::PageUp => self.apply(&ListAction::PagePrev),
                     _ => {}
                 },
                 KeyMod::CTRL => match name {
-                    KeyName::Char('n') => self.apply(ListAction::ItemNext),
-                    KeyName::Char('p') => self.apply(ListAction::ItemPrev),
+                    KeyName::Char('n') => self.apply(&ListAction::ItemNext),
+                    KeyName::Char('p') => self.apply(&ListAction::ItemPrev),
                     _ => {}
                 },
                 _ => {}
@@ -1083,11 +1073,11 @@ mod tests {
         print!("{:?}", list.into_view().debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
-        (0..20).for_each(|_| list.apply(ListAction::ItemNext));
+        (0..20).for_each(|_| list.apply(&ListAction::ItemNext));
         print!("{:?}", list.into_view().debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 14);
 
@@ -1114,11 +1104,11 @@ mod tests {
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
-        (0..2).for_each(|_| list.apply(ListAction::ItemNext));
+        (0..2).for_each(|_| list.apply(&ListAction::ItemNext));
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
@@ -1132,11 +1122,11 @@ mod tests {
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
@@ -1154,19 +1144,19 @@ mod tests {
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 2);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 3);
 
-        list.apply(ListAction::ItemNext);
+        list.apply(&ListAction::ItemNext);
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 4);
 

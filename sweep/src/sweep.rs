@@ -28,12 +28,12 @@ use std::{
 use surf_n_term::{
     encoder::ColorDepth,
     view::{
-        Align, BoxView, Container, Flex, IntoView, Margins, Text, View, ViewContext,
-        ViewDeserializer, ViewLayoutStore,
+        Align, BoxView, Container, Flex, IntoView, Margins, Text, Tree, TreeId, TreeView, View,
+        ViewContext, ViewDeserializer, ViewLayoutStore,
     },
-    Glyph, Key, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut, SystemTerminal,
-    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize, TerminalSurfaceExt,
-    TerminalWaker,
+    Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut,
+    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize,
+    TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -49,6 +49,7 @@ lazy_static::lazy_static! {
     static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
         .expect("failed to get keyboard icon");
 }
+const SWEEP_SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 pub struct SweepOptions {
     pub altscreen: bool,
@@ -119,7 +120,7 @@ enum SweepRequest<H> {
     PromptSet(Option<String>, Option<Glyph>),
     ThemeGet(oneshot::Sender<Theme>),
     Bind {
-        chord: Vec<Key>,
+        chord: KeyChord,
         tag: String,
         desc: String,
     },
@@ -144,7 +145,7 @@ enum SweepRequest<H> {
 #[derive(Clone, Debug)]
 pub enum SweepEvent<H> {
     Select(Vec<H>),
-    Bind(String),
+    Bind { tag: String, chord: KeyChord },
     Resize(TerminalSize),
 }
 
@@ -309,7 +310,7 @@ where
     /// will be generated, note if tag is empty string the binding will be removed
     /// and no event will be generated. Tag can also be a standard action name
     /// (see available with `ctrl+h`) in this case [SweepEvent::Bind] is not generated.
-    pub fn bind(&self, chord: Vec<Key>, tag: String, desc: String) {
+    pub fn bind(&self, chord: KeyChord, tag: String, desc: String) {
         self.send_request(SweepRequest::Bind { chord, tag, desc })
     }
 
@@ -557,10 +558,9 @@ where
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let key: String = params.take(0, "key")?;
+                    let chord: KeyChord = params.take(0, "key")?;
                     let tag: String = params.take(1, "tag")?;
                     let desc: Option<String> = params.take_opt(3, "desc")?;
-                    let chord = Key::chord(key).map_err(Error::from)?;
                     sweep.bind(chord, tag, desc.unwrap_or_default());
                     Ok(Value::Null)
                 }
@@ -621,8 +621,8 @@ where
 
                 while let Some(event) = sweep.next_event().await {
                     match event {
-                        SweepEvent::Bind(tag) => {
-                            peer.notify_with_value("bind", json!({ "tag": tag }))?
+                        SweepEvent::Bind { tag, chord } => {
+                            peer.notify_with_value("bind", json!({ "tag": tag, "key": chord }))?
                         }
                         SweepEvent::Select(items) => {
                             if !items.is_empty() {
@@ -655,7 +655,7 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SweepAction {
     User {
-        chord: Vec<Key>,
+        chord: KeyChord,
         tag: String,
         desc: String,
     },
@@ -681,73 +681,73 @@ impl SweepAction {
             },
             Select => ActionDesc {
                 chords: vec![
-                    vec![Key {
+                    KeyChord::from_iter([Key {
                         name: KeyName::Char('m'),
                         mode: KeyMod::CTRL,
-                    }],
-                    vec![Key {
+                    }]),
+                    KeyChord::from_iter([Key {
                         name: KeyName::Char('j'),
                         mode: KeyMod::CTRL,
-                    }],
-                    vec![Key {
+                    }]),
+                    KeyChord::from_iter([Key {
                         name: KeyName::Enter,
                         mode: KeyMod::EMPTY,
-                    }],
+                    }]),
                 ],
                 name: "sweep.select".to_owned(),
                 description: "Select item pointed by cursor".to_owned(),
             },
             Mark => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('m'),
                     mode: KeyMod::ALT,
-                }]],
+                }])],
                 name: "sweep.mark.current".to_owned(),
                 description: "Mark item pointed by cursor".to_owned(),
             },
             MarkAll => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('m'),
                     mode: KeyMod::ALT | KeyMod::SHIFT,
-                }]],
+                }])],
                 name: "sweep.mark.all".to_owned(),
                 description: "(Un)Mark all filtered items".to_owned(),
             },
             Quit => ActionDesc {
                 chords: vec![
-                    vec![Key {
+                    KeyChord::from_iter([Key {
                         name: KeyName::Char('c'),
                         mode: KeyMod::CTRL,
-                    }],
-                    vec![Key {
+                    }]),
+                    KeyChord::from_iter([Key {
                         name: KeyName::Esc,
                         mode: KeyMod::EMPTY,
-                    }],
+                    }]),
                 ],
                 name: "sweep.quit".to_string(),
                 description: "Close sweep".to_string(),
             },
             Help => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('h'),
                     mode: KeyMod::CTRL,
-                }]],
+                }])],
                 name: "sweep.help".to_owned(),
                 description: "Show help menu".to_owned(),
             },
             ScorerNext => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('s'),
                     mode: KeyMod::CTRL,
-                }]],
-                name: "sweep.scorer.next".to_owned(),
+                }])],
+                name: SWEEP_SCORER_NEXT_TAG.to_owned(),
                 description: "Switch to next available scorer".to_owned(),
             },
             PreviewToggle => ActionDesc {
-                chords: vec![vec![Key {
+                chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('p'),
                     mode: KeyMod::ALT,
-                }]],
+                }])],
                 name: "sweep.preview.toggle".to_owned(),
                 description: "Toggle preview for an item".to_owned(),
             },
@@ -842,7 +842,7 @@ where
             let desc = action.description();
             key_actions.insert(desc.name, action.clone());
             for chord in desc.chords {
-                key_map.register(chord.as_slice(), action.clone());
+                key_map.register(chord, action.clone());
             }
         }
 
@@ -919,14 +919,17 @@ where
         }
     }
 
-    fn apply(&mut self, action: SweepAction) -> SweepKeyEvent<H> {
+    fn apply(&mut self, action: &SweepAction) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
         match action {
             SweepAction::Input(action) => self.input.apply(action),
             SweepAction::List(action) => self.list.apply(action),
-            SweepAction::User { tag, .. } => {
+            SweepAction::User { tag, chord, .. } => {
                 if !tag.is_empty() {
-                    return Event(SweepEvent::Bind(tag));
+                    return Event(SweepEvent::Bind {
+                        tag: tag.clone(),
+                        chord: chord.clone(),
+                    });
                 }
             }
             SweepAction::Quit => {
@@ -946,7 +949,7 @@ where
             SweepAction::Mark => {
                 if let Some(current) = self.list.current() {
                     self.marked.with_mut(|marked| marked.toggle(current.item));
-                    self.list.apply(ListAction::ItemNext);
+                    self.list.apply(&ListAction::ItemNext);
                 }
             }
             SweepAction::MarkAll => {
@@ -977,20 +980,20 @@ where
 
     fn handle_key(&mut self, key: Key) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
-        if let Some(action) = self
-            .key_map
-            .lookup_state(&mut self.key_map_state, key)
-            .cloned()
-        {
+        let is_first_key = self.key_map_state.is_empty();
+        if let Some(action) = self.key_map.lookup_state(&mut self.key_map_state, key) {
             tracing::debug!(?action, "[SweepState.handle_key]");
             // do not generate Backspace, when input is not empty
             let backspace = Key::new(KeyName::Backspace, KeyMod::EMPTY);
-            if key == backspace && self.input.get().count() == 0 {
+            if is_first_key && key == backspace && self.input.get().count() == 0 {
                 if let Some(ref tag) = self.key_empty_backspace {
-                    return Event(SweepEvent::Bind(tag.clone()));
+                    return Event(SweepEvent::Bind {
+                        tag: tag.clone(),
+                        chord: KeyChord::from_iter([backspace]),
+                    });
                 }
             } else {
-                return self.apply(action);
+                return self.apply(&action.clone());
             }
         } else if let Key {
             name: KeyName::Char(c),
@@ -998,7 +1001,7 @@ where
         } = key
         {
             // send plain chars to the input
-            self.input.apply(InputAction::Insert(c));
+            self.input.apply(&InputAction::Insert(c));
         }
         Nothing
     }
@@ -1014,10 +1017,10 @@ where
             }
             descriptions
                 .entry(desc.name.clone())
-                .and_modify(|desc_curr| desc_curr.chords.push(chord.to_owned()))
+                .and_modify(|desc_curr| desc_curr.chords.push(KeyChord::from_iter(chord)))
                 .or_insert_with(|| {
                     desc.chords.clear();
-                    desc.chords.push(chord.to_owned());
+                    desc.chords.push(KeyChord::from_iter(chord));
                     desc
                 });
         });
@@ -1054,15 +1057,15 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
             .take();
         let marked_count = self.marked.with(|marked| marked.len());
         if marked_count > 0 {
-            stats.push_fmt(format_args!("{}/", marked_count));
+            stats.push_fmt(&format_args!("{}/", marked_count));
         }
         stats
-            .push_fmt(format_args!(
+            .push_fmt(&format_args!(
                 "{}/{} ",
                 ranker_result.len(),
                 ranker_result.haystack_len(),
             ))
-            .push_fmt(format_args!("{:.0?}", ranker_result.duration()))
+            .push_fmt(&format_args!("{:.0?}", ranker_result.duration()))
             .with_face(Default::default(), |text| {
                 let name = ranker_result.scorer().name();
                 match ICONS.get(name) {
@@ -1115,7 +1118,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         let header = Flex::row()
             .add_child(prompt)
             .add_flex_child(1.0, &self.input)
-            .add_child(stats);
+            .add_child(stats.tag(Value::String(SWEEP_SCORER_NEXT_TAG.to_string())));
 
         // list
         let mut body = Flex::row();
@@ -1173,6 +1176,7 @@ where
         TerminalCommand::visible_cursor_set(false),
         TerminalCommand::Title(options.title.clone()),
     ])?;
+    term.execute_many(TerminalCommand::mouse_events_set(true, false))?;
     if options.altscreen {
         term.execute(TerminalCommand::altscreen_set(true))?;
     }
@@ -1196,6 +1200,7 @@ where
         row_offset = term_size.cells.height - height;
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
+    let col_offset = options.border;
 
     let mut state = SweepState::new_from_options(&options, term.waker(), haystack_context.clone());
     let mut state_stack: Vec<SweepState<H>> = Vec::new();
@@ -1212,6 +1217,7 @@ where
 
     // render loop
     let mut layout_store = ViewLayoutStore::new();
+    let mut layout_id: Option<TreeId> = None;
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, mut view| {
         // handle events
@@ -1240,7 +1246,7 @@ where
                             mem::drop(resolve.send(state.theme.clone()));
                         }
                         Terminate => return Ok(TerminalAction::Quit(())),
-                        Bind { chord, tag, desc } => match *chord.as_slice() {
+                        Bind { chord, tag, desc } => match *chord.keys() {
                             [Key {
                                 name: KeyName::Backspace,
                                 mode: KeyMod::EMPTY,
@@ -1252,7 +1258,7 @@ where
                                 let action = if tag.is_empty() {
                                     // empty user action means unbind
                                     SweepAction::User {
-                                        chord: Vec::new(),
+                                        chord: KeyChord::new(Vec::new()),
                                         tag: String::new(),
                                         desc: String::new(),
                                     }
@@ -1326,7 +1332,7 @@ where
                 }
             }
             Some(TerminalEvent::Key(key)) => {
-                let action = match state_help.as_mut() {
+                let key_event = match state_help.as_mut() {
                     None => state.handle_key(key),
                     Some(help) => match help.handle_key(key) {
                         SweepKeyEvent::Quit => {
@@ -1335,10 +1341,11 @@ where
                         }
                         SweepKeyEvent::Event(SweepEvent::Select(actions_descs)) => {
                             state_help.take();
-                            if let Some(action) = actions_descs.first().and_then(|action_desc| {
-                                state.key_actions.get(&action_desc.name).cloned()
-                            }) {
-                                state.apply(action)
+                            if let Some(action) = actions_descs
+                                .first()
+                                .and_then(|action_desc| state.key_actions.get(&action_desc.name))
+                            {
+                                state.apply(&action.clone())
                             } else {
                                 SweepKeyEvent::Nothing
                             }
@@ -1346,7 +1353,7 @@ where
                         _ => SweepKeyEvent::Nothing,
                     },
                 };
-                match action {
+                match key_event {
                     SweepKeyEvent::Event(event) => {
                         events.send(event)?;
                     }
@@ -1355,6 +1362,50 @@ where
                     SweepKeyEvent::Help => {
                         if state_help.is_none() {
                             state_help.replace(state.help_state(term.waker()));
+                        }
+                    }
+                }
+            }
+            Some(TerminalEvent::Mouse(mouse)) => {
+                if let Some(layout) = layout_id.map(|id| TreeView::from_id(&layout_store, id)) {
+                    // adjust mouse position to account for window offset
+                    if mouse.pos.col >= col_offset && mouse.pos.row >= row_offset {
+                        let pos = Position {
+                            row: mouse.pos.row - row_offset,
+                            col: mouse.pos.col - col_offset,
+                        };
+                        let mut tag: Option<&Value> = None;
+                        for layout in layout.find_path(pos) {
+                            if let Some(tag_next) = layout.data::<Value>() {
+                                tag = Some(tag_next);
+                            };
+                        }
+                        tracing::debug!(?tag, ?mouse, "[sweep_ui_worker][mouse]");
+                        if let Some(tag) = tag.and_then(|tag| tag.as_str()) {
+                            let key_event = match state.key_actions.get(tag) {
+                                Some(action) if mouse.mode == KeyMod::PRESS => {
+                                    state.apply(&action.clone())
+                                }
+                                _ => {
+                                    let key = Key::new(mouse.name, mouse.mode);
+                                    SweepKeyEvent::Event(SweepEvent::Bind {
+                                        tag: tag.to_owned(),
+                                        chord: KeyChord::from_iter([key]),
+                                    })
+                                }
+                            };
+                            match key_event {
+                                SweepKeyEvent::Event(event) => {
+                                    events.send(event)?;
+                                }
+                                SweepKeyEvent::Quit => return Ok(TerminalAction::Quit(())),
+                                SweepKeyEvent::Nothing => {}
+                                SweepKeyEvent::Help => {
+                                    if state_help.is_none() {
+                                        state_help.replace(state.help_state(term.waker()));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1373,13 +1424,14 @@ where
             view.view_mut((row_offset as i32)..(row_offset + height) as i32, ..)
         };
         let ctx = ViewContext::new(term)?;
-        if let Some(state) = state_help.as_mut() {
+        let layout_id_next = if let Some(state) = state_help.as_mut() {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
-                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?;
+                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?
         } else {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
-                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?;
-        }
+                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?
+        };
+        layout_id = Some(layout_id_next);
 
         Ok(TerminalAction::Wait)
     });

@@ -410,6 +410,7 @@ pub fn fields_haystack<'a>(fields: &'a [Field<'_>]) -> impl Iterator<Item = char
 }
 
 /// Convert fields into [View]
+#[allow(clippy::too_many_arguments)]
 pub fn fields_view(
     fields: &[Field<'_>],
     positions: &Positions,

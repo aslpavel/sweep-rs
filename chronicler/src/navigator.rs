@@ -15,9 +15,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 use sweep::{
-    common::LockExt,
-    surf_n_term::{Glyph, Key},
-    Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
+    common::LockExt, surf_n_term::Glyph, Haystack, HaystackPreview, Positions, Sweep, SweepEvent,
+    SweepOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -155,22 +154,22 @@ impl Navigator {
         let sweep = Sweep::new(ctx, options)?;
         sweep.scorer_by_name(Some("substr".to_owned())).await?;
         sweep.bind(
-            vec!["tab".parse()?],
+            "tab".parse()?,
             TAG_COMPLETE.to_owned(),
             "Complete string or follow directory".to_owned(),
         );
         sweep.bind(
-            vec!["ctrl+i".parse()?],
+            "ctrl+i".parse()?,
             TAG_COMPLETE.to_owned(),
             "Complete string or follow directory".to_owned(),
         );
         sweep.bind(
-            vec!["ctrl+r".parse()?],
+            "ctrl+r".parse()?,
             TAG_COMMAND_HISTORY_MODE.to_owned(),
             "Switch to command history view".to_owned(),
         );
         sweep.bind(
-            vec!["ctrl+f".parse()?],
+            "ctrl+f".parse()?,
             TAG_PATH_HISTORY_MODE.to_owned(),
             "Switch to path history view".to_owned(),
         );
@@ -243,7 +242,7 @@ impl Navigator {
             match event {
                 SweepEvent::Resize(_) => {}
                 SweepEvent::Select(result) => return Ok(result),
-                SweepEvent::Bind(tag) => {
+                SweepEvent::Bind { tag, .. } => {
                     tracing::debug!(?tag, "[Navigator.run]");
                     let mode_next = match tag.as_str() {
                         TAG_COMMAND_HISTORY_MODE => Some(CmdHistoryMode::new(None, None)),
@@ -301,17 +300,17 @@ impl NavigatorMode for CmdHistoryMode {
             .prompt_set(Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
         navigator.sweep.keep_order(Some(true));
         navigator.sweep.bind(
-            Key::chord("alt+g s")?,
+            "alt+g s".parse()?,
             TAG_GOTO_SESSION.to_owned(),
             "Go to session of the current command".to_owned(),
         );
         navigator.sweep.bind(
-            Key::chord("alt+g d")?,
+            "alt+g d".parse()?,
             TAG_GOTO_DIRECTORY.to_owned(),
             "Go to current working directory of the command".to_owned(),
         );
         navigator.sweep.bind(
-            Key::chord("alt+g c")?,
+            "alt+g c".parse()?,
             TAG_FILTER_CWD.to_owned(),
             "Keep only commands that were executed in the current directory".to_owned(),
         );
@@ -351,7 +350,7 @@ impl NavigatorMode for CmdHistoryMode {
     async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
         navigator
             .sweep
-            .bind(Key::chord("alt+g s")?, String::new(), String::new());
+            .bind("alt+g s".parse()?, String::new(), String::new());
         Ok(())
     }
 
@@ -417,7 +416,7 @@ impl NavigatorMode for PathMode {
         navigator.sweep.query_set(self.query.clone());
 
         navigator.sweep.bind(
-            vec!["backspace".parse()?],
+            "backspace".parse()?,
             TAG_GOTO_PARENT.to_owned(),
             "Go to parent directory".to_owned(),
         );
@@ -437,7 +436,7 @@ impl NavigatorMode for PathMode {
     async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
         navigator
             .sweep
-            .bind(vec!["backspace".parse()?], String::new(), String::new());
+            .bind("backspace".parse()?, String::new(), String::new());
         Ok(())
     }
 

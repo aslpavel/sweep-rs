@@ -20,8 +20,9 @@ from .. import (
     IconFrame,
     Justify,
     Sweep,
+    SweepSize,
+    SweepEvent,
     Text,
-    sweep,
 )
 from . import sweep_default_cmd
 
@@ -133,7 +134,7 @@ async def main(args: Optional[List[str]] = None) -> None:
                 .border_radius(10)
                 .padding(10)
                 .border_width(3)
-            )
+            ).tag("my-custom-mouse-event")
             view = (
                 Container(
                     Flex.row().push(glyph, align=Align.CENTER).justify(Justify.CENTER)
@@ -142,14 +143,6 @@ async def main(args: Optional[List[str]] = None) -> None:
                 .trace_layout("sofa-layout")
             )
             return Field(view=view)
-
-    async def init(sweep: Sweep[Any]) -> None:
-        view = (
-            Container(Text(glyph=ICON_FOOT, face="fg=bg").push("Nice Footer"))
-            .face(face="bg=accent/.8")
-            .horizontal(Align.EXPAND)
-        )
-        await sweep.footer_set(view)
 
     candidates = [
         # simple fields
@@ -199,18 +192,31 @@ async def main(args: Optional[List[str]] = None) -> None:
         .preview_push(ref=ref_sofa),
     ]
 
-    result = await sweep(
-        candidates,
-        binds=[ctrl_q_action],
-        fields=fields,
+    result: Optional[SweepEvent[Candidate | str]] = None
+    async with Sweep[Candidate | str](
         field_resolver=field_resolver,
-        init=init,
-        prompt_icon=ICON_COCKTAIL,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
         tty=opts.tty,
         theme=opts.theme,
         log=opts.log,
-    )
+    ) as sweep:
+        view = (
+            Container(Text(glyph=ICON_FOOT, face="fg=bg").push("Nice Footer"))
+            .face(face="bg=accent/.8")
+            .horizontal(Align.EXPAND)
+        )
+        await sweep.footer_set(view)
+        await sweep.prompt_set(icon=ICON_COCKTAIL)
+        await sweep.field_register_many(fields)
+        await sweep.bind_struct(ctrl_q_action)
+        await sweep.items_extend(candidates)
+
+        async for event in sweep:
+            if isinstance(event, SweepSize):
+                continue
+            result = event
+            break
+
     print(result)
 
 

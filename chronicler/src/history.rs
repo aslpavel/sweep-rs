@@ -125,7 +125,9 @@ impl Haystack for HistoryEntry {
         let mut table = Table::new(10, Some(left_face), None);
         table.push(
             Text::new().push_str("Status", None).take(),
-            Text::new().push_fmt(format_args!("{}", self.status)).take(),
+            Text::new()
+                .push_fmt(&format_args!("{}", self.status))
+                .take(),
         );
         if let Some(date) = self
             .start_dt()
@@ -140,7 +142,7 @@ impl Haystack for HistoryEntry {
         table.push(
             Text::new().push_str("Duration", None).take(),
             Text::new()
-                .push_fmt(format_args!("{:.3}s", self.end_ts - self.start_ts))
+                .push_fmt(&format_args!("{:.3}s", self.end_ts - self.start_ts))
                 .take(),
         );
         table.push(

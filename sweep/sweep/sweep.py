@@ -34,7 +34,7 @@ from typing import (
     NamedTuple,
     Optional,
     Protocol,
-    Tuple,
+    TypeAlias,
     TypeVar,
     Union,
     cast,
@@ -101,9 +101,10 @@ class SweepBind(NamedTuple):
     """Event generated on bound key press"""
 
     tag: str
+    key: Optional[str]
 
     def __repr__(self):
-        return f'SweepBind("{self.tag}")'
+        return f"SweepBind(tag={self.tag}, key={self.key})"
 
 
 class SweepSize(NamedTuple):
@@ -357,9 +358,9 @@ class Candidate:
         )
 
 
-SweepEvent = Union[SweepBind, SweepSize, SweepSelect[I]]
-BindHandler = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
-FiledResolver = Callable[[int], Awaitable[Optional[Field]]]
+SweepEvent: TypeAlias = Union[SweepBind, SweepSize, SweepSelect[I]]
+BindHandler: TypeAlias = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
+FiledResolver: TypeAlias = Callable[[int], Awaitable[Optional[Field]]]
 
 
 @dataclass
@@ -403,12 +404,12 @@ async def sweep(
     """
     async with Sweep[I](**options) as sweep:
         # setup fields
-        for field_ref, field in (fields or {}).items():
-            await sweep.field_register(field, field_ref)
+        if fields:
+            await sweep.field_register_many(fields)
 
         # setup binds
         for bind in binds or []:
-            await sweep.bind(bind.key, bind.tag, bind.desc, bind.handler)
+            await sweep.bind_struct(bind)
 
         # setup prompt
         if isinstance(prompt_icon, str):
@@ -599,7 +600,10 @@ class Sweep(Generic[I]):
                     tag = event.params.get("tag", "")
                     handler = self._binds.get(tag)
                     if handler is None:
-                        yield SweepBind(event.params.get("tag", ""))
+                        yield SweepBind(
+                            event.params.get("tag", ""),
+                            event.params.get("key", None),
+                        )
                     else:
                         item = await handler(self, tag)
                         if item is not None:
@@ -631,6 +635,10 @@ class Sweep(Generic[I]):
             io_sock.close()
         if proc is not None:
             await proc.wait()
+
+    async def field_register_many(self, fields: dict[int, Any]) -> None:
+        for field_ref, field in fields.items():
+            await self.field_register(field, field_ref)
 
     async def field_register(self, field: Any, ref: Optional[int] = None) -> int:
         ref_val = await self._peer.field_register(
@@ -728,6 +736,9 @@ class Sweep(Generic[I]):
         else:
             await self._peer.footer_set()
 
+    async def bind_struct(self, bind: Bind[I]) -> None:
+        await self.bind(bind.key, bind.tag, bind.desc, bind.handler)
+
     async def bind(
         self,
         key: str,
@@ -787,7 +798,7 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
 # JSON RPC
 # ------------------------------------------------------------------------------
 # Rpc request|response id
-RpcId = Union[int, str, None]
+RpcId: TypeAlias = Union[int, str, None]
 
 
 class RpcRequest(NamedTuple):
@@ -1262,8 +1273,6 @@ class Event(Generic[E]):
 # ------------------------------------------------------------------------------
 # Views
 # ------------------------------------------------------------------------------
-
-
 class View(ABC):
     @abstractmethod
     def to_json(self) -> dict[str, Any]: ...
@@ -1271,6 +1280,10 @@ class View(ABC):
     def trace_layout(self, msg: str) -> View:
         """Print debug message with constraints and calculated layout"""
         return TraceLayout(self, msg)
+
+    def tag(self, tag: str) -> View:
+        """Wrap view into Tag"""
+        return Tag(tag, self)
 
 
 class Direction(Enum):
@@ -1295,7 +1308,7 @@ class Align(Enum):
     SHRINK = "shrink"
 
 
-_4Float = Tuple[float, float, float, float]
+_4Float: TypeAlias = tuple[float, float, float, float]
 
 
 def _4float(
@@ -1413,7 +1426,7 @@ class Icon(View):
         path: str,
         view_box: Optional[_4Float] = None,
         fill_rule: Optional[str] = None,
-        size: Optional[Tuple[int, int]] = None,
+        size: Optional[tuple[int, int]] = None,
         fallback: Optional[str] = None,
         frame: Optional[IconFrame] = None,
     ) -> None:
@@ -1561,8 +1574,8 @@ class Container(View):
     _face: Optional[str]
     _vertical: Align
     _horizontal: Align
-    _size: Tuple[int, int]
-    _margins: Tuple[int, int, int, int]
+    _size: tuple[int, int]
+    _margins: tuple[int, int, int, int]
 
     def __init__(self, child: View) -> None:
         self._child = child
@@ -1623,6 +1636,22 @@ class Container(View):
         return obj
 
 
+class Tag(View):
+    _tag: str
+    _view: View
+
+    def __init__(self, tag: str, view: View) -> None:  # noqa: E999
+        self._tag = tag
+        self._view = view
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "type": "tag",
+            "tag": self._tag,
+            "view": self._view.to_json(),
+        }
+
+
 class Text(View):
     _chunks: list[Text] | str
     _face: Optional[str]
@@ -1675,7 +1704,7 @@ class Text(View):
 
 
 class Image(View):
-    _size: Tuple[int, int]
+    _size: tuple[int, int]
     _channels: int
     _data: str
 
