@@ -116,8 +116,23 @@ async fn main() -> Result<(), Error> {
 }
 
 fn print_items(items: &[NavigatorItem]) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     for (index, item) in items.iter().enumerate() {
-        print!("{}={}", item.tag(), item);
+        print!("{}=", item.tag());
+        match item {
+            NavigatorItem::History(history) => print!("{}", history.cmd),
+            NavigatorItem::Path(path) => match path.path.strip_prefix(&cwd) {
+                Ok(path) => {
+                    let path_str = path.to_string_lossy();
+                    if path_str.is_empty() {
+                        print!(".");
+                    } else {
+                        print!("{}", path_str);
+                    }
+                }
+                Err(_) => print!("{}", path.path.to_string_lossy()),
+            },
+        }
         if index + 1 != items.len() {
             print!("\x0c")
         }
