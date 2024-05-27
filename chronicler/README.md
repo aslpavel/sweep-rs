@@ -11,12 +11,12 @@ and quick navigation and execution of commands from the history.
 ## Usage
 
 Pressing `ctrl+r` in a bash shell opens commands history.
-![chronicler-cmd-history](resources/chronicler-cmd-history.png)
+<img src="resources/chronicler-cmd-history.png" width="600" />
 
 Pressing `ctrl+f` in a bash shell opens path history
-![chronicler-path-history](resources/chronicler-path-history.png)
+<img src="resources/chronicler-path-history.png" width="600" />
 
 While in path history pressing `tab` opens will start navigation in the selected directory
-![chronicler-path-navigation](resources/chronicler-path-navigation.png)
+<img src="resources/chronicler-path-navigation.png" width="600" />
 
 Theme can be set by exporting `SWEEP_THEME` environment variable to `accent=<color>,bg=<color>,fg=<color>` where color is `#RRGGBB`.
