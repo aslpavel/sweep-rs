@@ -96,7 +96,7 @@ where
     pub fn keep_order(&self, toggle: Option<bool>) {
         self.sender
             .send(RankerCmd::KeepOrder(toggle))
-            .expect("failed to send scorer");
+            .expect("failed to send keep_order");
     }
 
     /// Get last result

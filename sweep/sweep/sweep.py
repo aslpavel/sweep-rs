@@ -3,7 +3,9 @@
 
 # pyright: strict
 from __future__ import annotations
+
 import asyncio
+import base64
 import inspect
 import json
 import os
@@ -11,16 +13,16 @@ import socket
 import sys
 import tempfile
 import time
-import base64
 import warnings
 from abc import ABC, abstractmethod
-from enum import Enum
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from asyncio.tasks import Task
 from collections import deque
-from functools import partial
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import Enum
+from functools import partial
 from typing import (
     Any,
     AsyncGenerator,
@@ -768,6 +770,16 @@ class Sweep(Generic[I]):
     async def state_pop(self) -> None:
         """Pop previous state from the stack"""
         await self._peer.state_pop()
+
+    @asynccontextmanager
+    async def render_suppress(self) -> AsyncIterator[None]:
+        """Suppress rending to reduce flicker during batch updates"""
+        try:
+            await self._peer.render_suppress(True)
+            yield None
+        finally:
+            if not self._peer.is_terminated:
+                await self._peer.render_suppress(False)
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
@@ -1744,8 +1756,8 @@ class Image(View):
 # Main
 # ------------------------------------------------------------------------------
 async def main(args: Optional[list[str]] = None) -> None:
-    import shlex
     import argparse
+    import shlex
 
     parser = argparse.ArgumentParser(description="Sweep is a command line fuzzy finder")
     parser.add_argument(

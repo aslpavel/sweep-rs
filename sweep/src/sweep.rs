@@ -140,6 +140,7 @@ enum SweepRequest<H> {
     RankerKeepOrder(Option<bool>),
     StatePush,
     StatePop,
+    RenderSuppress(bool),
 }
 
 #[derive(Clone, Debug)]
@@ -191,7 +192,7 @@ where
         self.send_request(SweepRequest::StatePush)
     }
 
-    /// Remove state at the top of the stack and active on below it
+    /// Remove state at the top of the stack and active one below it
     pub fn state_pop(&self) {
         self.send_request(SweepRequest::StatePop)
     }
@@ -312,6 +313,11 @@ where
     /// (see available with `ctrl+h`) in this case [SweepEvent::Bind] is not generated.
     pub fn bind(&self, chord: KeyChord, tag: String, desc: String) {
         self.send_request(SweepRequest::Bind { chord, tag, desc })
+    }
+
+    /// Suppress rendering to reduce flickering
+    pub fn render_suppress(&self, suppress: bool) {
+        self.send_request(SweepRequest::RenderSuppress(suppress))
     }
 
     /// Wait for single event in the asynchronous context
@@ -595,6 +601,18 @@ where
             move |_params: Value| {
                 sweep.state_pop();
                 future::ok(Value::Null)
+            }
+        });
+
+        // render_suppress
+        peer.register("render_suppress", {
+            let sweep = self.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                async move {
+                    sweep.render_suppress(params.take(0, "suppress")?);
+                    Ok(Value::Null)
+                }
             }
         });
 
@@ -1216,6 +1234,7 @@ where
     }))?;
 
     // render loop
+    let mut render_suppress = false;
     let mut layout_store = ViewLayoutStore::new();
     let mut layout_id: Option<TreeId> = None;
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
@@ -1328,6 +1347,10 @@ where
                                 state = state_new;
                             }
                         }
+                        RenderSuppress(suppress) => {
+                            render_suppress = suppress;
+                            tracing::debug!(?render_suppress, "[sweep_ui_worker][render_suppress]");
+                        }
                     }
                 }
             }
@@ -1428,6 +1451,9 @@ where
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
                 .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?
         } else {
+            if render_suppress {
+                return Ok(TerminalAction::Wait);
+            }
             tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
                 .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?
         };
