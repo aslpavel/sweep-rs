@@ -695,9 +695,6 @@ class MPDSweep:
             await self._sweep.query_set("")
             await self._sweep.items_extend(songs)
         if status.playlist_song is not None and songs:
-            # wait for ranker to complete
-            while (await self._sweep.items_current()) is None:
-                pass
             await self._sweep.cursor_set(status.playlist_song)
 
     async def view_songs(

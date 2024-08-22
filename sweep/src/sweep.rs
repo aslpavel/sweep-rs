@@ -21,7 +21,10 @@ use std::{
     marker::PhantomData,
     mem,
     ops::Deref,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
     thread::{Builder, JoinHandle},
     time::Duration,
 };
@@ -640,11 +643,11 @@ where
                 while let Some(event) = sweep.next_event().await {
                     match event {
                         SweepEvent::Bind { tag, chord } => {
-                            peer.notify_with_value("bind", json!({ "tag": tag, "key": chord }))?
+                            peer.notify_with_value("bind", json!({"tag": tag, "key": chord}))?
                         }
                         SweepEvent::Select(items) => {
                             if !items.is_empty() {
-                                peer.notify_with_value("select", json!({ "items": items }))?
+                                peer.notify_with_value("select", json!({"items": items}))?
                             }
                         }
                         SweepEvent::Resize(size) => peer.notify_with_value(
@@ -1235,6 +1238,7 @@ where
 
     // render loop
     let mut render_suppress = false;
+    let mut render_supress_sync: Option<Arc<AtomicBool>> = None;
     let mut layout_store = ViewLayoutStore::new();
     let mut layout_id: Option<TreeId> = None;
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
@@ -1349,7 +1353,10 @@ where
                         }
                         RenderSuppress(suppress) => {
                             render_suppress = suppress;
-                            tracing::debug!(?render_suppress, "[sweep_ui_worker][render_suppress]");
+                            if !suppress {
+                                render_supress_sync = Some(state.ranker.sync());
+                            }
+                            tracing::debug!(?suppress, "[sweep_ui_worker][render_suppress]");
                         }
                     }
                 }
@@ -1451,9 +1458,14 @@ where
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
                 .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?
         } else {
-            if render_suppress {
-                return Ok(TerminalAction::Wait);
+            if render_suppress
+                || !render_supress_sync
+                    .as_ref()
+                    .map_or_else(|| true, |s| s.load(Ordering::Acquire))
+            {
+                return Ok(TerminalAction::WaitNoFrame);
             }
+            render_supress_sync.take();
             tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
                 .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?
         };

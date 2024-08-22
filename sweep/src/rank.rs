@@ -6,7 +6,10 @@ use std::{
     collections::HashMap,
     hash::Hash,
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, RwLock,
+    },
     time::{Duration, Instant},
 };
 
@@ -103,6 +106,15 @@ where
     pub fn result(&self) -> Arc<RankedItems<H>> {
         self.result.with(|result| result.clone())
     }
+
+    /// Sets atomic to true once all requests before it has been processed
+    pub fn sync(&self) -> Arc<AtomicBool> {
+        let synced = Arc::new(AtomicBool::new(false));
+        self.sender
+            .send(RankerCmd::Sync(synced.clone()))
+            .expect("failed to send sync request");
+        synced
+    }
 }
 
 fn ranker_worker<H, N>(
@@ -125,6 +137,7 @@ fn ranker_worker<H, N>(
     let mut haystack_gen = 0usize;
     let mut pool: Pool<Vec<Match>> = Pool::new();
     let mut matches_prev: Arc<Vec<Match>> = Default::default();
+    let mut synced: Vec<Arc<AtomicBool>> = Vec::new();
 
     loop {
         enum RankAction {
@@ -182,13 +195,21 @@ fn ranker_worker<H, N>(
                         Some(value) => keep_order = value,
                     }
                 }
+                Sync(sync) => {
+                    synced.push(sync);
+                }
             }
         }
 
         // rank
         let rank_instant = Instant::now();
         let matches = match action {
-            DoNothing => continue,
+            DoNothing => {
+                for sync in synced.drain(..) {
+                    sync.store(true, Ordering::Release);
+                }
+                continue;
+            }
             Offset(offset) => {
                 let mut matches = pool.alloc();
                 matches.clear();
@@ -236,6 +257,10 @@ fn ranker_worker<H, N>(
                 rank_gen,
             });
         });
+
+        for sync in synced.drain(..) {
+            sync.store(true, Ordering::Release);
+        }
         if !notify(result.with(|r| r.clone())) {
             return;
         }
@@ -398,6 +423,7 @@ enum RankerCmd<H> {
     Needle(String),
     Scorer(ScorerBuilder),
     KeepOrder(Option<bool>),
+    Sync(Arc<AtomicBool>),
 }
 
 #[derive(Clone, Debug)]
