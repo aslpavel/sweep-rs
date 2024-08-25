@@ -203,12 +203,12 @@ fn ranker_worker<H, N>(
 
         // rank
         let rank_instant = Instant::now();
-        let matches = match action {
+        matches_prev = match action {
             DoNothing => {
-                for sync in synced.drain(..) {
-                    sync.store(true, Ordering::Release);
+                if synced.is_empty() {
+                    continue;
                 }
-                continue;
+                matches_prev
             }
             Offset(offset) => {
                 let mut matches = pool.alloc();
@@ -223,7 +223,7 @@ fn ranker_worker<H, N>(
                 if !keep_order {
                     matches.par_sort_unstable_by(|a, b| b.score.cmp(&a.score));
                 }
-                matches
+                pool.promote(matches)
             }
             CurrentMatch => {
                 let mut matches = pool.alloc();
@@ -231,7 +231,7 @@ fn ranker_worker<H, N>(
                 // score previous matches
                 matches.extend(matches_prev.iter().cloned());
                 rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
-                matches
+                pool.promote(matches)
             }
             All => {
                 let mut matches = pool.alloc();
@@ -239,14 +239,13 @@ fn ranker_worker<H, N>(
                 // score all haystack elements
                 matches.extend((0..haystack.with(|hs| hs.len())).map(Match::new));
                 rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
-                matches
+                pool.promote(matches)
             }
         };
         let rank_elapsed = rank_instant.elapsed();
 
         // update result
         rank_gen += 1;
-        matches_prev = pool.promote(matches);
         result.with_mut(|result| {
             *result = Arc::new(RankedItems {
                 haystack: haystack.clone(),

@@ -1463,6 +1463,7 @@ where
                     .as_ref()
                     .map_or_else(|| true, |s| s.load(Ordering::Acquire))
             {
+                tracing::debug!("[sweep_ui_worker][draw] suppressed");
                 return Ok(TerminalAction::WaitNoFrame);
             }
             render_supress_sync.take();
