@@ -82,7 +82,7 @@ impl Default for SweepOptions {
             title: "sweep".to_string(),
             scorers,
             altscreen: false,
-            border: 1,
+            border: 0,
         }
     }
 }
