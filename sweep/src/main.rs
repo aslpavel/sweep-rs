@@ -289,7 +289,7 @@ pub struct Args {
     pub log: Option<String>,
 
     /// leave border on the sides
-    #[argh(option, default = "1")]
+    #[argh(option, default = "0")]
     pub border: usize,
 
     /// whether to show item preview by default or not

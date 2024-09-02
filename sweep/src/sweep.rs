@@ -361,12 +361,10 @@ impl<H: Haystack> SweepInner<H> {
         let waker = term.waker();
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             move || {
-                sweep_ui_worker(options, term, requests_recv, events_send, haystack_context).map(
-                    |result| {
+                sweep_ui_worker(options, term, requests_recv, events_send, haystack_context)
+                    .inspect(|_result| {
                         let _ = terminate_send.send(());
-                        result
-                    },
-                )
+                    })
             }
         })?;
         Ok(SweepInner {
