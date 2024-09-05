@@ -7,12 +7,12 @@ import asyncio
 import json
 import sys
 import shlex
-from typing import Any, List, Optional
+from typing import Any
 from .. import sweep
 from . import sweep_default_cmd
 
 
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--theme", help="sweep theme")
     parser.add_argument("--sweep", help="path to the sweep command")
@@ -52,7 +52,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    candidates: List[Any]
+    candidates: list[Any]
     if opts.json:
         candidates = json.load(sys.stdin)
     else:

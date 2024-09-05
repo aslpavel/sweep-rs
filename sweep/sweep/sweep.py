@@ -103,7 +103,7 @@ class SweepBind(NamedTuple):
     """Event generated on bound key press"""
 
     tag: str
-    key: Optional[str]
+    key: str | None
 
     def __repr__(self):
         return f"SweepBind(tag={self.tag}, key={self.key})"
@@ -146,11 +146,11 @@ class Field:
     """Filed structure used to construct `Candidate`"""
 
     text: str = ""
-    glyph: Optional[Icon] = None
-    view: Optional[View] = None
+    glyph: Icon | None = None
+    view: View | None = None
     active: bool = True
-    face: Optional[str] = None
-    ref: Optional[int] = None
+    face: str | None = None
+    ref: int | None = None
 
     def __repr__(self) -> str:
         attrs: list[str] = []
@@ -186,7 +186,7 @@ class Field:
         return obj
 
     @staticmethod
-    def from_json(obj: Any) -> Optional[Field]:
+    def from_json(obj: Any) -> Field | None:
         """Create field from JSON object"""
         if not isinstance(obj, dict):
             return
@@ -210,12 +210,12 @@ class ToCandidate(Protocol):
 class Candidate:
     """Convenient sweep item implementation"""
 
-    target: Optional[list[Field]] = None
-    extra: Optional[dict[str, Any]] = None
-    right: Optional[list[Field]] = None
+    target: list[Field] | None = None
+    extra: dict[str, Any] | None = None
+    right: list[Field] | None = None
     right_offset: int = 0
-    right_face: Optional[str] = None
-    preview: Optional[list[Any]] = None
+    right_face: str | None = None
+    preview: list[Any] | None = None
     preview_flex: float = 0.0
 
     def to_candidate(self):
@@ -225,10 +225,10 @@ class Candidate:
         self,
         text: str = "",
         active: bool = True,
-        glyph: Optional[Icon] = None,
-        view: Optional[View] = None,
-        face: Optional[str] = None,
-        ref: Optional[int] = None,
+        glyph: Icon | None = None,
+        view: View | None = None,
+        face: str | None = None,
+        ref: int | None = None,
     ) -> Candidate:
         """Add field to the target (matchable left side text)"""
         if self.target is None:
@@ -240,10 +240,10 @@ class Candidate:
         self,
         text: str = "",
         active: bool = False,
-        glyph: Optional[Icon] = None,
-        view: Optional[View] = None,
-        face: Optional[str] = None,
-        ref: Optional[int] = None,
+        glyph: Icon | None = None,
+        view: View | None = None,
+        face: str | None = None,
+        ref: int | None = None,
     ) -> Candidate:
         """Add field to the right (unmatchable right side text)"""
         if self.right is None:
@@ -265,10 +265,10 @@ class Candidate:
         self,
         text: str = "",
         active: bool = False,
-        glyph: Optional[Icon] = None,
-        view: Optional[View] = None,
-        face: Optional[str] = None,
-        ref: Optional[int] = None,
+        glyph: Icon | None = None,
+        view: View | None = None,
+        face: str | None = None,
+        ref: int | None = None,
     ) -> Candidate:
         """Add field to the preview (text shown when item is highlighted)"""
         if self.preview is None:
@@ -324,14 +324,14 @@ class Candidate:
         return obj
 
     @staticmethod
-    def from_json(obj: Any) -> Optional[Candidate]:
+    def from_json(obj: Any) -> Candidate | None:
         """Construct candidate from JSON object"""
         if isinstance(obj, str):
             return Candidate().target_push(obj)
         if not isinstance(obj, dict):
             return
 
-        def fields_from_json(fields_obj: Any) -> Optional[list[Field]]:
+        def fields_from_json(fields_obj: Any) -> list[Field] | None:
             if not isinstance(fields_obj, list):
                 return None
             fields: list[Field] = []
@@ -394,10 +394,10 @@ class Bind(Generic[I]):
 
 async def sweep(
     items: Iterable[I],
-    prompt_icon: Optional[Icon | str] = None,
-    binds: Optional[list[Bind[I]]] = None,
-    fields: Optional[dict[int, Any]] = None,
-    init: Optional[Callable[[Sweep[I]], Awaitable[None]]] = None,
+    prompt_icon: Icon | str | None = None,
+    binds: list[Bind[I]] | None = None,
+    fields: dict[int, Any] | None = None,
+    init: Callable[[Sweep[I]], Awaitable[None]] | None = None,
     **options: Any,
 ) -> list[I]:
     """Convenience wrapper around `Sweep`
@@ -464,34 +464,34 @@ class Sweep(Generic[I]):
     ]
 
     _args: list[str]
-    _proc: Optional[Process]
-    _io_sock: Optional[socket.socket]
+    _proc: Process | None
+    _io_sock: socket.socket | None
     _peer: RpcPeer
     _tmp_socket: bool  # create tmp socket instead of communicating via socket-pair
     _items: list[I]
     _binds: dict[str, BindHandler[I]]
-    _field_resolver: Optional[FiledResolver]
-    _size: Optional[SweepSize]
+    _field_resolver: FiledResolver | None
+    _size: SweepSize | None
 
     def __init__(
         self,
         sweep: list[str] = ["sweep"],
         prompt: str = "INPUT",
-        query: Optional[str] = None,
-        nth: Optional[str] = None,
+        query: str | None = None,
+        nth: str | None = None,
         height: int = 11,
-        delimiter: Optional[str] = None,
-        theme: Optional[str] = None,
-        scorer: Optional[str] = None,
-        tty: Optional[str] = None,
-        log: Optional[str] = None,
-        title: Optional[str] = None,
+        delimiter: str | None = None,
+        theme: str | None = None,
+        scorer: str | None = None,
+        tty: str | None = None,
+        log: str | None = None,
+        title: str | None = None,
         keep_order: bool = False,
-        no_match: Optional[str] = None,
+        no_match: str | None = None,
         altscreen: bool = False,
         tmp_socket: bool = False,
-        border: Optional[int] = None,
-        field_resolver: Optional[FiledResolver] = None,
+        border: int | None = None,
+        field_resolver: FiledResolver | None = None,
     ) -> None:
         args: list[str] = []
         args.extend(["--prompt", prompt])
@@ -578,7 +578,7 @@ class Sweep(Generic[I]):
         """Return stored item if it was converted to Candidate"""
         if isinstance(item, dict):
             item_dict = cast(dict[str, Any], item)
-            item_index: Optional[int] = item_dict.get("_sweep_item_index")
+            item_index: int | None = item_dict.get("_sweep_item_index")
             if item_index is not None and item_index < len(self._items):
                 return self._items[item_index]  # type: ignore
         return cast(I, item)
@@ -642,7 +642,7 @@ class Sweep(Generic[I]):
         for field_ref, field in fields.items():
             await self.field_register(field, field_ref)
 
-    async def field_register(self, field: Any, ref: Optional[int] = None) -> int:
+    async def field_register(self, field: Any, ref: int | None = None) -> int:
         ref_val = await self._peer.field_register(
             field.to_json() if isinstance(field, Field) else field, ref
         )
@@ -651,8 +651,8 @@ class Sweep(Generic[I]):
 
     def field_resolver_set(
         self,
-        field_resolver: Optional[FiledResolver],
-    ) -> Optional[FiledResolver]:
+        field_resolver: FiledResolver | None,
+    ) -> FiledResolver | None:
         """Set field resolver"""
         field_resolver, self._field_resolver = self._field_resolver, field_resolver
         return field_resolver
@@ -691,7 +691,7 @@ class Sweep(Generic[I]):
         self._items.clear()
         await self._peer.items_clear()
 
-    async def items_current(self) -> Optional[I]:
+    async def items_current(self) -> I | None:
         """Get currently selected item if any"""
         return self._item_get(await self._peer.items_current())
 
@@ -715,8 +715,8 @@ class Sweep(Generic[I]):
 
     async def prompt_set(
         self,
-        prompt: Optional[str] = None,
-        icon: Optional[Icon] = None,
+        prompt: str | None = None,
+        icon: Icon | None = None,
     ) -> None:
         """Set prompt label and icon"""
         attrs: dict[str, Any] = {}
@@ -727,11 +727,11 @@ class Sweep(Generic[I]):
         if attrs:
             await self._peer.prompt_set(**attrs)
 
-    async def preview_set(self, value: Optional[bool]) -> None:
+    async def preview_set(self, value: bool | None) -> None:
         """Whether to show preview associated with the current item"""
         await self._peer.preview_set(value=value)
 
-    async def footer_set(self, footer: Optional[View]) -> None:
+    async def footer_set(self, footer: View | None) -> None:
         """Set footer view"""
         if footer:
             await self._peer.footer_set(footer=footer.to_json())
@@ -746,7 +746,7 @@ class Sweep(Generic[I]):
         key: str,
         tag: str,
         desc: str = "",
-        handler: Optional[BindHandler[I]] = None,
+        handler: BindHandler[I] | None = None,
     ) -> None:
         """Assign new key binding
 
@@ -830,7 +830,7 @@ class RpcRequest(NamedTuple):
         return json.dumps(request).encode()
 
     @classmethod
-    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcRequest]:
+    def deserialize(cls, obj: dict[str, Any]) -> RpcRequest | None:
         method = obj.get("method")
         if not isinstance(method, str):
             return None
@@ -854,7 +854,7 @@ class RpcResult(NamedTuple):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcResult]:
+    def deserialize(cls, obj: dict[str, Any]) -> RpcResult | None:
         if "result" not in obj:
             return None
         return RpcResult(obj.get("result"), obj.get("id"))
@@ -865,10 +865,10 @@ class RpcError(Exception):
 
     code: int
     message: str
-    data: Optional[str]
+    data: str | None
     id: RpcId
 
-    def __init__(self, code: int, message: str, data: Optional[str], id: RpcId) -> None:
+    def __init__(self, code: int, message: str, data: str | None, id: RpcId) -> None:
         self.code = code
         self.message = message
         self.data = data
@@ -893,8 +893,8 @@ class RpcError(Exception):
         return json.dumps(response).encode()
 
     @classmethod
-    def deserialize(cls, obj: dict[str, Any]) -> Optional[RpcError]:
-        error: Optional[dict[str, Any]] = obj.get("error")
+    def deserialize(cls, obj: dict[str, Any]) -> RpcError | None:
+        error: dict[str, Any] | None = obj.get("error")
         if error is None:
             return None
         code = error.get("code")
@@ -906,7 +906,7 @@ class RpcError(Exception):
         return RpcError(code, message, error.get("data"), obj.get("id"))
 
     @classmethod
-    def current(cls, *, data: Optional[str] = None, id: RpcId = None) -> RpcError:
+    def current(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         """Create internal error from current exception"""
         etype, error, _ = sys.exc_info()
         if etype is None:
@@ -920,30 +920,30 @@ class RpcError(Exception):
         return cls.internal_error(data=data, id=id)
 
     @classmethod
-    def parse_error(cls, *, data: Optional[str] = None, id: RpcId = None) -> RpcError:
+    def parse_error(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         return RpcError(-32700, "Parse error", data, id)
 
     @classmethod
     def invalid_request(
-        cls, *, data: Optional[str] = None, id: RpcId = None
+        cls, *, data: str | None = None, id: RpcId = None
     ) -> RpcError:
         return RpcError(-32600, "Invalid request", data, id)
 
     @classmethod
     def method_not_found(
-        cls, *, data: Optional[str] = None, id: RpcId = None
+        cls, *, data: str | None = None, id: RpcId = None
     ) -> RpcError:
         return RpcError(-32601, "Method not found", data, id)
 
     @classmethod
     def invalid_params(
-        cls, *, data: Optional[str] = None, id: RpcId = None
+        cls, *, data: str | None = None, id: RpcId = None
     ) -> RpcError:
         return RpcError(-32602, "Invalid params", data, id)
 
     @classmethod
     def internal_error(
-        cls, *, data: Optional[str] = None, id: RpcId = None
+        cls, *, data: str | None = None, id: RpcId = None
     ) -> RpcError:
         return RpcError(-32603, "Internal error", data, id)
 
@@ -972,7 +972,7 @@ class RpcPeer:
     _write_queue: deque[RpcMessage]  # messages to be send to the other peer
     _write_notify: Event[None]  # event used to wake up writer
     _is_terminated: bool  # whether peer was terminated
-    _serve_task: Optional[Future[Any]]  # running serve task
+    _serve_task: Future[Any] | None  # running serve task
     _events: Event[RpcRequest]  # received events (requests with id = None)
 
     def __init__(self) -> None:
@@ -1173,7 +1173,7 @@ class RpcPeer:
                 break
             obj = json.loads(data)
             # deserialize
-            message: Optional[RpcMessage] = None
+            message: RpcMessage | None = None
             message = (
                 RpcRequest.deserialize(obj)
                 or RpcError.deserialize(obj)
@@ -1222,8 +1222,7 @@ V = TypeVar("V")
 
 def create_task(coro: Coroutine[Any, Any, V], name: str) -> Task[V]:
     task = asyncio.create_task(coro)
-    if sys.version_info >= (3, 8):
-        task.set_name(name)
+    task.set_name(name)
     return task
 
 
@@ -1325,9 +1324,9 @@ _4Float: TypeAlias = tuple[float, float, float, float]
 
 def _4float(
     a: float,
-    b: Optional[float] = None,
-    c: Optional[float] = None,
-    d: Optional[float] = None,
+    b: float | None = None,
+    c: float | None = None,
+    d: float | None = None,
     /,
 ) -> _4Float:
     if b is None:
@@ -1343,12 +1342,12 @@ def _4float(
 class IconFrame:
     def __init__(
         self,
-        margins: Optional[_4Float] = None,
-        border_width: Optional[_4Float] = None,
-        border_radius: Optional[_4Float] = None,
-        border_color: Optional[str] = None,
-        padding: Optional[_4Float] = None,
-        fill_color: Optional[str] = None,
+        margins: _4Float | None = None,
+        border_width: _4Float | None = None,
+        border_radius: _4Float | None = None,
+        border_color: str | None = None,
+        padding: _4Float | None = None,
+        fill_color: str | None = None,
     ) -> None:
         self._margins = margins
         self._border_width = border_width
@@ -1360,9 +1359,9 @@ class IconFrame:
     def margins(
         self,
         a: float,
-        b: Optional[float] = None,
-        c: Optional[float] = None,
-        d: Optional[float] = None,
+        b: float | None = None,
+        c: float | None = None,
+        d: float | None = None,
         /,
     ) -> IconFrame:
         self._margins = _4float(a, b, c, d)
@@ -1371,9 +1370,9 @@ class IconFrame:
     def border_width(
         self,
         a: float,
-        b: Optional[float] = None,
-        c: Optional[float] = None,
-        d: Optional[float] = None,
+        b: float | None = None,
+        c: float | None = None,
+        d: float | None = None,
         /,
     ) -> IconFrame:
         self._border_width = _4float(a, b, c, d)
@@ -1382,30 +1381,30 @@ class IconFrame:
     def border_radius(
         self,
         a: float,
-        b: Optional[float] = None,
-        c: Optional[float] = None,
-        d: Optional[float] = None,
+        b: float | None = None,
+        c: float | None = None,
+        d: float | None = None,
         /,
     ) -> IconFrame:
         self._border_radius = _4float(a, b, c, d)
         return self
 
-    def border_color(self, color: Optional[str]) -> IconFrame:
+    def border_color(self, color: str | None) -> IconFrame:
         self._border_color = color
         return self
 
     def padding(
         self,
         a: float,
-        b: Optional[float] = None,
-        c: Optional[float] = None,
-        d: Optional[float] = None,
+        b: float | None = None,
+        c: float | None = None,
+        d: float | None = None,
         /,
     ) -> IconFrame:
         self._padding = _4float(a, b, c, d)
         return self
 
-    def fill_color(self, color: Optional[str]) -> IconFrame:
+    def fill_color(self, color: str | None) -> IconFrame:
         self._fill_color = color
         return self
 
@@ -1436,11 +1435,11 @@ class Icon(View):
     def __init__(
         self,
         path: str,
-        view_box: Optional[_4Float] = None,
-        fill_rule: Optional[str] = None,
-        size: Optional[tuple[int, int]] = None,
-        fallback: Optional[str] = None,
-        frame: Optional[IconFrame] = None,
+        view_box: _4Float | None = None,
+        fill_rule: str | None = None,
+        size: tuple[int, int] | None = None,
+        fallback: str | None = None,
+        frame: IconFrame | None = None,
     ) -> None:
         self._path = path
         self._view_box = view_box
@@ -1454,10 +1453,10 @@ class Icon(View):
         return self
 
     @staticmethod
-    def from_str_or_file(str_or_file: str) -> Optional[Icon]:
+    def from_str_or_file(str_or_file: str) -> Icon | None:
         """Create sweep icon either by reading it from file or parsing from string"""
         if os.path.exists(str_or_file):
-            with open(str_or_file, "r") as file:
+            with open(str_or_file) as file:
                 str_or_file = file.read()
         try:
             return Icon.from_json(json.loads(str_or_file))
@@ -1465,7 +1464,7 @@ class Icon(View):
             return Icon.from_json(str_or_file)
 
     @staticmethod
-    def from_json(obj: Any) -> Optional[Icon]:
+    def from_json(obj: Any) -> Icon | None:
         """Create icon from JSON object"""
 
         def is_path(path: str) -> bool:
@@ -1523,8 +1522,8 @@ class TraceLayout(View):
 
 class FlexChild(NamedTuple):
     view: View
-    flex: Optional[float]
-    face: Optional[str]
+    flex: float | None
+    face: str | None
     align: Align
 
 
@@ -1554,8 +1553,8 @@ class Flex(View):
     def push(
         self,
         child: View,
-        flex: Optional[float] = None,
-        face: Optional[str] = None,
+        flex: float | None = None,
+        face: str | None = None,
         align: Align = Align.START,
     ) -> Flex:
         self._children.append(FlexChild(child, flex, face, align))
@@ -1583,7 +1582,7 @@ class Flex(View):
 
 class Container(View):
     _child: View
-    _face: Optional[str]
+    _face: str | None
     _vertical: Align
     _horizontal: Align
     _size: tuple[int, int]
@@ -1611,10 +1610,10 @@ class Container(View):
 
     def margins(
         self,
-        left: Optional[int] = None,
-        right: Optional[int] = None,
-        top: Optional[int] = None,
-        bottom: Optional[int] = None,
+        left: int | None = None,
+        right: int | None = None,
+        top: int | None = None,
+        bottom: int | None = None,
     ) -> Container:
         left = left if left is not None else self._margins[0]
         right = right if right is not None else self._margins[1]
@@ -1625,8 +1624,8 @@ class Container(View):
 
     def size(
         self,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
+        height: int | None = None,
+        width: int | None = None,
     ) -> Container:
         height = height if height is not None else self._size[0]
         width = width if width is not None else self._size[1]
@@ -1666,14 +1665,14 @@ class Tag(View):
 
 class Text(View):
     _chunks: list[Text] | str
-    _face: Optional[str]
-    _glyph: Optional[Icon]
+    _face: str | None
+    _glyph: Icon | None
 
     def __init__(
         self,
         text: str = "",
-        glyph: Optional[Icon] = None,
-        face: Optional[str] = None,
+        glyph: Icon | None = None,
+        face: str | None = None,
     ):
         self._chunks = text
         self._face = face
@@ -1682,8 +1681,8 @@ class Text(View):
     def push(
         self,
         text: str = "",
-        glyph: Optional[Icon] = None,
-        face: Optional[str] = None,
+        glyph: Icon | None = None,
+        face: str | None = None,
     ) -> Text:
         chunk = Text(text, glyph, face)
         if isinstance(self._chunks, list):
@@ -1755,7 +1754,7 @@ class Image(View):
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
-async def main(args: Optional[list[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     import argparse
     import shlex
 

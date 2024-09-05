@@ -8,7 +8,7 @@ import argparse
 import asyncio
 import re
 import shlex
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Iterable
 from .. import Icon, sweep, Candidate
 from . import sweep_default_cmd
 
@@ -25,12 +25,12 @@ TERM_ICON = Icon(
 )
 
 
-def history(history_file: Optional[str] = None) -> Iterable[Tuple[datetime, str]]:
+def history(history_file: str | None = None) -> Iterable[tuple[datetime, str]]:
     """List all bash history entries"""
     if history_file is None:
         history_file = BASH_HISTORY_FILE
-    entries: Dict[str, datetime] = {}
-    entry: List[str] = []
+    entries: dict[str, datetime] = {}
+    entry: list[str] = []
     with Path(history_file).expanduser().resolve().open() as file:
         date = None
         for line in file:
@@ -49,7 +49,7 @@ def history(history_file: Optional[str] = None) -> Iterable[Tuple[datetime, str]
     )
 
 
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theme", help="sweep theme")
     parser.add_argument("--sweep", help="path to the sweep command")
@@ -60,7 +60,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    candidates: List[Any] = []
+    candidates: list[Any] = []
     for date, entry in history(opts.history_file):
         candidates.append(
             Candidate()

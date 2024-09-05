@@ -27,7 +27,6 @@ from typing import (
     NamedTuple,
     Sequence,
     cast,
-    Optional,
 )
 
 from sweep import BindHandler, Event, SweepSelect
@@ -82,15 +81,15 @@ class PlayState(Enum):
 class Song:
     file: str
     duration: float
-    artist: Optional[str]
-    album: Optional[str]
-    title: Optional[str]
-    date: Optional[datetime]
-    track: Optional[int]
+    artist: str | None
+    album: str | None
+    title: str | None
+    date: datetime | None
+    track: int | None
     attrs: dict[str, str]
-    pos: Optional[int]  # position in the playlist
-    id: Optional[int]  # song id in the playlist
-    current: Optional[MPDStatus]  # if song is currently playing
+    pos: int | None  # position in the playlist
+    id: int | None  # song id in the playlist
+    current: MPDStatus | None  # if song is currently playing
 
     def __init__(self, file: str) -> None:
         self.file = file
@@ -200,10 +199,10 @@ class Song:
 @dataclass
 class Album:
     name: str
-    date: Optional[datetime]
+    date: datetime | None
     songs: list[Song]
 
-    def __init__(self, name: str, date: Optional[datetime]) -> None:
+    def __init__(self, name: str, date: datetime | None) -> None:
         self.name = name
         self.date = date
         self.songs = []
@@ -231,8 +230,8 @@ class Database:
 
     def songs(
         self,
-        artist: Optional[str] = None,
-        album: Optional[str] = None,
+        artist: str | None = None,
+        album: str | None = None,
     ) -> list[Song]:
         artists: Iterable[dict[str, Album]]
         if artist is None:
@@ -275,10 +274,10 @@ class MPDStatus(NamedTuple):
     playlist_version: int
     playlist_length: int
     state: PlayState
-    elapsed: Optional[float]
-    duration: Optional[float]
-    playlist_song: Optional[int]
-    playlist_song_id: Optional[int]
+    elapsed: float | None
+    duration: float | None
+    playlist_song: int | None
+    playlist_song_id: int | None
 
 
 class MPDState(Enum):
@@ -328,14 +327,14 @@ class MPD:
         self.events = Event[MPDEvent]()
         self._host = host
         self._port = port
-        self._database: Optional[Database] = None
+        self._database: Database | None = None
 
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
 
         self._state = MPDState.WAIT
         self._state_cond = asyncio.Condition()
-        self._idle_task: Optional[asyncio.Task[None]] = None
+        self._idle_task: asyncio.Task[None] | None = None
 
         self._album_id_to_song: dict[int, Song] = {}
 
@@ -428,7 +427,7 @@ class MPD:
             attrs[chunk.name] = cast(str, chunk.data)
         return attrs
 
-    def song_by_id(self, id: int) -> Optional[Song]:
+    def song_by_id(self, id: int) -> Song | None:
         return self._album_id_to_song.get(id)
 
     async def database(self) -> Database:
@@ -446,7 +445,7 @@ class MPD:
             return
         await self._call_dict("playid", str(song.id))
 
-    async def pause(self, pause: Optional[bool] = None) -> None:
+    async def pause(self, pause: bool | None = None) -> None:
         """Pause/Resume playback, if pause is not set then toggle"""
         if pause is None:
             await self._call_dict("pause")
@@ -465,10 +464,10 @@ class MPD:
     async def add(
         self,
         song: Song,
-        pos: Optional[int] = None,
+        pos: int | None = None,
         relative: bool = False,
         allow_dup: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Add song to the playlist"""
         if not allow_dup:
             files = {song.file for song in await self.playlistinfo()}
@@ -523,7 +522,7 @@ class MPD:
             else None,
         )
 
-    async def currentsong(self) -> Optional[Song]:
+    async def currentsong(self) -> Song | None:
         async for song in Song.from_chunks(self._call("currentsong")):
             return song
 
@@ -543,7 +542,7 @@ class MPD:
 
     async def readpicture(
         self, file: str, width: int = 500
-    ) -> Optional[PILImage.Image]:
+    ) -> PILImage.Image | None:
         """Read picture embedded in music file"""
         cmd = "readpicture"
         size = 0
@@ -673,7 +672,7 @@ class MPDSweep:
         finally:
             update_task.cancel()
 
-    async def view_switch(self, view: Optional[MPDSweepView] = None) -> None:
+    async def view_switch(self, view: MPDSweepView | None = None) -> None:
         match view:
             case None | MPDSweepView.MAX:
                 view = MPDSweepView((self._view.value + 1) % MPDSweepView.MAX.value)
@@ -699,8 +698,8 @@ class MPDSweep:
 
     async def view_songs(
         self,
-        songs: Optional[Sequence[Song]] = None,
-        prompt: Optional[str] = None,
+        songs: Sequence[Song] | None = None,
+        prompt: str | None = None,
     ) -> None:
         """Switch to set view"""
         if songs is None:
@@ -797,7 +796,7 @@ class MPDSweep:
         )
 
 
-async def main(args: Optional[list[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__,
@@ -834,6 +833,8 @@ async def main(args: Optional[list[str]] = None) -> None:
             sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.mpd"])
         elif opts.term == "foot":
             sweep_cmd.extend(["foot", "--app-id", "org.aslpavel.sweep.mpd"])
+    else:
+        sweep_args["height"] = 18
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 
     async with MPD() as mpd:

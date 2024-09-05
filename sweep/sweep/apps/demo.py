@@ -7,7 +7,7 @@ import argparse
 import asyncio
 import os
 import shlex
-from typing import Any, List, Optional
+from typing import Any
 
 from .. import (
     Align,
@@ -101,7 +101,7 @@ ICON_FOOT = Icon(
 )
 
 
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Demo that uses python sweep API")
     parser.add_argument("--theme", help="sweep theme")
     parser.add_argument("--sweep", help="path to the sweep command")
@@ -114,7 +114,7 @@ async def main(args: Optional[List[str]] = None) -> None:
 
     # Bindings
     @Bind[Any].decorator("ctrl+q", "user.custom.action", "My awesome custom action")
-    async def ctrl_q_action(_sweep: Any, _tag: str) -> Optional[Any]:
+    async def ctrl_q_action(_sweep: Any, _tag: str) -> Any | None:
         return ctrl_q_action
 
     # Field references
@@ -127,7 +127,7 @@ async def main(args: Optional[List[str]] = None) -> None:
     }
 
     # Dynamic field references
-    async def field_resolver(ref: int) -> Optional[Field]:
+    async def field_resolver(ref: int) -> Field | None:
         if ref == ref_sofa:
             glyph = ICON_SOFA.frame(
                 IconFrame(fill_color="gruv-aqua-2", border_color="gruv-aqua-1")
@@ -192,7 +192,7 @@ async def main(args: Optional[List[str]] = None) -> None:
         .preview_push(ref=ref_sofa),
     ]
 
-    result: Optional[SweepEvent[Candidate | str]] = None
+    result: SweepEvent[Candidate | str] | None = None
     async with Sweep[Candidate | str](
         field_resolver=field_resolver,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),

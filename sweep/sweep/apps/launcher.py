@@ -11,7 +11,7 @@ import asyncio
 import shlex
 import shutil
 import re
-from typing import Any, List, NamedTuple, cast, Optional, Dict
+from typing import Any, List, NamedTuple, cast
 from gi.repository import Gio  # type: ignore
 from .. import Candidate, Icon, sweep, Field
 from . import sweep_default_cmd
@@ -60,7 +60,7 @@ class DesktopEntry(NamedTuple):
 
     app_info: Any  # Gio.AppInfo https://lazka.github.io/pgi-docs/#Gio-2.0/classes/DesktopAppInfo.html#Gio.DesktopAppInfo
 
-    def find_terminal(self, term: Optional[str] = None) -> Optional[str]:
+    def find_terminal(self, term: str | None = None) -> str | None:
         if term is not None:
             terms = [term, *self.TERMINALS]
         else:
@@ -72,11 +72,11 @@ class DesktopEntry(NamedTuple):
 
     def commandline(
         self,
-        path: Optional[str] = None,
-        term: Optional[str] = None,
-    ) -> Optional[str]:
+        path: str | None = None,
+        term: str | None = None,
+    ) -> str | None:
         """Get command line required to launch app"""
-        cmd: Optional[str] = self.app_info.get_commandline()
+        cmd: str | None = self.app_info.get_commandline()
         if cmd is None:
             return None
         cmd = self.CLEANUP_RE.sub("", cmd)
@@ -110,8 +110,8 @@ class DesktopEntry(NamedTuple):
     def should_show(self) -> bool:
         return not self.app_info.get_boolean("NoDisplay")
 
-    def keywords(self) -> List[str]:
-        kw: List[str] = self.app_info.get_keywords() or []
+    def keywords(self) -> list[str]:
+        kw: list[str] = self.app_info.get_keywords() or []
         if self.is_flatpak():
             kw.append("flatpak")
         if self.requires_terminal():
@@ -153,8 +153,8 @@ class DesktopEntry(NamedTuple):
         return candidate
 
     @staticmethod
-    def get_all() -> List[DesktopEntry]:
-        apps: List[DesktopEntry] = []
+    def get_all() -> list[DesktopEntry]:
+        apps: list[DesktopEntry] = []
         for app_info in cast(List[Any], Gio.AppInfo.get_all()):  # type: ignore
             app = DesktopEntry(app_info)
             if not app.should_show():
@@ -164,7 +164,7 @@ class DesktopEntry(NamedTuple):
         return apps
 
 
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__,
@@ -190,8 +190,8 @@ async def main(args: Optional[List[str]] = None) -> None:
     }
 
     sweep_theme = opts.theme
-    sweep_args: Dict[str, Any] = {}
-    sweep_cmd: List[str] = []
+    sweep_args: dict[str, Any] = {}
+    sweep_cmd: list[str] = []
     if not opts.no_window:
         sweep_theme = sweep_theme or "dark"
         sweep_args.update(

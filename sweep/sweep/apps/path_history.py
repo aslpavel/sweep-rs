@@ -15,12 +15,7 @@ import shlex
 import time
 from typing import (
     Callable,
-    Deque,
-    Dict,
     Iterator,
-    List,
-    Optional,
-    Tuple,
     TypedDict,
 )
 from dataclasses import dataclass
@@ -84,8 +79,8 @@ class PathHistoryEntry:
 
 @dataclass
 class PathHistory:
-    mtime: Optional[int]
-    entries: Dict[Path, PathHistoryEntry]
+    mtime: int | None
+    entries: dict[Path, PathHistoryEntry]
 
     def __iter__(self) -> Iterator[PathHistoryEntry]:
         return iter(self.entries.values())
@@ -109,7 +104,7 @@ class PathHistoryStore:
                 fcntl.lockf(file, fcntl.LOCK_UN)
 
         mtime = int(content.readline().strip() or "0")
-        paths: Dict[Path, PathHistoryEntry] = {}
+        paths: dict[Path, PathHistoryEntry] = {}
         for line in content:
             count_str, timestamp, path_str = line.split("\t")
             count = int(count_str)
@@ -182,7 +177,7 @@ class PathHistoryStore:
 
 
 class PathItem(TypedDict):
-    entry: List[Tuple[str, bool]]
+    entry: list[tuple[str, bool]]
     path: str
 
 
@@ -191,7 +186,7 @@ class FileNode:
 
     path: Path
     is_dir: bool
-    _children: Optional[Dict[str, FileNode]]
+    _children: dict[str, FileNode] | None
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -199,7 +194,7 @@ class FileNode:
         self._children = None if self.is_dir else {}
 
     @property
-    def children(self) -> Dict[str, FileNode]:
+    def children(self) -> dict[str, FileNode]:
         if self._children is not None:
             return self._children
         self._children = {}
@@ -212,10 +207,10 @@ class FileNode:
             pass
         return self._children
 
-    def get(self, name: str) -> Optional[FileNode]:
+    def get(self, name: str) -> FileNode | None:
         return self.children.get(name)
 
-    def find(self, path: Path) -> Optional[FileNode]:
+    def find(self, path: Path) -> FileNode | None:
         node = self
         for name in path.parts:
             node_next = node.get(name)
@@ -224,13 +219,13 @@ class FileNode:
             node = node_next
         return node
 
-    def candidates(self, limit: Optional[int] = None) -> Iterator[PathItem]:
+    def candidates(self, limit: int | None = None) -> Iterator[PathItem]:
         limit = DEFAULT_SOFT_LIMIT if limit is None else limit
         parts_len = len(self.path.parts)
         max_depth = None
         count = 0
 
-        queue: Deque[Tuple[FileNode, int]] = deque([(self, 0)])
+        queue: deque[tuple[FileNode, int]] = deque([(self, 0)])
         while queue:
             node, depth = queue.popleft()
             if max_depth and depth > max_depth:
@@ -248,7 +243,7 @@ class FileNode:
             if count >= limit:
                 max_depth = depth
 
-    def _sort_key(self) -> Tuple[int, int, Path]:
+    def _sort_key(self) -> tuple[int, int, Path]:
         hidden = 1 if self.path.name.startswith(".") else 0
         not_dir = 0 if self.is_dir else 1
         return (hidden, not_dir, self.path)
@@ -257,7 +252,7 @@ class FileNode:
         return str(self.path)
 
     def __repr__(self) -> str:
-        return 'FileNode("{}")'.format(self.path)
+        return f'FileNode("{self.path}")'
 
 
 def collapse_path(path: Path) -> Path:
@@ -275,7 +270,7 @@ KEY_LIST = "path.search_in_directory"
 KEY_PARENT = "path.parent_directory"  # only triggered when input is empty
 KEY_HISTORY = "path.history"
 KEY_OPEN = "path.current_direcotry"
-KEY_ALL: Dict[str, Tuple[List[str], str]] = {
+KEY_ALL: dict[str, tuple[list[str], str]] = {
     KEY_LIST: (["ctrl+i", "tab"], "Navigate to currently pointed path"),
     KEY_PARENT: (["backspace"], "Go to the parent directory"),
     KEY_HISTORY: (["alt+."], "Open path history"),
@@ -287,16 +282,16 @@ class PathSelector:
     __slots__ = ["sweep", "history", "path", "path_cache", "show_path_task"]
     sweep: Sweep[PathItem]
     history: PathHistoryStore
-    path: Optional[Path]
+    path: Path | None
     path_cache: FileNode
-    show_path_task: Optional[asyncio.Task[None]]
+    show_path_task: asyncio.Task[None] | None
 
     def __init__(self, sweep: Sweep[PathItem], history: PathHistoryStore) -> None:
         self.sweep = sweep
         self.history = history
         # None - history mode
         # Path - path mode
-        self.path: Optional[Path] = None
+        self.path: Path | None = None
         self.path_cache = FileNode(Path("/"))
         self.show_path_task = None
 
@@ -304,7 +299,7 @@ class PathSelector:
         """Show history"""
         # load history items
         history = self.history.load()
-        items: List[Tuple[int, int, Path]] = []
+        items: list[tuple[int, int, Path]] = []
         count_max = 0
         for entry in history:
             items.append((entry.count, entry.atime, entry.path))
@@ -314,7 +309,7 @@ class PathSelector:
 
         # create candidates
         cwd = str(Path.cwd())
-        candidates: List[PathItem] = [
+        candidates: list[PathItem] = [
             PathItem(entry=[(f"{' ' * count_align}{cwd}", True)], path=cwd)
         ]
         for count, _, path in items:
@@ -352,7 +347,7 @@ class PathSelector:
                 self.sweep.items_extend(node.candidates())
             )
 
-    async def run(self, path: Optional[Path] = None) -> Optional[Path]:
+    async def run(self, path: Path | None = None) -> Path | None:
         """Run path selector
 
         If path is provided it will start in path mode otherwise in history mode
@@ -424,10 +419,10 @@ class PathSelector:
         return None
 
 
-def get_path_and_query(input: str) -> Tuple[Path, str]:
+def get_path_and_query(input: str) -> tuple[Path, str]:
     """Find longest existing prefix path and remaining query"""
     parts = list(Path(input).parts)
-    query: List[str] = []
+    query: list[str] = []
     path = Path()
     while parts:
         path = Path(*parts).expanduser()
@@ -444,8 +439,8 @@ class ReadLine:
     readpoint: int
     prefix: str
     suffix: str
-    query: Optional[str]
-    path: Optional[Path]
+    query: str | None
+    path: Path | None
 
     def __init__(self, readline: str, point: int) -> None:
         self.readline = readline
@@ -459,7 +454,7 @@ class ReadLine:
         self.suffix = readline[end:]
         self.path, self.query = get_path_and_query(readline[start:end])
 
-    def format(self, path: Optional[Path]) -> str:
+    def format(self, path: Path | None) -> str:
         if path is not None:
             path_str = str(path)
             readline = f"{self.prefix} " if self.prefix else ""
@@ -474,7 +469,7 @@ class ReadLine:
         return f'READLINE_LINE="{readline}"\nREADLINE_POINT={point}\nREADLINE_MARK={mark}\n'
 
 
-async def main(args: Optional[List[str]] = None) -> None:
+async def main(args: list[str] | None = None) -> None:
     """Maintain and navigate visited path history"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -512,16 +507,16 @@ async def main(args: Optional[List[str]] = None) -> None:
         path_history.cleanup()
 
     elif opts.command == "list":
-        items: List[Tuple[int, int, Path]] = []
+        items: list[tuple[int, int, Path]] = []
         for entry in path_history.load():
             items.append((entry.count, entry.atime, entry.path))
         items.sort(reverse=True)
         for count, timestamp, path in items:
             date = datetime.fromtimestamp(timestamp).strftime("[%F %T]")
-            print("{:<5} {} {}".format(count, date, path))
+            print(f"{count:<5} {date} {path}")
 
     elif opts.command == "select":
-        readline: Optional[ReadLine]
+        readline: ReadLine | None
         if opts.readline:
             readline = ReadLine(
                 os.environ.get("READLINE_LINE", ""),

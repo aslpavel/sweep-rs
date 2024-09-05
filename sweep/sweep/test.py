@@ -4,7 +4,7 @@ import asyncio
 import socket
 import unittest
 import warnings
-from typing import List, Any
+from typing import Any
 
 from .sweep import Event, RpcError, RpcPeer, RpcRequest
 
@@ -87,7 +87,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         serve = asyncio.gather(a_serve, b_serve)
 
         # events iter
-        events: List[RpcRequest] = []
+        events: list[RpcRequest] = []
 
         async def event_iter() -> None:
             async for event in a:
