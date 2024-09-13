@@ -22,6 +22,7 @@ from .. import (
     Sweep,
     SweepSize,
     SweepEvent,
+    SweepSelect,
     Text,
 )
 from . import sweep_default_cmd
@@ -144,7 +145,18 @@ async def main(args: list[str] | None = None) -> None:
             )
             return Field(view=view)
 
+    def candidate_clicked(clicked: int):
+        return (
+            Candidate()
+            .target_push("You have clicked me ")
+            .target_push(f"{clicked}", face="fg=gruv-red-1,bold,italic")
+            .target_push(" times")
+            .extra_update(clicked=clicked)
+        )
+
     candidates = [
+        # counter
+        candidate_clicked(0),
         # simple fields
         "Simple string entry",
         Candidate()
@@ -171,7 +183,7 @@ async def main(args: list[str] | None = None) -> None:
         .target_push(ref=ref_backpack),
         # right text
         Candidate()
-        .target_push("Entry with additional data to the right")
+        .target_push("Entry with data to the right")
         .right_push(ref=ref_cocktail, face="fg=#427b58")
         .right_push(" Have a cocktail"),
         # has preview
@@ -214,6 +226,15 @@ async def main(args: list[str] | None = None) -> None:
         async for event in sweep:
             if isinstance(event, SweepSize):
                 continue
+            elif isinstance(event, SweepSelect) and len(event.items) == 1:
+                item = event.items[0]
+                if (
+                    isinstance(item, Candidate)
+                    and item.extra
+                    and (clicked := item.extra.get("clicked")) is not None
+                ):
+                    await sweep.item_update(0, candidate_clicked(clicked + 1))
+                    continue
             result = event
             break
 

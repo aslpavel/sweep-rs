@@ -138,6 +138,10 @@ enum SweepRequest<H> {
     PreviewSet(Option<bool>),
     FooterSet(Option<Arc<dyn View>>),
     HaystackExtend(Vec<H>),
+    HaystackUpdate {
+        index: usize,
+        item: H,
+    },
     HaystackClear,
     HaystackReverse,
     RankerKeepOrder(Option<bool>),
@@ -228,6 +232,10 @@ where
                 Ok(())
             })
             .await
+    }
+
+    pub fn item_update(&self, index: usize, item: H) {
+        self.send_request(SweepRequest::HaystackUpdate { index, item })
     }
 
     /// Clear list of searchable items
@@ -442,6 +450,22 @@ where
                 async move {
                     let items = params.take_seed(VecDeserializeSeed(seed), 0, "items")?;
                     sweep.items_extend(items);
+                    Ok(Value::Null)
+                }
+            }
+        });
+
+        // item update
+        peer.register("item_update", {
+            let sweep = self.clone();
+            let seed = seed.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                let seed = seed.clone();
+                async move {
+                    let index = params.take(0, "index")?;
+                    let item = params.take_seed(seed, 1, "item")?;
+                    sweep.item_update(index, item);
                     Ok(Value::Null)
                 }
             }
@@ -1330,6 +1354,7 @@ where
                         FooterSet(view) => state.footer = view,
                         ScorerSet(scorer) => state.ranker.scorer_set(scorer),
                         HaystackExtend(items) => state.ranker.haystack_extend(items),
+                        HaystackUpdate { index, item } => state.ranker.haystack_update(index, item),
                         HaystackClear => state.ranker.haystack_clear(),
                         HaystackReverse => state.ranker.haystack_reverse(),
                         RankerKeepOrder(toggle) => state.ranker.keep_order(toggle),

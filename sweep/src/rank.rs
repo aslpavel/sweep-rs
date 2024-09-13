@@ -65,6 +65,13 @@ where
             .expect("failed to send haystack");
     }
 
+    /// Update haystack item by its index
+    pub fn haystack_update(&self, index: usize, item: H) {
+        self.sender
+            .send(RankerCmd::HaystackUpdate(index, item))
+            .expect("failed to update haystack");
+    }
+
     /// Clear haystack
     pub fn haystack_clear(&self) {
         self.sender
@@ -140,8 +147,10 @@ fn ranker_worker<H, N>(
     let mut synced: Vec<Arc<AtomicBool>> = Vec::new();
 
     loop {
+        #[derive(Clone, Copy)]
         enum RankAction {
             DoNothing,
+            Notify,
             Offset(usize),
             CurrentMatch,
             All,
@@ -179,6 +188,15 @@ fn ranker_worker<H, N>(
                     };
                     haystack.with_mut(|hs| hs.extend(haystack_append));
                 }
+                HaystackUpdate(index, item) => haystack.with_mut(|hs| {
+                    if let Some(slot) = hs.get_mut(index) {
+                        *slot = item;
+                        action = match action {
+                            DoNothing => Notify,
+                            _ => action,
+                        };
+                    }
+                }),
                 HaystackReverse => {
                     action = All;
                     haystack.with_mut(|hs| hs.reverse());
@@ -196,6 +214,10 @@ fn ranker_worker<H, N>(
                     }
                 }
                 Sync(sync) => {
+                    action = match action {
+                        DoNothing => Notify,
+                        _ => action,
+                    };
                     synced.push(sync);
                 }
             }
@@ -205,11 +227,9 @@ fn ranker_worker<H, N>(
         let rank_instant = Instant::now();
         matches_prev = match action {
             DoNothing => {
-                if synced.is_empty() {
-                    continue;
-                }
-                matches_prev
+                continue;
             }
+            Notify => matches_prev,
             Offset(offset) => {
                 let mut matches = pool.alloc();
                 matches.clear();
@@ -419,6 +439,7 @@ enum RankerCmd<H> {
     HaystackClear,
     HaystackReverse,
     HaystackAppend(Vec<H>),
+    HaystackUpdate(usize, H),
     Needle(String),
     Scorer(ScorerBuilder),
     KeepOrder(Option<bool>),

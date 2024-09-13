@@ -676,6 +676,7 @@ class Sweep(Generic[I]):
                 self._items.append(item)
             else:
                 batch.append(item)
+                self._items.append(item)
 
             time_now = time.monotonic()
             if time_now - time_start >= time_limit:
@@ -685,6 +686,18 @@ class Sweep(Generic[I]):
                 batch.clear()
         if batch:
             await self._peer.items_extend(items=batch)
+
+    async def item_update(self, index: int, item: I) -> None:
+        """Update item by its index"""
+        assert index >= 0, "index must be non-negative"
+        if index >= len(self._items):
+            raise IndexError(f"index {index} >= {len(self._items)}")
+        self._items[index] = item
+        if isinstance(item, ToCandidate):
+            candidate = item.to_candidate()
+            candidate.extra_update(_sweep_item_index=index)
+            item = candidate.to_json()
+        await self._peer.item_update(index=index, item=item)
 
     async def items_clear(self) -> None:
         """Clear list of searchable items"""
@@ -924,27 +937,19 @@ class RpcError(Exception):
         return RpcError(-32700, "Parse error", data, id)
 
     @classmethod
-    def invalid_request(
-        cls, *, data: str | None = None, id: RpcId = None
-    ) -> RpcError:
+    def invalid_request(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         return RpcError(-32600, "Invalid request", data, id)
 
     @classmethod
-    def method_not_found(
-        cls, *, data: str | None = None, id: RpcId = None
-    ) -> RpcError:
+    def method_not_found(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         return RpcError(-32601, "Method not found", data, id)
 
     @classmethod
-    def invalid_params(
-        cls, *, data: str | None = None, id: RpcId = None
-    ) -> RpcError:
+    def invalid_params(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         return RpcError(-32602, "Invalid params", data, id)
 
     @classmethod
-    def internal_error(
-        cls, *, data: str | None = None, id: RpcId = None
-    ) -> RpcError:
+    def internal_error(cls, *, data: str | None = None, id: RpcId = None) -> RpcError:
         return RpcError(-32603, "Internal error", data, id)
 
 
