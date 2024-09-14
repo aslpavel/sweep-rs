@@ -40,6 +40,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    override,
     runtime_checkable,
 )
 
@@ -66,6 +67,7 @@ __all__ = [
     "SweepSize",
     "Text",
     "View",
+    "ViewRef",
 ]
 
 # ------------------------------------------------------------------------------
@@ -363,6 +365,7 @@ class Candidate:
 SweepEvent: TypeAlias = Union[SweepBind, SweepSize, SweepSelect[I]]
 BindHandler: TypeAlias = Callable[["Sweep[I]", str], Awaitable[Optional[I]]]
 FiledResolver: TypeAlias = Callable[[int], Awaitable[Optional[Field]]]
+ViewResolver: TypeAlias = Callable[[int], Awaitable[Optional["View"]]]
 
 
 @dataclass
@@ -397,6 +400,7 @@ async def sweep(
     prompt_icon: Icon | str | None = None,
     binds: list[Bind[I]] | None = None,
     fields: dict[int, Any] | None = None,
+    views: dict[int, View] | None = None,
     init: Callable[[Sweep[I]], Awaitable[None]] | None = None,
     **options: Any,
 ) -> list[I]:
@@ -408,6 +412,10 @@ async def sweep(
         # setup fields
         if fields:
             await sweep.field_register_many(fields)
+
+        if views:
+            for ref, view in views.items():
+                await sweep.view_register(view, ref)
 
         # setup binds
         for bind in binds or []:
@@ -458,8 +466,10 @@ class Sweep(Generic[I]):
         "_tmp_socket",
         "_items",
         "_binds",
-        "_field_known",
         "_field_resolver",
+        "_field_resolved",
+        "_view_resolver",
+        "_view_resolved",
         "_size",
     ]
 
@@ -471,6 +481,7 @@ class Sweep(Generic[I]):
     _items: list[I]
     _binds: dict[str, BindHandler[I]]
     _field_resolver: FiledResolver | None
+    _view_resolver: ViewResolver | None
     _size: SweepSize | None
 
     def __init__(
@@ -492,6 +503,7 @@ class Sweep(Generic[I]):
         tmp_socket: bool = False,
         border: int | None = None,
         field_resolver: FiledResolver | None = None,
+        view_resolver: ViewResolver | None = None,
     ) -> None:
         args: list[str] = []
         args.extend(["--prompt", prompt])
@@ -530,8 +542,10 @@ class Sweep(Generic[I]):
         self._size = None
         self._items = []
         self._binds = {}
-        self._field_known: set[int] = set()
         self._field_resolver = field_resolver
+        self._field_resolved: set[int] = set()
+        self._view_resolver = view_resolver
+        self._view_resolved: set[int] = set()
 
     async def __aenter__(self) -> Sweep[I]:
         if self._proc is not None:
@@ -618,13 +632,24 @@ class Sweep(Generic[I]):
                     ref = event.params.get("ref")
                     if (
                         ref is None
-                        or ref in self._field_known
+                        or ref in self._field_resolved
                         or self._field_resolver is None
                     ):
                         continue
                     field = await self._field_resolver(ref)
                     if field is not None:
                         await self.field_register(field, ref)
+                elif event.method == "view_missing":
+                    ref = event.params.get("ref")
+                    if (
+                        ref is None
+                        or ref in self._view_resolved
+                        or self._view_resolver is None
+                    ):
+                        continue
+                    view = await self._view_resolver(ref)
+                    if view is not None:
+                        await self.view_register(view, ref)
 
         return event_iter()
 
@@ -643,10 +668,11 @@ class Sweep(Generic[I]):
             await self.field_register(field, field_ref)
 
     async def field_register(self, field: Any, ref: int | None = None) -> int:
+        """Register field that can later be reference by field with `ref` set"""
         ref_val = await self._peer.field_register(
             field.to_json() if isinstance(field, Field) else field, ref
         )
-        self._field_known.add(ref_val)
+        self._field_resolved.add(ref_val)
         return ref_val
 
     def field_resolver_set(
@@ -656,6 +682,12 @@ class Sweep(Generic[I]):
         """Set field resolver"""
         field_resolver, self._field_resolver = self._field_resolver, field_resolver
         return field_resolver
+
+    async def view_register(self, view: View, ref: int | None = None) -> int:
+        """Register view that can be later referenced by `ViewRef`"""
+        ref_val = await self._peer.view_register(view.to_json(), ref)
+        self._view_resolved.add(ref_val)
+        return ref_val
 
     async def size(self) -> SweepSize:
         """Get size of the Sweep ui"""
@@ -1300,6 +1332,19 @@ class View(ABC):
     def tag(self, tag: str) -> View:
         """Wrap view into Tag"""
         return Tag(tag, self)
+
+
+class ViewRef(View):
+    """Reference to a cached view"""
+
+    __slots__ = ["ref"]
+
+    def __init__(self, ref: int) -> None:
+        self.ref = ref
+
+    @override
+    def to_json(self) -> dict[str, Any]:
+        return {"type": "ref", "ref": self.ref}
 
 
 class Direction(Enum):

@@ -22,7 +22,7 @@ use surf_n_term::{
     rasterize::SVG_COLORS,
     view::{
         Align, ArcView, Axis, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
-        ViewDeserializer,
+        ViewCache, ViewDeserializer,
     },
     Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
 };
@@ -193,14 +193,18 @@ impl Candidate {
         // register field
         peer.register("field_register", {
             let ctx = ctx.clone();
+            let view_cache: Arc<dyn ViewCache> = Arc::new(ctx.clone());
+            let waker = waker.clone();
             move |mut params: RpcParams| {
                 let ctx = ctx.clone();
                 let waker = waker.clone();
+                let view_cache = view_cache.clone();
                 async move {
                     let field: Field = {
                         let ctx_inner = ctx.inner.read().expect("lock poisoned");
                         let field_seed = FieldDeserializer {
                             colors: &ctx_inner.named_colors,
+                            view_cache: Some(view_cache),
                         };
                         params.take_seed(field_seed, 0, "field")?
                     };
@@ -215,6 +219,35 @@ impl Candidate {
                 }
             }
         });
+
+        // view register
+        peer.register("view_register", {
+            let ctx = ctx.clone();
+            let view_cache: Arc<dyn ViewCache> = Arc::new(ctx.clone());
+            let waker = waker.clone();
+            move |mut params: RpcParams| {
+                let ctx = ctx.clone();
+                let view_cache = view_cache.clone();
+                let waker = waker.clone();
+                async move {
+                    let view = {
+                        let ctx_inner = ctx.inner.read().expect("lock poisoned");
+                        let seed =
+                            ViewDeserializer::new(Some(&ctx_inner.named_colors), Some(view_cache));
+                        params.take_seed(&seed, 0, "view")?
+                    };
+                    let ref_id_opt: Option<i64> = params.take_opt(1, "ref")?;
+                    let ref_id = ctx.inner.with_mut(move |inner| {
+                        let ref_id = ref_id_opt.unwrap_or(inner.view_cache.len() as i64);
+                        inner.view_cache.insert(ref_id, view);
+                        ref_id
+                    });
+                    let _ = waker.wake();
+                    Ok(ref_id)
+                }
+            }
+        });
+
         ctx.peer_set(peer);
     }
 }
@@ -471,6 +504,7 @@ pub fn fields_view(
 
 struct CandidateContextInner {
     field_refs: HashMap<FieldRef, Field<'static>>,
+    view_cache: HashMap<i64, ArcView<'static>>,
     named_colors: Arc<HashMap<String, RGBA>>,
     peer: Option<RpcPeer>,
 }
@@ -484,6 +518,7 @@ impl CandidateContext {
     pub fn new() -> Self {
         let inner = CandidateContextInner {
             field_refs: HashMap::new(),
+            view_cache: HashMap::new(),
             named_colors: Arc::new(SVG_COLORS.clone()),
             peer: None,
         };
@@ -538,6 +573,20 @@ impl CandidateContext {
 impl Default for CandidateContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ViewCache for CandidateContext {
+    fn get(&self, uid: i64) -> Option<ArcView<'static>> {
+        match self.inner.with(|inner| inner.view_cache.get(&uid).cloned()) {
+            None => {
+                if let Some(peer) = self.inner.with(|inner| inner.peer.clone()) {
+                    let _ = peer.notify_with_value("view_missing", serde_json::json!({"ref": uid}));
+                }
+                None
+            }
+            view => view,
+        }
     }
 }
 
@@ -597,9 +646,11 @@ impl<'de, 'a> de::Visitor<'de> for &'a CandidateContext {
         let mut preview = None;
         let mut preview_flex = 0.0;
 
+        let view_cache: Arc<dyn ViewCache> = Arc::new(self.clone());
         let ctx = self.inner.read().map_err(de::Error::custom)?;
         let fields_seed = VecDeserializeSeed(FieldDeserializer {
             colors: &ctx.named_colors,
+            view_cache: Some(view_cache),
         });
         let face_seed = FaceDeserializer {
             colors: &ctx.named_colors,
@@ -819,6 +870,7 @@ impl<'de> Deserialize<'de> for Field<'static> {
     {
         FieldDeserializer {
             colors: &SVG_COLORS,
+            view_cache: None,
         }
         .deserialize(deserializer)
     }
@@ -827,6 +879,7 @@ impl<'de> Deserialize<'de> for Field<'static> {
 #[derive(Clone)]
 pub struct FieldDeserializer<'a> {
     pub colors: &'a HashMap<String, RGBA>,
+    pub view_cache: Option<Arc<dyn ViewCache>>,
 }
 
 impl<'de, 'a> DeserializeSeed<'de> for FieldDeserializer<'a> {
@@ -910,9 +963,10 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
                     reference.replace(map.next_value()?);
                 }
                 "view" => {
-                    view.replace(Arc::from(
-                        map.next_value_seed(&ViewDeserializer::new(Some(self.colors)))?,
-                    ));
+                    view.replace(map.next_value_seed(&ViewDeserializer::new(
+                        Some(self.colors),
+                        self.view_cache.clone(),
+                    ))?);
                 }
                 _ => {
                     map.next_value::<de::IgnoredAny>()?;

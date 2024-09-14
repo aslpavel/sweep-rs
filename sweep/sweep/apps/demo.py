@@ -19,10 +19,12 @@ from .. import (
     Icon,
     IconFrame,
     Justify,
+    ViewRef,
     Sweep,
-    SweepSize,
+    SweepBind,
     SweepEvent,
     SweepSelect,
+    SweepSize,
     Text,
 )
 from . import sweep_default_cmd
@@ -131,7 +133,9 @@ async def main(args: list[str] | None = None) -> None:
     async def field_resolver(ref: int) -> Field | None:
         if ref == ref_sofa:
             glyph = ICON_SOFA.frame(
-                IconFrame(fill_color="gruv-aqua-2", border_color="gruv-aqua-1")
+                IconFrame()
+                .border_color("gruv-10")
+                .fill_color("gruv-13")
                 .border_radius(10)
                 .padding(10)
                 .border_width(3)
@@ -149,7 +153,9 @@ async def main(args: list[str] | None = None) -> None:
         return (
             Candidate()
             .target_push("You have clicked me ")
-            .target_push(f"{clicked}", face="fg=gruv-red-1,bold,italic")
+            .target_push(
+                view=Text(f"{clicked}", face="fg=gruv-red-1,bold,italic").tag("clicked")
+            )
             .target_push(" times")
             .extra_update(clicked=clicked)
         )
@@ -212,8 +218,11 @@ async def main(args: list[str] | None = None) -> None:
         theme=opts.theme,
         log=opts.log,
     ) as sweep:
+        foot_ref = ViewRef(
+            await sweep.view_register(Text(glyph=ICON_FOOT, face="fg=bg"))
+        )
         view = (
-            Container(Text(glyph=ICON_FOOT, face="fg=bg").push("Nice Footer"))
+            Container(Flex.row().push(foot_ref).push(Text("Nice Footer", face="fg=bg")))
             .face(face="bg=accent/.8")
             .horizontal(Align.EXPAND)
         )
@@ -235,6 +244,9 @@ async def main(args: list[str] | None = None) -> None:
                 ):
                     await sweep.item_update(0, candidate_clicked(clicked + 1))
                     continue
+            elif isinstance(event, SweepBind) and event.tag == "clicked":
+                await sweep.item_update(0, candidate_clicked(0))
+                continue
             result = event
             break
 

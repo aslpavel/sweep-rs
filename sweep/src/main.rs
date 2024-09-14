@@ -126,9 +126,13 @@ async fn main() -> Result<(), Error> {
 
     if args.rpc {
         sweep
-            .serve_seed(candidate_context.clone(), input, output, |peer| {
-                Candidate::setup(peer, sweep.waker(), candidate_context)
-            })
+            .serve_seed(
+                candidate_context.clone(),
+                Some(Arc::new(candidate_context.clone())),
+                input,
+                output,
+                |peer| Candidate::setup(peer, sweep.waker(), candidate_context),
+            )
             .await?;
     } else {
         if args.json {

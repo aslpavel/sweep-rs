@@ -32,7 +32,7 @@ use surf_n_term::{
     encoder::ColorDepth,
     view::{
         Align, BoxView, Container, Flex, IntoView, Margins, Text, Tree, TreeId, TreeView, View,
-        ViewContext, ViewDeserializer, ViewLayoutStore,
+        ViewCache, ViewContext, ViewDeserializer, ViewLayoutStore,
     },
     Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut,
     SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize,
@@ -234,6 +234,7 @@ where
             .await
     }
 
+    /// Update item by its index
     pub fn item_update(&self, index: usize, item: H) {
         self.send_request(SweepRequest::HaystackUpdate { index, item })
     }
@@ -407,6 +408,7 @@ where
     /// Serve RPC endpoint via read/write
     pub fn serve<'a, R, W, F>(
         &self,
+        view_cache: Option<Arc<dyn ViewCache>>,
         read: R,
         write: W,
         setup: F,
@@ -416,7 +418,7 @@ where
         W: AsyncWrite + 'a,
         F: FnOnce(RpcPeer),
     {
-        self.serve_seed(PhantomData::<H>, read, write, setup)
+        self.serve_seed(PhantomData::<H>, view_cache, read, write, setup)
     }
 }
 
@@ -428,6 +430,7 @@ where
     pub fn serve_seed<'de, 'a, S, R, W, F>(
         &self,
         seed: S,
+        view_cache: Option<Arc<dyn ViewCache>>,
         read: R,
         write: W,
         setup: F,
@@ -570,10 +573,11 @@ where
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
+                let view_cache = view_cache.clone();
                 async move {
                     let theme = sweep.theme_get().await?;
-                    let footer: Option<Box<dyn View>> = params.take_opt_seed(
-                        &ViewDeserializer::new(Some(&theme.named_colors)),
+                    let footer: Option<Arc<dyn View>> = params.take_opt_seed(
+                        &ViewDeserializer::new(Some(&theme.named_colors), view_cache),
                         0,
                         "footer",
                     )?;
