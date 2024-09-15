@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
+    glyph::GlyphDeserializer,
     rasterize::SVG_COLORS,
     view::{
         Align, ArcView, Axis, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
@@ -952,7 +953,9 @@ impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
                     active.replace(map.next_value()?);
                 }
                 "glyph" => {
-                    glyph.replace(map.next_value()?);
+                    glyph.replace(map.next_value_seed(&GlyphDeserializer {
+                        colors: self.colors,
+                    })?);
                 }
                 "face" => {
                     face.replace(map.next_value_seed(FaceDeserializer {

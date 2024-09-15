@@ -160,8 +160,8 @@ class Field:
             attrs.append(f"text={repr(self.text)}")
         if not self.active:
             attrs.append(f"active={self.active}")
-        if self.glyph is not None and self.glyph.fallback:
-            attrs.append(f"glyph={self.glyph.fallback}")
+        if self.glyph is not None:
+            attrs.append(f"glyph={self.glyph}")
         if self.view is not None:
             attrs.append(f"view={self.view}")
         if self.face is not None:
@@ -683,9 +683,11 @@ class Sweep(Generic[I]):
         field_resolver, self._field_resolver = self._field_resolver, field_resolver
         return field_resolver
 
-    async def view_register(self, view: View, ref: int | None = None) -> int:
+    async def view_register(self, view: View, ref: int | ViewRef | None = None) -> int:
         """Register view that can be later referenced by `ViewRef`"""
-        ref_val = await self._peer.view_register(view.to_json(), ref)
+        ref_val = await self._peer.view_register(
+            view.to_json(), ref.ref if isinstance(ref, ViewRef) else ref
+        )
         self._view_resolved.add(ref_val)
         return ref_val
 
@@ -1392,40 +1394,40 @@ def _4float(
 class IconFrame:
     def __init__(
         self,
-        margins: _4Float | None = None,
+        margin: _4Float | None = None,
         border_width: _4Float | None = None,
         border_radius: _4Float | None = None,
         border_color: str | None = None,
         padding: _4Float | None = None,
         fill_color: str | None = None,
     ) -> None:
-        self._margins = margins
+        self._margin = margin
         self._border_width = border_width
         self._border_radius = border_radius
         self._border_color = border_color
         self._padding = padding
         self._fill_color = fill_color
 
-    def margins(
+    def margin(
         self,
-        a: float,
-        b: float | None = None,
-        c: float | None = None,
-        d: float | None = None,
+        top: float,
+        right: float | None = None,
+        bottom: float | None = None,
+        left: float | None = None,
         /,
     ) -> IconFrame:
-        self._margins = _4float(a, b, c, d)
+        self._margin = _4float(top, right, bottom, left)
         return self
 
     def border_width(
         self,
-        a: float,
-        b: float | None = None,
-        c: float | None = None,
-        d: float | None = None,
+        top: float,
+        right: float | None = None,
+        bottom: float | None = None,
+        left: float | None = None,
         /,
     ) -> IconFrame:
-        self._border_width = _4float(a, b, c, d)
+        self._border_width = _4float(top, right, bottom, left)
         return self
 
     def border_radius(
@@ -1460,8 +1462,8 @@ class IconFrame:
 
     def to_json(self) -> dict[str, Any]:
         obj = dict[str, Any]()
-        if self._margins:
-            obj["margins"] = self._margins
+        if self._margin:
+            obj["margin"] = self._margin
         if self._border_width:
             obj["border_width"] = self._border_width
         if self._border_radius:
@@ -1495,7 +1497,7 @@ class Icon(View):
         self._view_box = view_box
         self._fill_rule = fill_rule
         self._size = size
-        self.fallback = fallback
+        self._fallback = fallback
         self._frame = frame
 
     def frame(self, frame: IconFrame) -> Icon:
@@ -1546,8 +1548,8 @@ class Icon(View):
             obj["fill_rule"] = self._fill_rule
         if self._size is not None:
             obj["size"] = self._size
-        if self.fallback:
-            obj["fallback"] = self.fallback
+        if self._fallback:
+            obj["fallback"] = self._fallback
         if self._frame:
             obj["frame"] = self._frame.to_json()
         return obj

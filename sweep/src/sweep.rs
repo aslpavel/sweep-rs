@@ -576,11 +576,8 @@ where
                 let view_cache = view_cache.clone();
                 async move {
                     let theme = sweep.theme_get().await?;
-                    let footer: Option<Arc<dyn View>> = params.take_opt_seed(
-                        &ViewDeserializer::new(Some(&theme.named_colors), view_cache),
-                        0,
-                        "footer",
-                    )?;
+                    let seed = ViewDeserializer::new(Some(&theme.named_colors), view_cache);
+                    let footer: Option<Arc<dyn View>> = params.take_opt_seed(&seed, 0, "footer")?;
                     sweep.footer_set(footer.map(Arc::from));
                     Ok(Value::Null)
                 }
@@ -595,7 +592,7 @@ where
                 async move {
                     let chord: KeyChord = params.take(0, "key")?;
                     let tag: String = params.take(1, "tag")?;
-                    let desc: Option<String> = params.take_opt(3, "desc")?;
+                    let desc: Option<String> = params.take_opt(2, "desc")?;
                     sweep.bind(chord, tag, desc.unwrap_or_default());
                     Ok(Value::Null)
                 }
@@ -1440,9 +1437,12 @@ where
                         tracing::debug!(?tag, ?mouse, "[sweep_ui_worker][mouse]");
                         if let Some(tag) = tag.and_then(|tag| tag.as_str()) {
                             let key_event = match state.key_actions.get(tag) {
-                                Some(action) if mouse.mode == KeyMod::PRESS => {
+                                // trigger state bound actions on release
+                                Some(action) if mouse.mode == KeyMod::EMPTY => {
                                     state.apply(&action.clone())
                                 }
+                                // ignore press events, and trigger on release
+                                _ if mouse.mode.contains(KeyMod::PRESS) => SweepKeyEvent::Nothing,
                                 _ => {
                                     let key = Key::new(mouse.name, mouse.mode);
                                     SweepKeyEvent::Event(SweepEvent::Bind {
