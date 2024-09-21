@@ -11,8 +11,9 @@ import asyncio
 import re
 import shlex
 import shutil
+import os
 import subprocess
-from typing import Any, List, NamedTuple, cast
+from typing import Any, List, Mapping, NamedTuple, cast
 
 from gi.repository import Gio  # type: ignore
 
@@ -41,6 +42,18 @@ TERMINAL_ICON = Icon(
     path="M41.09 58.85L41.09 58.85Q41.93 58.01 42.98 58.01Q44.03 58.01 44.87 58.85L44.87 58.85L55.38 69.36Q56.22 69.99 56.22 71.15Q56.22 72.30 55.38 72.93L55.38 72.93L44.87 83.44Q44.03 84.28 42.98 84.28Q41.93 84.28 41.09 83.55Q40.25 82.81 40.25 81.66Q40.25 80.50 41.09 79.87L41.09 79.87L49.71 71.04L41.09 62.42Q40.25 61.79 40.25 60.64Q40.25 59.48 41.09 58.85ZM87.75 79.03L87.75 79.03L61.48 79.03Q60.22 79.03 59.48 79.76Q58.75 80.50 58.75 81.66Q58.75 82.81 59.48 83.55Q60.22 84.28 61.27 84.28L61.27 84.28L87.75 84.28Q88.80 84.28 89.54 83.55Q90.27 82.81 90.27 81.66Q90.27 80.50 89.54 79.76Q88.80 79.03 87.75 79.03ZM27.22 86.80L27.22 39.51Q27.22 34.26 31.11 30.37Q35.00 26.48 40.25 26.48L40.25 26.48L87.54 26.48Q93.00 26.48 96.89 30.37Q100.78 34.26 100.78 39.72L100.78 39.72L100.78 86.80Q100.78 92.27 96.89 96.16Q93.00 100.05 87.54 100.05L87.54 100.05L40.25 100.05Q35.00 100.05 31.11 96.16Q27.22 92.27 27.22 86.80L27.22 86.80ZM32.47 42.25L95.53 42.25L95.53 39.51Q95.53 36.36 93.22 34.05Q90.90 31.74 87.54 31.74L87.54 31.74L40.25 31.74Q37.10 31.74 34.78 34.05Q32.47 36.36 32.47 39.72L32.47 39.72L32.47 42.25ZM95.53 47.50L32.47 47.50L32.47 86.80Q32.47 90.17 34.78 92.48Q37.10 94.79 40.25 94.79L40.25 94.79L87.54 94.79Q90.90 94.79 93.22 92.48Q95.53 90.17 95.53 86.80L95.53 86.80L95.53 47.50Z",
 )
 TERMINAL_REF = 1
+ENV_REGEX = re.compile(r"\$\{([^\}]+)\}")
+
+
+def expand_var(input: str, vars: Mapping[str, str]) -> str:
+    result: list[str] = []
+    start = 0
+    for match in ENV_REGEX.finditer(input):
+        result.append(input[start : match.start()])
+        result.append(vars.get(match.group(1), ""))
+        start = match.end()
+    result.append(input[start:])
+    return "".join(result)
 
 
 class DesktopEntry(NamedTuple):
@@ -209,7 +222,9 @@ async def main(args: list[str] | None = None) -> None:
         case _ if opts.spawner is not None:
             cmd = item.commandline()
             if cmd is not None:
-                args = shlex.split(opts.spawner)
+                args = [
+                    expand_var(arg, os.environ) for arg in shlex.split(opts.spawner)
+                ]
                 args.extend(shlex.split(cmd))
                 subprocess.check_call(args, shell=False)
         case "print":
