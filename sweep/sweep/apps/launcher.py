@@ -190,11 +190,9 @@ async def main(args: list[str] | None = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    sweep_theme = opts.theme
     sweep_args: dict[str, Any] = {}
     sweep_cmd: list[str] = []
     if not opts.no_window:
-        sweep_theme = sweep_theme or "dark"
         sweep_args.update({"altscreen": True, "height": 1024, "tmp_socket": True})
         sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.launcher"])
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
@@ -208,7 +206,7 @@ async def main(args: list[str] | None = None) -> None:
         },
         scorer="substr",
         tty=opts.tty,
-        theme=sweep_theme,
+        theme=opts.theme,
         prompt="Launch",
         prompt_icon=PROMPT_ICON,
         log=opts.log,

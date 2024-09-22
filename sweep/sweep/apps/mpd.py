@@ -1015,11 +1015,9 @@ async def main(args: list[str] | None = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    sweep_theme = opts.theme
     sweep_args: dict[str, Any] = {}
     sweep_cmd: list[str] = []
     if opts.term != "none" and opts.tty is None:
-        sweep_theme = sweep_theme or "dark"
         sweep_args.update(
             dict(
                 altscreen=True,
@@ -1041,7 +1039,7 @@ async def main(args: list[str] | None = None) -> None:
             sweep=sweep_cmd,
             scorer="substr",
             tty=opts.tty,
-            theme=sweep_theme,
+            theme=opts.theme,
             log=opts.log,
             title="MPD Client",
             keep_order=True,

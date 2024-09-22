@@ -1,5 +1,5 @@
-"""Run sweep inside a newly create kitty window
-"""
+"""Run sweep inside a newly create kitty window"""
+
 # pyright: strict
 from __future__ import annotations
 import argparse
@@ -72,7 +72,7 @@ async def main(args: list[str] | None = None) -> None:
             *(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd()),
         ],
         tty=opts.tty,
-        theme=opts.theme or "dark",
+        theme=opts.theme,
         prompt=opts.prompt,
         prompt_icon=opts.prompt_icon,
         nth=opts.nth,
