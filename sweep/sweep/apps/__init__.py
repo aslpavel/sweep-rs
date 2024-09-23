@@ -1,10 +1,8 @@
 # pyright: strict
-from typing import List
-
 ALL_APPS = ["bash_history", "demo", "kitty", "launcher", "path_history", "mpd"]
 
 
-def sweep_default_cmd() -> List[str]:
+def sweep_default_cmd() -> list[str]:
     """Return sweep cmd
 
     Builds from source if this module is located in the sweep repository

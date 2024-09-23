@@ -1,5 +1,5 @@
-"""Interactively choose entry from bash history
-"""
+"""Interactively choose entry from bash history"""
+
 # pyright: strict
 from __future__ import annotations
 from datetime import datetime
@@ -8,7 +8,8 @@ import argparse
 import asyncio
 import re
 import shlex
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 from .. import Icon, sweep, Candidate
 from . import sweep_default_cmd
 

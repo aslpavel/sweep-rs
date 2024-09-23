@@ -17,16 +17,8 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import (
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Iterable,
-    NamedTuple,
-    Sequence,
-    cast,
-)
+from typing import Any, NamedTuple, cast
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 
 from PIL import Image as PILImage
 from PIL.Image import Resampling
@@ -629,13 +621,13 @@ class MPD:
             attrs = await self._call_dict(cmd, song.file, str(pos))
         return int(attrs["Id"])
 
-    async def delete(self, song: Song):
+    async def delete(self, song: Song) -> None:
         """Remove song from the playlist"""
         if song.id is None:
             return
         await self._call_dict("deleteid", str(song.id))
 
-    async def move(self, song: Song, pos: int, relative: bool = True):
+    async def move(self, song: Song, pos: int, relative: bool = True) -> None:
         if song.pos is None:
             return
         pos = song.pos + pos if relative else pos
@@ -888,7 +880,7 @@ class MPDSweep:
             case _:
                 pass
 
-    async def _update_footer_coro(self):
+    async def _update_footer_coro(self) -> None:
         while True:
             await self._update_footer()
             await asyncio.sleep(1.0)

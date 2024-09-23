@@ -13,7 +13,8 @@ import shlex
 import shutil
 import os
 import subprocess
-from typing import Any, List, Mapping, NamedTuple, cast
+from typing import Any, NamedTuple, cast
+from collections.abc import Mapping
 
 from gi.repository import Gio  # type: ignore
 
@@ -158,7 +159,7 @@ class DesktopEntry(NamedTuple):
     @staticmethod
     def get_all() -> list[DesktopEntry]:
         apps: list[DesktopEntry] = []
-        for app_info in cast(List[Any], Gio.AppInfo.get_all()):  # type: ignore
+        for app_info in cast(list[Any], Gio.AppInfo.get_all()):  # type: ignore
             app = DesktopEntry(app_info)
             if not app.should_show():
                 continue

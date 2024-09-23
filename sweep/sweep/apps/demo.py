@@ -149,7 +149,7 @@ async def main(args: list[str] | None = None) -> None:
             )
             return Field(view=view)
 
-    def candidate_clicked(clicked: int):
+    def candidate_clicked(clicked: int) -> Candidate:
         return (
             Candidate()
             .target_push("You have clicked me ")

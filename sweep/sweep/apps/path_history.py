@@ -1,5 +1,5 @@
-"""Simple tool to maintain and navigate visited path history
-"""
+"""Simple tool to maintain and navigate visited path history"""
+
 # pyright: strict
 from __future__ import annotations
 from collections import deque
@@ -13,11 +13,8 @@ import os
 import re
 import shlex
 import time
-from typing import (
-    Callable,
-    Iterator,
-    TypedDict,
-)
+from typing import TypedDict
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from .. import Sweep, SweepBind, Icon, SweepSelect
 from . import sweep_default_cmd
