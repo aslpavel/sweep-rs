@@ -1156,8 +1156,8 @@ class RpcPeer:
                 continue
             while self._write_queue:
                 data = self._write_queue.popleft().serialize()
-                writer.write(f"{len(data)}\n".encode())
                 writer.write(data)
+                writer.write(b"\n")
             await writer.drain()
         raise CancelledError()
 
@@ -1165,11 +1165,7 @@ class RpcPeer:
         """Read and handle incoming messages"""
         while not self._is_terminated:
             # read json
-            size_data = await reader.readline()
-            if not size_data:
-                break
-            size = int(size_data.strip())
-            data = await reader.readexactly(size)
+            data = await reader.readline()
             if not data:
                 break
             obj = json.loads(data)

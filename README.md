@@ -125,12 +125,7 @@ Sweep support [JSON-RPC](https://www.jsonrpc.org/specification) communication pr
 
 ### Wire protocol
 
-Message is encoded as decimal string representing size of the JSON payload followed by new line character, then JSON payload itself. For example ready event that is sent by sweep on initialization:
-
-```
-70
-{"jsonrpc":"2.0","method":"ready","params":{"version":["0","11","6"]}}
-```
+Message is encoded as JSON per line
 
 ### Methods and Types
 

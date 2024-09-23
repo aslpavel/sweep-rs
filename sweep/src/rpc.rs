@@ -20,9 +20,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::{
-    io::{
-        AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
-    },
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
     sync::{mpsc, oneshot},
 };
 use tracing_futures::Instrument;
@@ -985,7 +983,6 @@ async fn rpc_writer<W>(
 where
     W: AsyncWrite,
 {
-    let mut message_len = Vec::new();
     let mut message_data = Vec::new();
 
     let write = BufWriter::new(write);
@@ -993,13 +990,11 @@ where
 
     while let Some(message) = messages.recv().await {
         // clear buffers
-        message_len.clear();
         message_data.clear();
         // serialize
         serde_json::to_writer(&mut message_data, &message)?;
-        writeln!(&mut message_len, "{}", message_data.len())?;
+        write!(&mut message_data, "\n")?;
         // write
-        write.write_all(message_len.as_ref()).await?;
         write.write_all(message_data.as_ref()).await?;
         write.flush().await?;
     }
@@ -1013,46 +1008,20 @@ where
 {
     struct State<R> {
         reader: BufReader<R>,
-        size_buf: String,
         message_buf: Vec<u8>,
     }
     futures::stream::try_unfold(
         State {
             reader: BufReader::new(read),
-            size_buf: String::new(),
             message_buf: Vec::new(),
         },
         |mut state| {
             async move {
-                // read size
-                state.size_buf.clear();
-                state
-                    .reader
-                    .read_line(&mut state.size_buf)
-                    .await
-                    .map_err(|error| RpcError {
-                        kind: RpcErrorKind::ParseError,
-                        data: format!("failed to read message size: {}", error),
-                    })?;
-                if state.size_buf.is_empty() {
-                    return Ok(None);
-                }
-                let size: usize =
-                    state
-                        .size_buf
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|error| RpcError {
-                            kind: RpcErrorKind::ParseError,
-                            data: format!("failed parse message size: {}", error),
-                        })?;
-
                 // read message
                 state.message_buf.clear();
-                state.message_buf.resize_with(size, || 0u8);
                 state
                     .reader
-                    .read_exact(&mut state.message_buf)
+                    .read_until(b'\n', &mut state.message_buf)
                     .await
                     .map_err(|error| RpcError {
                         kind: RpcErrorKind::ParseError,
