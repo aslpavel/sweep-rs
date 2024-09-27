@@ -1028,6 +1028,11 @@ where
                         data: format!("failed to read message: {}", error),
                     })?;
 
+                // eof
+                if state.message_buf.is_empty() {
+                    return Ok(None);
+                }
+
                 // parse message
                 let message =
                     serde_json::from_slice(state.message_buf.as_ref()).map_err(|error| {
