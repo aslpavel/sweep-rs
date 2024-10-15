@@ -220,10 +220,9 @@ async def main(args: list[str] | None = None) -> None:
     match opts.action:
         case _ if opts.spawner is not None:
             cmd = item.commandline()
+            env = os.environ | {"APP_ID": item.app_id()}
             if cmd is not None:
-                args = [
-                    expand_var(arg, os.environ) for arg in shlex.split(opts.spawner)
-                ]
+                args = [expand_var(arg, env) for arg in shlex.split(opts.spawner)]
                 args.extend(shlex.split(cmd))
                 subprocess.check_call(args, shell=False)
         case "print":
