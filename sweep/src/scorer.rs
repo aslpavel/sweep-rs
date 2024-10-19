@@ -5,11 +5,14 @@ use std::{
     fmt::{self, Debug},
     sync::Arc,
 };
-use surf_n_term::view::{BoxView, Text, View};
+use surf_n_term::{
+    view::{BoxView, Text, View},
+    CellWrite,
+};
 
 /// Haystack
 ///
-/// Item that can scored against the needle by the scorer.
+/// Item that can be scored/ranked/shown by sweep
 pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     /// Haystack context passed when generating view and preview (for example
     /// [Candidate](crate::Candidate) reference resolution)
@@ -26,7 +29,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
         haystack_default_view(ctx, self, positions, theme).boxed()
     }
 
-    /// Large preview of pointed item
+    /// Side preview of pointed item
     fn preview(
         &self,
         _ctx: &Self::Context,
@@ -35,6 +38,18 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     ) -> Option<HaystackPreview> {
         None
     }
+
+    /*
+    /// Large preview show in the full screen (alt-screen) mode
+    fn preview_large(
+        &self,
+        _ctx: &Self::Context,
+        _positions: &Positions,
+        _theme: &Theme,
+    ) -> Option<HaystackPreview> {
+        None
+    }
+    */
 }
 
 /// Preview rendered for haystack item

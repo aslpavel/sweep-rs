@@ -1,19 +1,28 @@
-use crate::{common::LockExt, haystack_default_view, Haystack, HaystackPreview, Positions};
+use crate::{
+    common::{AbortJoinHandle, LockExt},
+    haystack_default_view, Haystack, HaystackPreview, Positions,
+};
+use futures::{future, FutureExt, TryFutureExt};
 use std::{
     cmp::max,
     collections::HashMap,
+    ffi::OsStr,
+    io::Write,
+    process::Stdio,
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock /* , RwLock */},
+    usize,
 };
 use surf_n_term::{
     rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
     view::{
-        Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar, Text,
-        Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
+        Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar,
+        ScrollBarPosition, Text, Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
-    BBox, Cell, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName, Position,
-    Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    BBox, Cell, CellWrite, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName,
+    Position, Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
 };
+use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -64,8 +73,8 @@ impl Theme {
             .circle(20.0)
             .build();
         let list_marked_indicator = Text::new()
-            .set_face(Face::default().with_fg(Some(accent)))
-            .put_glyph(Glyph::new(
+            .with_face(Face::default().with_fg(Some(accent)))
+            .with_glyph(Glyph::new(
                 indicator_path
                     .stroke(StrokeStyle {
                         width: 5.0,
@@ -78,19 +87,17 @@ impl Theme {
                 Size::new(1, 3),
                 " \u{25CB} ".to_owned(), // white circle
                 None,
-            ))
-            .take();
+            ));
         let list_selected_indicator = Text::new()
-            .set_face(Face::default().with_fg(Some(accent)))
-            .put_glyph(Glyph::new(
+            .with_face(Face::default().with_fg(Some(accent)))
+            .with_glyph(Glyph::new(
                 indicator_path,
                 Default::default(),
                 Some(BBox::new((0.0, 0.0), (100.0, 100.0))),
                 Size::new(1, 3),
                 " \u{25CF} ".to_owned(), // black circle
                 None,
-            ))
-            .take();
+            ));
         let list_text = Face::default().with_fg(list_selected.fg);
         let list_highlight = cursor;
         let list_inactive = Face::default().with_fg(Some(bg.blend_over(fg.with_alpha(0.6))));
@@ -106,8 +113,8 @@ impl Theme {
         );
         let label = stats.with_attrs(FaceAttrs::BOLD);
         let separator = Face::new(Some(accent), input.bg, FaceAttrs::EMPTY);
-        let separator_right = Text::new().push_str(" ", Some(separator)).take();
-        let separator_left = Text::new().push_str("", Some(separator)).take();
+        let separator_right = Text::new().with_fmt(" ", Some(separator)).take();
+        let separator_left = Text::new().with_fmt("", Some(separator)).take();
         let mut named_colors = SVG_COLORS.clone();
         named_colors.insert("fg".to_owned(), fg);
         named_colors.insert("bg".to_owned(), bg);
@@ -170,12 +177,10 @@ impl Theme {
         let cursor = Face::new(Some(color0), Some(color2), FaceAttrs::EMPTY);
         let stats = Face::new(Some(bg), Some(accent), FaceAttrs::EMPTY);
         let list_selected = Face::new(Some(fg), Some(color1), FaceAttrs::EMPTY);
-        let list_selected_indicator = Text::new()
-            .push_str(" > ", Some(Face::default().with_fg(Some(accent))))
-            .take();
-        let list_marked_indicator = Text::new()
-            .push_str(" * ", Some(Face::default().with_fg(Some(accent))))
-            .take();
+        let list_selected_indicator =
+            Text::new().with_fmt(" > ", Some(Face::default().with_fg(Some(accent))));
+        let list_marked_indicator =
+            Text::new().with_fmt(" * ", Some(Face::default().with_fg(Some(accent))));
         let list_text = Face::default().with_fg(list_selected.fg);
         let mut named_colors = SVG_COLORS.clone();
         named_colors.insert("fg".to_owned(), fg);
@@ -199,7 +204,7 @@ impl Theme {
             stats,
             label: stats.with_attrs(FaceAttrs::BOLD),
             separator: Face::new(Some(accent), input.bg, FaceAttrs::EMPTY),
-            separator_right: Text::new().push_str(" ", Some(default)).take(),
+            separator_right: Text::new().with_fmt(" ", Some(default)),
             separator_left: Text::new(),
             show_preview: true,
             named_colors: Arc::new(named_colors),
@@ -264,10 +269,11 @@ impl Haystack for ActionDesc {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             chords_text
-                .set_face(Face::default().with_attrs(FaceAttrs::UNDERLINE | FaceAttrs::BOLD))
-                .push_fmt(&chord)
-                .set_face(Face::default())
-                .push_str(" ", None);
+                .by_ref()
+                .with_face(Face::default().with_attrs(FaceAttrs::UNDERLINE | FaceAttrs::BOLD))
+                .put_fmt(&chord, None)
+                .with_face(Face::default())
+                .put_fmt(" ", None);
         }
         Flex::row()
             .justify(Justify::SpaceBetween)
@@ -282,7 +288,7 @@ impl Haystack for ActionDesc {
         _positions: &Positions,
         _theme: &Theme,
     ) -> Option<HaystackPreview> {
-        let desc = Text::new().push_str(&self.description, None).take();
+        let desc = Text::new().put_fmt(&self.description, None).take();
         Some(HaystackPreview::new(
             Container::new(desc).boxed(),
             Some(0.6),
@@ -549,15 +555,15 @@ impl<'a> View for &'a Input {
 
         let mut writer = surf.writer(ctx).with_face(self.theme.input);
         for c in self.before[self.offset()..].iter() {
-            writer.put(Cell::new_char(self.theme.input, *c));
+            writer.put_cell(Cell::new_char(self.theme.input, *c));
         }
         let mut iter = self.after.iter().rev();
-        writer.put(Cell::new_char(
+        writer.put_cell(Cell::new_char(
             self.theme.cursor,
             iter.next().copied().unwrap_or(' '),
         ));
         for c in iter {
-            writer.put(Cell::new_char(self.theme.input, *c));
+            writer.put_cell(Cell::new_char(self.theme.input, *c));
         }
 
         Ok(())
@@ -701,6 +707,7 @@ pub struct List<T> {
 /// Current state of the list view (it is only updated on layout calculation)
 #[derive(Debug, Clone, Copy, Default)]
 struct ListState {
+    cursor: usize,        // currently pointed item
     offset: usize,        // visible offset (first rendered element offset)
     visible_count: usize, // number of visible elements
 }
@@ -851,7 +858,7 @@ where
         // render items and scroll-bar (last layout in the list)
         surf.erase(self.theme.list_default);
         for item_layout in layout.children() {
-            let row = item_layout.pos().row;
+            let row = item_layout.position().row;
             let height = item_layout.size().height;
             let item_data = item_layout
                 .data::<ListItemView>()
@@ -973,6 +980,7 @@ where
         // update view state
         self.view_state.with_mut(|st| {
             *st = ListState {
+                cursor: self.cursor,
                 offset: offset + children_removed,
                 visible_count: children_count,
             }
@@ -982,7 +990,7 @@ where
         let mut view_offset = 0;
         let mut child_layout_opt = layout.child_mut();
         while let Some(mut child_layout) = child_layout_opt.take() {
-            child_layout.set_pos(Position::new(view_offset, indicator_width));
+            child_layout.set_position(Position::new(view_offset, indicator_width));
             view_offset += child_layout.size().height;
             child_layout_opt = child_layout.sibling();
         }
@@ -1011,9 +1019,7 @@ impl View for ListScrollBar {
         ScrollBar::new(
             Axis::Vertical,
             self.face,
-            self.total,
-            state.offset,
-            state.visible_count,
+            ScrollBarPosition::from_counts(self.total, state.cursor, state.visible_count),
         )
         .render(ctx, surf, layout)
     }
@@ -1025,6 +1031,286 @@ impl View for ListScrollBar {
         mut layout: ViewMutLayout<'_>,
     ) -> Result<(), Error> {
         *layout = Layout::new().with_size(Size::new(ct.max().height, 1));
+        Ok(())
+    }
+}
+
+/// Widget that can run system command and show its output
+pub struct Process {
+    spawn_channel: mpsc::Sender<Option<Command>>,
+    output: TTYOutput,
+    _spawner_handle: AbortJoinHandle<()>,
+}
+
+impl Process {
+    pub fn new(ctx: ViewContext) -> Self {
+        let (spawn_channel, recv) = mpsc::channel(3);
+        let output = TTYOutput::new(ctx);
+        let _spawner_handle = tokio::spawn(
+            Self::spawner(recv, output.clone())
+                .unwrap_or_else(|error| tracing::error!(?error, "[Process] spawner failed")),
+        )
+        .into();
+        Self {
+            spawn_channel,
+            output,
+            _spawner_handle,
+        }
+    }
+
+    /// Spawn new process killing existing process and replacing its output
+    pub fn spawn(&self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) {
+        let mut args = args.into_iter();
+        let command = args.next().map(|prog| {
+            let mut command = Command::new(prog);
+            for arg in args {
+                command.arg(arg);
+            }
+            command
+        });
+
+        self.spawn_channel
+            .try_send(command)
+            .unwrap_or_else(|error| {
+                tracing::error!(?error, "[Process] faield to spawn");
+            });
+    }
+
+    async fn spawner(
+        mut spawn_channel: mpsc::Receiver<Option<Command>>,
+        output: TTYOutput,
+    ) -> Result<(), Error> {
+        let mut command: Option<Command> = None;
+        let mut command_running: bool;
+        loop {
+            let command_fut = match command.take() {
+                Some(command) => {
+                    command_running = true;
+                    output.clear();
+                    Self::command_run(command, output.clone()).right_future()
+                }
+                None => {
+                    command_running = false;
+                    future::pending().left_future()
+                }
+            };
+            tokio::select! {
+                Some(command_next) = spawn_channel.recv() => {
+                    command = command_next;
+                    while let Ok(command_next) = spawn_channel.try_recv() {
+                        command = command_next;
+                    }
+                }
+                command_res = command_fut, if command_running => {
+                    if let Err(error) = command_res {
+                        tracing::error!(?error, "[Process] command faield with error");
+                    }
+                }
+                else => { break; }
+            }
+        }
+        Ok(())
+    }
+
+    async fn command_run(mut command: Command, output: TTYOutput) -> Result<(), Error> {
+        let mut child = command
+            // TODO: pass `FZF_PREVIEW_(TOP|LEFT|LINES|COLUMNS)` and `LINES|COLUMNS`
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let mut stdout = child.stdout.take().expect("pipe expected, logic error");
+        let mut stdout_buf = [0u8; 1024];
+        let mut stdout_done = false;
+        let mut stderr = child.stderr.take().expect("pipe expected, logic error");
+        let mut stderr_buf = [0u8; 1024];
+        let mut stderr_done = false;
+        let mut writer = output.tty_writer();
+
+        loop {
+            tokio::select! {
+                biased;
+                stderr_res = stderr.read(&mut stderr_buf), if !stderr_done => {
+                    let data = &stderr_buf[..stderr_res?];
+                    if data.is_empty() {
+                        stderr_done = true;
+                        continue;
+                    }
+                    // TODO: mark with error color?
+                    writer.write_all(data)?;
+                }
+                stdout_res = stdout.read(&mut stdout_buf), if !stdout_done => {
+                    let data = &stdout_buf[..stdout_res?];
+                    if data.is_empty() {
+                        stdout_done = true;
+                        continue;
+                    }
+                    writer.write_all(data)?;
+                }
+                else => { break; }
+            }
+        }
+        child.wait().await?;
+
+        Ok(())
+    }
+}
+
+impl<'a> IntoView for &'a Process {
+    type View = TTYOutput;
+
+    fn into_view(self) -> Self::View {
+        self.output.clone()
+    }
+}
+
+struct TTYOutputInner {
+    ctx: ViewContext,
+    size: Size,
+    cursor: Position,
+    cells: Vec<Cell>,
+    lines: Vec<usize>,
+    offset: Position,
+}
+
+impl TTYOutputInner {
+    fn rows(&self, width: usize) -> impl Iterator<Item = &[Cell]> {
+        let mut row = self.offset.row;
+        let col = self.offset.col;
+        std::iter::from_fn(move || {
+            let start = self.cells_offset(row)?;
+            let end = self.cells_offset(row + 1).unwrap_or(self.cells.len());
+            row += 1;
+            Some(self.cells.get(start..end).unwrap_or(&[]))
+        })
+        .filter_map(move |row| row.get(col..col + width))
+    }
+
+    fn cells_offset(&self, line: usize) -> Option<usize> {
+        if line <= 0 {
+            Some(0)
+        } else {
+            self.lines.get(line + 1).copied()
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TTYOutput {
+    face: Face,
+    wraps: bool,
+    inner: Arc<RwLock<TTYOutputInner>>,
+}
+
+impl TTYOutput {
+    pub fn new(ctx: ViewContext) -> Self {
+        let inner = TTYOutputInner {
+            ctx,
+            size: Size::empty(),
+            cursor: Position::origin(),
+            cells: Vec::new(),
+            lines: Vec::new(),
+            offset: Position::origin(),
+        };
+        Self {
+            face: Face::default(),
+            wraps: false,
+            inner: Arc::new(RwLock::new(inner)),
+        }
+    }
+
+    pub fn offset(&self) -> Position {
+        self.inner.with(|inner| inner.offset)
+    }
+
+    pub fn set_offset(&self, offset: Position) -> Position {
+        self.inner
+            .with_mut(|inner| std::mem::replace(&mut inner.offset, offset))
+    }
+
+    pub fn clear(&self) {
+        self.inner.with_mut(|inner| {
+            inner.size = Size::empty();
+            inner.cursor = Position::origin();
+            inner.cells.clear();
+            inner.lines.clear();
+            inner.offset = Position::origin();
+        })
+    }
+}
+
+impl CellWrite for TTYOutput {
+    fn face(&self) -> Face {
+        self.face
+    }
+
+    fn set_face(&mut self, face: Face) -> Face {
+        std::mem::replace(&mut self.face, face)
+    }
+
+    fn wraps(&self) -> bool {
+        self.wraps
+    }
+
+    fn set_wraps(&mut self, wraps: bool) -> bool {
+        std::mem::replace(&mut self.wraps, wraps)
+    }
+
+    fn put_cell(&mut self, cell: Cell) -> bool {
+        self.inner.with_mut(|inner| {
+            let prev_row = inner.cursor.row;
+            cell.layout(
+                &inner.ctx,
+                usize::MAX,
+                self.wraps,
+                &mut inner.size,
+                &mut inner.cursor,
+            );
+            inner.cells.push(cell);
+            if prev_row < inner.cursor.row {
+                inner.lines.push(inner.cells.len())
+            }
+        });
+        true
+    }
+}
+
+impl View for TTYOutput {
+    fn render(
+        &self,
+        ctx: &ViewContext,
+        surf: TerminalSurface<'_>,
+        layout: ViewLayout<'_>,
+    ) -> Result<(), Error> {
+        let mut surf = layout.apply_to(surf);
+        let mut writer = surf.writer(ctx).with_wraps(false);
+        self.inner.with(|inner| {
+            let mut cells = inner
+                .rows(writer.size().width)
+                .flat_map(|row| row.iter())
+                .cloned();
+            loop {
+                let Some(cell) = cells.next() else {
+                    // no more cells
+                    break;
+                };
+                if !writer.put_cell(cell) {
+                    // failed to put cell
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    fn layout(
+        &self,
+        _ctx: &ViewContext,
+        ct: BoxConstraint,
+        mut layout: ViewMutLayout<'_>,
+    ) -> Result<(), Error> {
+        *layout = Layout::new().with_size(ct.max());
         Ok(())
     }
 }

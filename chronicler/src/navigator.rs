@@ -1,6 +1,5 @@
 use crate::{
     history::{History, HistoryEntry},
-    utils::AbortJoinHandle,
     walk::{path_ignore_for_path, walk, PathItem},
 };
 use anyhow::Error;
@@ -15,8 +14,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 use sweep::{
-    common::LockExt, surf_n_term::Glyph, Haystack, HaystackPreview, Positions, Sweep, SweepEvent,
-    SweepOptions,
+    common::{AbortJoinHandle, LockExt},
+    surf_n_term::Glyph,
+    Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
 };
 
 #[derive(Debug, Clone)]

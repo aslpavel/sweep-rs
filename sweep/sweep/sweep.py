@@ -32,7 +32,16 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from typing import Any, NamedTuple, Protocol, cast, override, runtime_checkable
+from typing import (
+    Any,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    Unpack,
+    cast,
+    override,
+    runtime_checkable,
+)
 
 __all__ = [
     "Align",
@@ -384,6 +393,25 @@ class Bind[I]:
         return bind_decorator
 
 
+class SweepArgs(TypedDict, total=False):
+    sweep: list[str] | None
+    prompt: str
+    query: str | None
+    nth: str | None
+    delimiter: str | None
+    theme: str | None
+    scorer: str | None
+    tty: str | None
+    log: str | None
+    title: str | None
+    keep_order: bool
+    no_match: str | None
+    layout: str | None
+    tmp_socket: bool
+    field_resolver: FiledResolver | None
+    view_resolver: ViewResolver | None
+
+
 async def sweep[I](
     items: Iterable[I],
     prompt_icon: Icon | str | None = None,
@@ -391,7 +419,7 @@ async def sweep[I](
     fields: dict[int, Any] | None = None,
     views: dict[int, View] | None = None,
     init: Callable[[Sweep[I]], Awaitable[None]] | None = None,
-    **options: Any,
+    **options: Unpack[SweepArgs],
 ) -> list[I]:
     """Convenience wrapper around `Sweep`
 
@@ -464,11 +492,10 @@ class Sweep[I]:
 
     def __init__(
         self,
-        sweep: list[str] = ["sweep"],
+        sweep: list[str] | None = None,
         prompt: str = "INPUT",
         query: str | None = None,
         nth: str | None = None,
-        height: int = 11,
         delimiter: str | None = None,
         theme: str | None = None,
         scorer: str | None = None,
@@ -477,15 +504,13 @@ class Sweep[I]:
         title: str | None = None,
         keep_order: bool = False,
         no_match: str | None = None,
-        altscreen: bool = False,
+        layout: str | None = None,
         tmp_socket: bool = False,
-        border: int | None = None,
         field_resolver: FiledResolver | None = None,
         view_resolver: ViewResolver | None = None,
     ) -> None:
         args: list[str] = []
         args.extend(["--prompt", prompt])
-        args.extend(["--height", str(height)])
         if query is not None:
             args.extend(["--query", query])
         if isinstance(nth, str):
@@ -506,11 +531,9 @@ class Sweep[I]:
             args.append("--keep-order")
         if no_match:
             args.extend(["--no-match", no_match])
-        if altscreen:
-            args.append("--altscreen")
-        if border is not None:
-            args.extend(["--border", str(border)])
-
+        if layout:
+            args.extend(["--layout", layout])
+        sweep = sweep or ["sweep"]
         self._args: list[str] = [*sweep, "--rpc", *args]
         self._proc: Process | None = None
         self._io_sock: socket.socket | None = None
@@ -706,8 +729,9 @@ class Sweep[I]:
         if isinstance(item, ToCandidate):
             candidate = item.to_candidate()
             candidate.extra_update(_sweep_item_index=index)
-            item = candidate.to_json()
-        await self._peer.item_update(index=index, item=item)
+            await self._peer.item_update(index=index, item=candidate.to_json())
+        else:
+            await self._peer.item_update(index=index, item=item)
 
     async def items_clear(self) -> None:
         """Clear list of searchable items"""
@@ -842,10 +866,7 @@ class RpcRequest(NamedTuple):
     id: RpcId
 
     def serialize(self) -> bytes:
-        request: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "method": self.method,
-        }
+        request: dict[str, Any] = {"method": self.method}
         if self.params is not None:
             request["params"] = self.params
         if self.id is not None:
@@ -868,10 +889,7 @@ class RpcResult(NamedTuple):
     id: RpcId
 
     def serialize(self) -> bytes:
-        response: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "result": self.result,
-        }
+        response: dict[str, Any] = {"result": self.result}
         if self.id is not None:
             response["id"] = self.id
         return json.dumps(response).encode()
@@ -902,10 +920,7 @@ class RpcError(Exception):
         }
         if self.data is not None:
             error["data"] = self.data
-        response: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "error": error,
-        }
+        response: dict[str, Any] = {"error": error}
         if self.id is not None:
             response["id"] = self.id
         return json.dumps(response).encode()
@@ -1836,17 +1851,14 @@ async def main(args: list[str] | None = None) -> None:
         prompt_icon=opts.prompt_icon,
         query=opts.query,
         nth=opts.nth,
-        height=opts.height or 11,
         delimiter=opts.delimiter,
         theme=opts.theme,
         scorer=opts.scorer,
         tty=opts.tty,
         keep_order=opts.keep_order,
         no_match=opts.no_match,
-        altscreen=opts.altscreen,
         tmp_socket=opts.tmp_socket,
         log=opts.log,
-        border=opts.border,
     )
 
     if not result:

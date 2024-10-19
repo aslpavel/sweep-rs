@@ -76,14 +76,12 @@ async def main(args: list[str] | None = None) -> None:
         prompt=opts.prompt,
         prompt_icon=opts.prompt_icon,
         nth=opts.nth,
-        height=1024,
         delimiter=opts.delimiter,
         scorer=opts.scorer,
         keep_order=opts.keep_order,
         no_match=opts.no_match,
-        altscreen=True,
         tmp_socket=True,
-        border=0,
+        layout="full",
     )
 
     if opts.json:

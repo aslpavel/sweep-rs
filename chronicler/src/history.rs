@@ -17,7 +17,7 @@ use sweep::{
     haystack_default_view,
     surf_n_term::{
         view::{Align, Container, Flex, Justify, Text, View},
-        Face, FaceAttrs,
+        CellWrite, Face, FaceAttrs,
     },
     Haystack, HaystackPreview, Theme,
 };
@@ -64,20 +64,16 @@ impl Haystack for HistoryEntry {
 
         let mut right = Text::new();
         if self.cwd == *ctx.cwd {
-            right.with_face(
-                Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),
-                |right| {
-                    right.put_glyph(FOLDER_ICON.clone());
-                },
-            );
+            right.scope(|text| {
+                text.set_face(Face::new(Some(theme.accent), None, FaceAttrs::EMPTY));
+                text.put_glyph(FOLDER_ICON.clone());
+            });
         }
         if self.status != 0 {
-            right.with_face(
-                Face::new(Some(theme.accent), None, FaceAttrs::EMPTY),
-                |right| {
-                    right.put_glyph(FAILED_ICON.clone());
-                },
-            );
+            right.scope(|text| {
+                text.set_face(Face::new(Some(theme.accent), None, FaceAttrs::EMPTY));
+                text.put_glyph(FAILED_ICON.clone());
+            });
         }
         if !theme.show_preview {
             if let Ok(date) = self
@@ -85,7 +81,7 @@ impl Haystack for HistoryEntry {
                 .and_then(|date| Ok(date.format(DATE_FORMAT)?))
             {
                 right
-                    .push_str(&date, Some(theme.list_inactive))
+                    .put_fmt(&date, Some(theme.list_inactive))
                     .put_char(' ');
             }
         }
@@ -124,10 +120,8 @@ impl Haystack for HistoryEntry {
             .with_attrs(FaceAttrs::BOLD);
         let mut table = Table::new(10, Some(left_face), None);
         table.push(
-            Text::new().push_str("Status", None).take(),
-            Text::new()
-                .push_fmt(&format_args!("{}", self.status))
-                .take(),
+            Text::new().with_fmt("Status", None),
+            Text::new().with_fmt(&format_args!("{}", self.status), None),
         );
         if let Some(date) = self
             .start_dt()
@@ -135,27 +129,25 @@ impl Haystack for HistoryEntry {
             .and_then(|date| date.format(&DATE_FORMAT).ok())
         {
             table.push(
-                Text::new().push_str("Date", None).take(),
-                Text::new().push_str(date.as_str(), None).take(),
+                Text::new().with_fmt("Date", None),
+                Text::new().with_fmt(date.as_str(), None),
             )
         }
         table.push(
-            Text::new().push_str("Duration", None).take(),
-            Text::new()
-                .push_fmt(&format_args!("{:.3}s", self.end_ts - self.start_ts))
-                .take(),
+            Text::new().with_fmt("Duration", None),
+            Text::new().with_fmt(&format_args!("{:.3}s", self.end_ts - self.start_ts), None),
         );
         table.push(
-            Text::new().push_str("User", None).take(),
-            Text::new().push_str(&self.user, None).take(),
+            Text::new().with_fmt("User", None),
+            Text::new().with_fmt(&self.user, None),
         );
         table.push(
-            Text::new().push_str("Hostname", None).take(),
-            Text::new().push_str(&self.hostname, None).take(),
+            Text::new().with_fmt("Hostname", None),
+            Text::new().with_fmt(&self.hostname, None),
         );
         table.push(
-            Text::new().push_str("Directory", None).take(),
-            Text::new().push_str(&self.cwd, None).take(),
+            Text::new().with_fmt("Directory", None),
+            Text::new().with_fmt(&self.cwd, None),
         );
 
         let view = Container::new(table)

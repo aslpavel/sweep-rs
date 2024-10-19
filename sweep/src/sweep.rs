@@ -31,12 +31,12 @@ use std::{
 use surf_n_term::{
     encoder::ColorDepth,
     view::{
-        Align, BoxView, Container, Flex, IntoView, Margins, Text, Tree, TreeId, TreeView, View,
-        ViewCache, ViewContext, ViewDeserializer, ViewLayoutStore,
+        Align, BoxView, Container, Flex, IntoView, Layout, Margins, Text, Tree, TreeId, TreeView,
+        View, ViewCache, ViewContext, ViewDeserializer, ViewLayoutStore,
     },
-    Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size, Surface, SurfaceMut,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize,
-    TerminalSurfaceExt, TerminalWaker,
+    CellWrite, Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size, SystemTerminal,
+    Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize, TerminalSurfaceExt,
+    TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -55,8 +55,6 @@ lazy_static::lazy_static! {
 const SWEEP_SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 pub struct SweepOptions {
-    pub altscreen: bool,
-    pub height: usize,
     pub keep_order: bool,
     pub prompt: String,
     pub prompt_icon: Option<Glyph>,
@@ -64,7 +62,7 @@ pub struct SweepOptions {
     pub theme: Theme,
     pub title: String,
     pub tty_path: String,
-    pub border: usize,
+    pub layout: SweepLayout,
 }
 
 impl Default for SweepOptions {
@@ -73,7 +71,6 @@ impl Default for SweepOptions {
         scorers.push_back(fuzzy_scorer());
         scorers.push_back(substr_scorer());
         Self {
-            height: 11,
             prompt: "INPUT".to_string(),
             prompt_icon: Some(PROMPT_DEFAULT_ICON.clone()),
             theme: Theme::light(),
@@ -81,8 +78,7 @@ impl Default for SweepOptions {
             tty_path: "/dev/tty".to_string(),
             title: "sweep".to_string(),
             scorers,
-            altscreen: false,
-            border: 0,
+            layout: SweepLayout::default(),
         }
     }
 }
@@ -1095,26 +1091,29 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // stats view
         let ranker_result = self.ranker.result();
         let mut stats = Text::new()
-            .push_text(&self.theme.separator_left)
-            .set_face(self.theme.stats)
-            .push_str(" ", None)
+            .put_text(&self.theme.separator_left)
+            .with_face(self.theme.stats)
+            .with_char(' ')
             .take();
         let marked_count = self.marked.with(|marked| marked.len());
         if marked_count > 0 {
-            stats.push_fmt(&format_args!("{}/", marked_count));
+            stats.put_fmt(&format_args!("{}/", marked_count), None);
         }
         stats
-            .push_fmt(&format_args!(
-                "{}/{} ",
-                ranker_result.len(),
-                ranker_result.haystack_len(),
-            ))
-            .push_fmt(&format_args!("{:.0?}", ranker_result.duration()))
-            .with_face(Default::default(), |text| {
+            .put_fmt(
+                &format_args!("{}/{} ", ranker_result.len(), ranker_result.haystack_len(),),
+                None,
+            )
+            .put_fmt(&format_args!("{:.0?}", ranker_result.duration()), None)
+            .scope(|text| {
                 let name = ranker_result.scorer().name();
                 match ICONS.get(name) {
-                    Some(glyph) => text.put_glyph(glyph.clone()),
-                    None => text.push_str(name, None),
+                    Some(glyph) => {
+                        text.put_glyph(glyph.clone());
+                    }
+                    None => {
+                        text.put_fmt(name, None);
+                    }
                 };
             });
 
@@ -1146,16 +1145,16 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
 
         // prompt
         let prompt = Text::new()
-            .set_face(self.theme.label)
-            .with_face(Default::default(), |text| {
+            .with_face(self.theme.label)
+            .scope(|text| {
                 match &self.prompt_icon {
                     Some(icon) => text.put_glyph(icon.clone()),
                     None => text.put_char(' '),
                 };
             })
-            .push_str(self.prompt.as_str(), None)
-            .put_char(' ')
-            .push_text(&self.theme.separator_right)
+            .put_fmt(&self.prompt, None)
+            .with_char(' ')
+            .put_text(&self.theme.separator_right)
             .take();
 
         // header
@@ -1221,11 +1220,7 @@ where
         TerminalCommand::Title(options.title.clone()),
     ])?;
     term.execute_many(TerminalCommand::mouse_events_set(true, false))?;
-    if options.altscreen {
-        term.execute(TerminalCommand::altscreen_set(true))?;
-    }
-
-    // Force dumb four color theme for dumb terminal
+    // force dumb four color theme for dumb terminal
     if ColorDepth::Gray == term.capabilities().depth {
         options.theme = Theme {
             show_preview: options.theme.show_preview,
@@ -1233,31 +1228,34 @@ where
         }
     }
 
-    // find current row offset
-    let mut row_offset = term.position()?.row;
+    // prepare terminal based on layout
     let term_size = term.size()?;
-    let height = options.height;
-    if height > term_size.cells.height {
-        row_offset = 0;
-    } else if row_offset + height > term_size.cells.height {
-        let scroll = row_offset + height - term_size.cells.height;
-        row_offset = term_size.cells.height - height;
+    let mut win_layout = options
+        .layout
+        .calc(term.position()?, term_size.cells, false);
+    if win_layout.position().row + win_layout.size().height > term_size.cells.height {
+        // scroll to reserve space
+        let scroll = win_layout.position().row + win_layout.size().height - term_size.cells.height;
+        let row = term_size.cells.height - win_layout.size().height;
+        win_layout.set_position(Position {
+            row,
+            ..win_layout.position()
+        });
         term.execute(TerminalCommand::Scroll(scroll as i32))?;
     }
-    let col_offset = options.border;
+    if options.layout.is_altscreen() {
+        term.execute(TerminalCommand::altscreen_set(true))?;
+    }
+    // report calculated size
+    events.send(SweepEvent::Resize(TerminalSize {
+        cells: win_layout.size(),
+        pixels: term_size.cells_in_pixels(win_layout.size()),
+    }))?;
 
+    // sweep state
     let mut state = SweepState::new_from_options(&options, term.waker(), haystack_context.clone());
     let mut state_stack: Vec<SweepState<H>> = Vec::new();
     let mut state_help: Option<SweepState<ActionDesc>> = None;
-
-    let sweep_size = Size {
-        width: term_size.cells.width - 2 * options.border,
-        height: options.height.min(term_size.cells.height),
-    };
-    events.send(SweepEvent::Resize(TerminalSize {
-        cells: sweep_size,
-        pixels: term_size.cells_in_pixels(sweep_size),
-    }))?;
 
     // render loop
     let mut render_suppress = false;
@@ -1265,19 +1263,18 @@ where
     let mut layout_store = ViewLayoutStore::new();
     let mut layout_id: Option<TreeId> = None;
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
-    let result = term.run_render(|term, event, mut view| {
+    let result = term.run_render(|term, event, surf| {
         // handle events
         match event {
             Some(TerminalEvent::Resize(term_size)) => {
-                term.execute(TerminalCommand::Scroll(row_offset as i32))?;
-                row_offset = 0;
-                let sweep_size = Size {
-                    width: term_size.cells.width - 2 * options.border,
-                    height: options.height.min(term_size.cells.height),
-                };
+                term.execute(TerminalCommand::Face(Default::default()))?;
+                term.execute(TerminalCommand::EraseScreen)?;
+                win_layout = options
+                    .layout
+                    .calc(win_layout.position(), term_size.cells, true);
                 events.send(SweepEvent::Resize(TerminalSize {
-                    cells: sweep_size,
-                    pixels: term_size.cells_in_pixels(sweep_size),
+                    cells: win_layout.size(),
+                    pixels: term_size.cells_in_pixels(win_layout.size()),
                 }))?;
             }
             Some(TerminalEvent::Wake) => {
@@ -1423,10 +1420,11 @@ where
             Some(TerminalEvent::Mouse(mouse)) => {
                 if let Some(layout) = layout_id.map(|id| TreeView::from_id(&layout_store, id)) {
                     // adjust mouse position to account for window offset
-                    if mouse.pos.col >= col_offset && mouse.pos.row >= row_offset {
+                    let win_pos = layout.position();
+                    if mouse.pos.col >= win_pos.col && mouse.pos.row >= win_pos.row {
                         let pos = Position {
-                            row: mouse.pos.row - row_offset,
-                            col: mouse.pos.col - col_offset,
+                            row: mouse.pos.row - win_pos.row,
+                            col: mouse.pos.col - win_pos.col,
                         };
                         let mut tag: Option<&Value> = None;
                         for layout in layout.find_path(pos) {
@@ -1471,15 +1469,7 @@ where
         }
 
         // render
-        let mut state_surf = if options.border > 0 && options.border < view.width() / 2 {
-            let border = options.border as i32;
-            view.view_mut(
-                (row_offset as i32)..(row_offset + height) as i32,
-                border..-border,
-            )
-        } else {
-            view.view_mut((row_offset as i32)..(row_offset + height) as i32, ..)
-        };
+        let mut state_surf = win_layout.apply_to(surf);
         let ctx = ViewContext::new(term)?;
         let layout_id_next = if let Some(state) = state_help.as_mut() {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
@@ -1504,10 +1494,10 @@ where
 
     // restore terminal
     term.execute(TerminalCommand::CursorTo(Position {
-        row: row_offset,
+        row: win_layout.position().row,
         col: 0,
     }))?;
-    if options.altscreen {
+    if options.layout.is_altscreen() {
         term.execute(TerminalCommand::altscreen_set(false))?;
     }
     term.poll(Some(Duration::new(0, 0)))?;
@@ -1629,6 +1619,164 @@ impl<H> MarkedItems<H> {
 
     fn contains_id(&self, id: RankedItemId) -> bool {
         self.ids.contains_key(&id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SweepLayout {
+    Float {
+        height: SweepLayoutSize,
+        width: SweepLayoutSize,
+        row: SweepLayoutSize,
+        column: SweepLayoutSize,
+    },
+    Full {
+        flex: SweepLayoutSize,
+    },
+}
+
+impl SweepLayout {
+    fn is_altscreen(&self) -> bool {
+        matches!(self, SweepLayout::Full { .. })
+    }
+
+    fn calc(&self, term_pos: Position, term_size: Size, row_limit: bool) -> Layout {
+        match self {
+            SweepLayout::Float {
+                height,
+                width,
+                row,
+                column,
+            } => {
+                let mut pos = term_pos;
+                if !row.is_full() {
+                    pos.row = row.calc(term_size.height);
+                }
+                pos.col = column.calc(term_size.width);
+                let size = Size {
+                    height: height.calc(term_size.height),
+                    width: width.calc(term_size.width).min(term_size.width - pos.col),
+                };
+                if row_limit {
+                    pos.row = pos.row.min(term_size.height - size.height);
+                }
+                Layout::new().with_position(pos).with_size(size)
+            }
+            SweepLayout::Full { .. } => Layout::new().with_size(term_size),
+        }
+    }
+}
+
+impl Default for SweepLayout {
+    fn default() -> Self {
+        use SweepLayoutSize::*;
+        SweepLayout::Float {
+            height: Absolute(11),
+            width: Full,
+            column: Absolute(0),
+            row: Full,
+        }
+    }
+}
+
+impl std::str::FromStr for SweepLayout {
+    type Err = Error;
+
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        // name(,attr=value)*
+        let mut iter = string.trim().split(',');
+        let Some(name) = iter.next() else {
+            anyhow::bail!("invalid layout: {} (expected `name(,attr=value)`)", string);
+        };
+        let mut kvs = iter.filter_map(|kv| {
+            let mut kv = kv.splitn(2, '=');
+            let key = kv.next()?.trim();
+            let value = kv.next()?.trim();
+            Some((key, value))
+        });
+        match name {
+            "float" => {
+                let mut height = SweepLayoutSize::Absolute(11);
+                let mut width = SweepLayoutSize::Full;
+                let mut column = SweepLayoutSize::Absolute(0);
+                let mut row = SweepLayoutSize::Full;
+                while let Some((key, value)) = kvs.next() {
+                    match key {
+                        "height" | "h" => height = value.parse()?,
+                        "width" | "w" => width = value.parse()?,
+                        "column" | "col" | "c" => column = value.parse()?,
+                        "row" | "r" => row = value.parse()?,
+                        _ => {}
+                    }
+                }
+                Ok(SweepLayout::Float {
+                    height,
+                    width,
+                    row,
+                    column,
+                })
+            }
+            "full" => {
+                let mut flex = SweepLayoutSize::Full;
+                while let Some((key, value)) = kvs.next() {
+                    match key {
+                        "flex" => flex = value.parse()?,
+                        _ => {}
+                    }
+                }
+                Ok(SweepLayout::Full { flex })
+            }
+            _ => Err(anyhow::anyhow!("invalid layout name: {}", name)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SweepLayoutSize {
+    Absolute(i32),
+    Fraction(f32),
+    Full,
+}
+
+impl SweepLayoutSize {
+    fn calc(&self, size: usize) -> usize {
+        match *self {
+            SweepLayoutSize::Absolute(diff) => {
+                if diff >= 0 {
+                    (diff as usize).clamp(0, size)
+                } else {
+                    size - (-diff as usize).clamp(0, size)
+                }
+            }
+            SweepLayoutSize::Fraction(frac) => {
+                if frac >= 0.0 {
+                    ((size as f32 * frac) as usize).clamp(0, size)
+                } else {
+                    size - ((size as f32 * -frac) as usize).clamp(0, size)
+                }
+            }
+            SweepLayoutSize::Full => size,
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        matches!(self, SweepLayoutSize::Full)
+    }
+}
+
+impl std::str::FromStr for SweepLayoutSize {
+    type Err = Error;
+
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        let string = string.trim();
+        if matches!(string, "full" | "dyn" | "dynamic") {
+            Ok(Self::Full)
+        } else if let Some(perc) = string.strip_suffix('%') {
+            let perc: f32 = perc.parse()?;
+            Ok(Self::Fraction((perc / 100.0).clamp(-1.0, 1.0)))
+        } else {
+            Ok(Self::Absolute(string.parse()?))
+        }
     }
 }
 

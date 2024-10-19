@@ -15,7 +15,8 @@ use std::{
 use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
-    Candidate, CandidateContext, FieldSelector, Sweep, SweepEvent, SweepOptions, Theme,
+    Candidate, CandidateContext, FieldSelector, Sweep, SweepEvent, SweepLayout, SweepOptions,
+    Theme,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -100,16 +101,12 @@ async fn main() -> Result<(), Error> {
         }
     };
 
-    let theme = Theme {
-        show_preview: args.preview,
-        ..args.theme
-    };
+    let theme = args.theme;
     let candidate_context = CandidateContext::new();
     candidate_context.update_named_colors(&theme);
     let sweep: Sweep<Candidate> = Sweep::new(
         candidate_context.clone(),
         SweepOptions {
-            height: args.height,
             prompt: args.prompt.clone(),
             prompt_icon: Some(args.prompt_icon),
             theme,
@@ -117,8 +114,7 @@ async fn main() -> Result<(), Error> {
             tty_path: args.tty_path.clone(),
             title: args.title.clone(),
             scorers: VecDeque::new(),
-            altscreen: args.altscreen,
-            border: args.border,
+            layout: args.layout,
         },
     )?;
     sweep.query_set(args.query.clone());
@@ -211,10 +207,6 @@ impl Write for Log {
 /// Sweep is a command line fuzzy finder
 #[derive(FromArgs)]
 pub struct Args {
-    /// number of lines occupied by sweep
-    #[argh(option, default = "11")]
-    pub height: usize,
-
     /// prompt string
     #[argh(option, short = 'p', default = "\"INPUT\".to_string()")]
     pub prompt: String,
@@ -268,10 +260,6 @@ pub struct Args {
     #[argh(option, default = "\"sweep\".to_string()")]
     pub title: String,
 
-    /// use alternative screen
-    #[argh(switch)]
-    pub altscreen: bool,
-
     /// expect candidates in JSON format (uses the same item format as RPC)
     #[argh(switch)]
     pub json: bool,
@@ -292,13 +280,13 @@ pub struct Args {
     #[argh(option)]
     pub log: Option<String>,
 
-    /// leave border on the sides
-    #[argh(option, default = "0")]
-    pub border: usize,
+    /// preview cmd `{}` will be replaced with current candidate
+    #[argh(option)]
+    pub preview: Option<String>,
 
-    /// whether to show item preview by default or not
-    #[argh(option, default = "true")]
-    pub preview: bool,
+    /// layout mode specified as `name(,attr=value)*`
+    #[argh(option, default = "SweepLayout::default()")]
+    pub layout: SweepLayout,
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

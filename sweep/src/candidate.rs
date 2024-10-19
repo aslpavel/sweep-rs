@@ -25,7 +25,7 @@ use surf_n_term::{
         Align, ArcView, Axis, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
         ViewCache, ViewDeserializer,
     },
-    Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
+    CellWrite, Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -469,19 +469,24 @@ pub fn fields_view(
             let face_default = face_default.overlay(&field_face);
             for c in field.text.chars() {
                 if positions.get(*positions_offset) {
-                    text.set_face(face_highlight).put_char(c);
+                    text.set_face(face_highlight);
+                    text.put_char(c);
                 } else {
-                    text.set_face(face_default).put_char(c);
+                    text.set_face(face_default);
+                    text.put_char(c);
                 }
                 *positions_offset += 1;
             }
         } else {
             // inactive field or glyph
             match field.glyph {
-                Some(glyph) => text
-                    .set_face(face_default.overlay(&field_face))
-                    .put_glyph(glyph.clone()),
-                None => text.push_str(&field.text, Some(face_inactive.overlay(&field_face))),
+                Some(glyph) => {
+                    text.set_face(face_default.overlay(&field_face));
+                    text.put_glyph(glyph.clone());
+                }
+                None => {
+                    text.put_fmt(&field.text, Some(face_inactive.overlay(&field_face)));
+                }
             };
             // view
             if let Some(view) = field.view {

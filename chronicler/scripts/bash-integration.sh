@@ -109,7 +109,7 @@ function _chronicler_complete {
                 if [[ ! -e $item ]]; then
                     continue
                 fi
-                mimetype=$(file --mime-type --derference --brief "$item")
+                mimetype=$(file --mime-type --dereference --brief "$item")
                 if [[ $mimetype == text/* || $mimetype == "application/json" ]]; then
                     _chronicler_readline_extend "${EDITOR:-emacs} $item_escape"
                 else
