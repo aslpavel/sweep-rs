@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 use surf_n_term::{
-    view::{BoxView, Text, View},
+    view::{ArcView, BoxView, Text, View},
     CellWrite,
 };
 
@@ -39,7 +39,6 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
         None
     }
 
-    /*
     /// Large preview show in the full screen (alt-screen) mode
     fn preview_large(
         &self,
@@ -49,20 +48,19 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
     ) -> Option<HaystackPreview> {
         None
     }
-    */
 }
 
 /// Preview rendered for haystack item
 pub struct HaystackPreview {
     /// Preview of the item
-    pub(crate) view: BoxView<'static>,
+    pub(crate) view: ArcView<'static>,
     /// Flex value value of the view see [`surf_n_term::view::Flex`]
     pub(crate) flex: Option<f64>,
 }
 
 impl HaystackPreview {
     /// Create haystack preview item
-    pub fn new(view: BoxView<'static>, flex: Option<f64>) -> Self {
+    pub fn new(view: ArcView<'static>, flex: Option<f64>) -> Self {
         Self { view, flex }
     }
 

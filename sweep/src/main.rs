@@ -280,7 +280,7 @@ pub struct Args {
     #[argh(option)]
     pub log: Option<String>,
 
-    /// preview cmd `{}` will be replaced with current candidate
+    /// preview cmd, {{}} will be replaced with current candidate
     #[argh(option)]
     pub preview: Option<String>,
 

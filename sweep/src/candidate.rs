@@ -429,7 +429,7 @@ impl Haystack for Candidate {
             Axis::Vertical,
         );
         Some(HaystackPreview::new(
-            preview.boxed(),
+            preview.arc(),
             Some(self.inner.preview_flex),
         ))
     }

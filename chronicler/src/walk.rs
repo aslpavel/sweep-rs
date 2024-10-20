@@ -194,7 +194,7 @@ impl Haystack for PathItem {
             text.put_fmt("Accessed ", left_face);
             text.put_fmt(&format_args!("{}\n", date), None);
         }
-        Some(sweep::HaystackPreview::new(text.boxed(), None))
+        Some(sweep::HaystackPreview::new(text.arc(), None))
     }
 }
 

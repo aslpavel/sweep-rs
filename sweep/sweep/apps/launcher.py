@@ -194,7 +194,7 @@ async def main(args: list[str] | None = None) -> None:
     sweep_args: dict[str, Any] = {}
     sweep_cmd: list[str] = []
     if not opts.no_window:
-        sweep_args.update({"layout": "full", "height": 1024, "tmp_socket": True})
+        sweep_args.update({"layout": "full", "tmp_socket": True})
         sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.launcher"])
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 

@@ -154,7 +154,7 @@ impl Haystack for HistoryEntry {
             .with_horizontal(Align::Expand)
             .with_vertical(Align::Expand)
             .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
-            .boxed();
+            .arc();
         Some(HaystackPreview::new(view, Some(0.7)))
     }
 }

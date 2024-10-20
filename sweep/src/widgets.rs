@@ -289,10 +289,7 @@ impl Haystack for ActionDesc {
         _theme: &Theme,
     ) -> Option<HaystackPreview> {
         let desc = Text::new().put_fmt(&self.description, None).take();
-        Some(HaystackPreview::new(
-            Container::new(desc).boxed(),
-            Some(0.6),
-        ))
+        Some(HaystackPreview::new(Container::new(desc).arc(), Some(0.6)))
     }
 }
 

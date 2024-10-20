@@ -1922,8 +1922,6 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surf_n_term"
 version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e21fc25030f1f0f5c0a2eff95efebce4579ab407405919c987b7cb559b7dc000"
 dependencies = [
  "either",
  "fnv",

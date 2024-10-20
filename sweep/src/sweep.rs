@@ -924,6 +924,16 @@ where
         })
     }
 
+    fn preview_large(&self) -> Option<HaystackPreview> {
+        self.list.current().and_then(|item| {
+            item.item.haystack.preview_large(
+                &self.haystack_context,
+                &item.item.positions,
+                &self.theme,
+            )
+        })
+    }
+
     fn theme_set(&mut self, theme: Theme) {
         self.input.theme_set(theme.clone());
         self.list.theme_set(theme.clone());
@@ -1420,7 +1430,7 @@ where
             Some(TerminalEvent::Mouse(mouse)) => {
                 if let Some(layout) = layout_id.map(|id| TreeView::from_id(&layout_store, id)) {
                     // adjust mouse position to account for window offset
-                    let win_pos = layout.position();
+                    let win_pos = win_layout.position();
                     if mouse.pos.col >= win_pos.col && mouse.pos.row >= win_pos.row {
                         let pos = Position {
                             row: mouse.pos.row - win_pos.row,
@@ -1469,11 +1479,11 @@ where
         }
 
         // render
-        let mut state_surf = win_layout.apply_to(surf);
+        let mut win_surf = win_layout.apply_to(surf);
         let ctx = ViewContext::new(term)?;
         let layout_id_next = if let Some(state) = state_help.as_mut() {
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
-                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), state))?
+                .in_scope(|| win_surf.draw_view(&ctx, Some(&mut layout_store), state))?
         } else {
             if render_suppress
                 || !render_supress_sync
@@ -1484,8 +1494,30 @@ where
                 return Ok(TerminalAction::WaitNoFrame);
             }
             render_supress_sync.take();
+
+            let view = if let SweepLayout::Full { height } = &options.layout {
+                // TODO: preview must be cached if item has not changed
+                if let Some(preview_large) = state.preview_large() {
+                    let main_height = height.calc(win_layout.size().height);
+                    let main = Container::new(&mut state);
+                    let mut flex = Flex::column();
+                    if height.is_positive() {
+                        flex.push_child(main.with_height(main_height));
+                        flex.push_flex_child(1.0, preview_large.view);
+                    } else {
+                        flex.push_flex_child(1.0, preview_large.view);
+                        flex.push_child(main.with_height(win_layout.size().height - main_height));
+                    }
+                    flex.left_view()
+                } else {
+                    state.into_view().right_view()
+                }
+            } else {
+                state.into_view().right_view()
+            };
+
             tracing::debug_span!("[sweep_ui_worker][draw] sweep state")
-                .in_scope(|| state_surf.draw_view(&ctx, Some(&mut layout_store), &mut state))?
+                .in_scope(|| win_surf.draw_view(&ctx, Some(&mut layout_store), view))?
         };
         layout_id = Some(layout_id_next);
 
@@ -1631,7 +1663,7 @@ pub enum SweepLayout {
         column: SweepLayoutSize,
     },
     Full {
-        flex: SweepLayoutSize,
+        height: SweepLayoutSize,
     },
 }
 
@@ -1704,7 +1736,7 @@ impl std::str::FromStr for SweepLayout {
                     match key {
                         "height" | "h" => height = value.parse()?,
                         "width" | "w" => width = value.parse()?,
-                        "column" | "col" | "c" => column = value.parse()?,
+                        "column" | "c" => column = value.parse()?,
                         "row" | "r" => row = value.parse()?,
                         _ => {}
                     }
@@ -1717,14 +1749,14 @@ impl std::str::FromStr for SweepLayout {
                 })
             }
             "full" => {
-                let mut flex = SweepLayoutSize::Full;
+                let mut height = SweepLayoutSize::Full;
                 while let Some((key, value)) = kvs.next() {
                     match key {
-                        "flex" => flex = value.parse()?,
+                        "height" | "h" => height = value.parse()?,
                         _ => {}
                     }
                 }
-                Ok(SweepLayout::Full { flex })
+                Ok(SweepLayout::Full { height })
             }
             _ => Err(anyhow::anyhow!("invalid layout name: {}", name)),
         }
@@ -1762,6 +1794,14 @@ impl SweepLayoutSize {
     fn is_full(&self) -> bool {
         matches!(self, SweepLayoutSize::Full)
     }
+
+    fn is_positive(&self) -> bool {
+        match *self {
+            SweepLayoutSize::Absolute(val) => val >= 0,
+            SweepLayoutSize::Fraction(val) => val >= 0.0,
+            SweepLayoutSize::Full => true,
+        }
+    }
 }
 
 impl std::str::FromStr for SweepLayoutSize {
@@ -1769,7 +1809,7 @@ impl std::str::FromStr for SweepLayoutSize {
 
     fn from_str(string: &str) -> Result<Self, Self::Err> {
         let string = string.trim();
-        if matches!(string, "full" | "dyn" | "dynamic") {
+        if matches!(string, "full" | "dynamic") {
             Ok(Self::Full)
         } else if let Some(perc) = string.strip_suffix('%') {
             let perc: f32 = perc.parse()?;
