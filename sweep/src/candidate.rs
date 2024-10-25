@@ -30,7 +30,7 @@ use surf_n_term::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct CandidateInner {
     /// Searchable fields shown on left
     target: Vec<Field<'static>>,
@@ -1296,7 +1296,10 @@ mod tests {
             Vec::new(),
             0.0,
         );
-        assert_eq!(candidate, ctx.candidate_from_json("\"four\"".as_bytes())?);
+        assert_eq!(
+            candidate.inner,
+            ctx.candidate_from_json("\"four\"".as_bytes())?.inner
+        );
         assert_eq!("\"four\"", serde_json::to_string(&candidate)?);
 
         Ok(())

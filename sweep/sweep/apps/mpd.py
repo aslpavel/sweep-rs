@@ -1010,14 +1010,7 @@ async def main(args: list[str] | None = None) -> None:
     sweep_args: dict[str, Any] = {}
     sweep_cmd: list[str] = []
     if opts.term != "none" and opts.tty is None:
-        sweep_args.update(
-            dict(
-                altscreen=True,
-                height=1024,
-                tmp_socket=True,
-                border=0,
-            )
-        )
+        sweep_args.update(tmp_socket=True, layout="full")
         if opts.term == "kitty":
             sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.mpd"])
         elif opts.term == "foot":

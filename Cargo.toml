@@ -1,9 +1,24 @@
 [workspace]
-members = [
-  "sweep",
-  "chronicler"
-]
+members = ["sweep", "chronicler"]
 resolver = "2"
 
+[workspace.package]
+authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
+edition = "2021"
+version = "0.19.0"
+repository = "https://github.com/aslpavel/sweep-rs"
+
+[workspace.dependencies]
+anyhow = { version = "^1.0" }
+argh = { version = "^0.1" }
+futures = { version = "^0.3" }
+lazy_static = { version = "^1.4" }
+mimalloc = { version = "^0.1", default-features = false }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+tokio = { version = "1", features = ["full"] }
+tracing = { version = "^0.1" }
+tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
+
 [profile.release]
-lto="fat"
+lto = "fat"

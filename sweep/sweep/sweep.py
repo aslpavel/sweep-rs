@@ -1807,11 +1807,6 @@ async def main(args: list[str] | None = None) -> None:
         help="expect candidates in JSON format",
     )
     parser.add_argument(
-        "--altscreen",
-        action="store_true",
-        help="use alterniative screen",
-    )
-    parser.add_argument(
         "--no-match",
         choices=["nothing", "input"],
         help="what is returned if there is no match on enter",
