@@ -31,8 +31,8 @@ use std::{
 use surf_n_term::{
     encoder::ColorDepth,
     view::{
-        Align, BoxView, Container, Flex, IntoView, Layout, Margins, Text, Tree, TreeId, TreeView,
-        View, ViewCache, ViewContext, ViewDeserializer, ViewLayoutStore,
+        Align, Container, Flex, IntoView, Layout, Margins, Text, Tree, TreeId, TreeView, View,
+        ViewCache, ViewContext, ViewDeserializer, ViewLayoutStore,
     },
     CellWrite, Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size, SystemTerminal,
     Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize, TerminalSurfaceExt,
@@ -916,7 +916,7 @@ where
     }
 
     // get preview of the currently pointed haystack item
-    fn preview(&self) -> Option<HaystackPreview> {
+    fn preview(&self) -> Option<H::Preview> {
         self.list.current().and_then(|item| {
             item.item
                 .haystack
@@ -925,7 +925,7 @@ where
     }
 
     // get large preview for currently pointed haystack item
-    fn preview_large(&self) -> Option<HaystackPreview> {
+    fn preview_large(&self) -> Option<H::PreviewLarge> {
         let result = self.list.current().and_then(|item| {
             item.item.haystack.preview_large(
                 &self.haystack_context,
@@ -1197,8 +1197,8 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         // preview
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
-                let flex = preview.flex.unwrap_or(0.0);
-                let mut view = Container::new(preview.view)
+                let flex = preview.flex().unwrap_or(0.0);
+                let mut view = Container::new(preview)
                     .with_margins(Margins {
                         left: 1,
                         right: 1,
@@ -1524,9 +1524,9 @@ where
                     let mut flex = Flex::column();
                     if height.is_positive() {
                         flex.push_child(main.with_height(main_height));
-                        flex.push_flex_child(1.0, preview_large.view);
+                        flex.push_flex_child(1.0, preview_large);
                     } else {
-                        flex.push_flex_child(1.0, preview_large.view);
+                        flex.push_flex_child(1.0, preview_large);
                         flex.push_child(main.with_height(win_layout.size().height - main_height));
                     }
                     flex.left_view()
@@ -1611,7 +1611,7 @@ struct SweepItem<H: Haystack> {
 }
 
 impl<H: Haystack> IntoView for SweepItem<H> {
-    type View = BoxView<'static>;
+    type View = H::View;
 
     fn into_view(self) -> Self::View {
         self.item

@@ -1,6 +1,6 @@
 use crate::{
     common::{AbortJoinHandle, LockExt},
-    haystack_default_view, FieldSelector, Haystack, HaystackPreview, Positions,
+    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, Positions,
 };
 use anyhow::Context;
 use futures::{future, FutureExt, TryFutureExt};
@@ -259,6 +259,9 @@ pub struct ActionDesc {
 
 impl Haystack for ActionDesc {
     type Context = ();
+    type View = Flex<'static>;
+    type Preview = HaystackBasicPreview<Container<Text>>;
+    type PreviewLarge = ();
 
     fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
@@ -267,7 +270,7 @@ impl Haystack for ActionDesc {
         self.name.chars().for_each(scope);
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Self::View {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             chords_text
@@ -279,9 +282,8 @@ impl Haystack for ActionDesc {
         }
         Flex::row()
             .justify(Justify::SpaceBetween)
-            .add_flex_child(1.0, haystack_default_view(ctx, self, positions, theme))
+            .add_flex_child(1.0, HaystackDefaultView::new(ctx, self, positions, theme))
             .add_child(chords_text)
-            .boxed()
     }
 
     fn preview(
@@ -289,9 +291,9 @@ impl Haystack for ActionDesc {
         _ctx: &Self::Context,
         _positions: &Positions,
         _theme: &Theme,
-    ) -> Option<HaystackPreview> {
+    ) -> Option<Self::Preview> {
         let desc = Text::new().put_fmt(&self.description, None).take();
-        Some(HaystackPreview::new(Container::new(desc).arc(), Some(0.6)))
+        Some(HaystackBasicPreview::new(Container::new(desc), Some(0.6)))
     }
 }
 

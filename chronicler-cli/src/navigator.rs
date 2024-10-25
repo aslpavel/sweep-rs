@@ -15,8 +15,11 @@ use std::{
 };
 use sweep::{
     common::{AbortJoinHandle, LockExt},
-    surf_n_term::Glyph,
-    Haystack, HaystackPreview, Positions, Sweep, SweepEvent, SweepOptions,
+    surf_n_term::{
+        view::{Either, View},
+        Glyph,
+    },
+    Haystack, Positions, Sweep, SweepEvent, SweepOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,10 @@ impl NavigatorItem {
 
 impl Haystack for NavigatorItem {
     type Context = NavigatorContext;
+    type View = Either<<PathItem as Haystack>::View, <HistoryEntry as Haystack>::View>;
+    type Preview = Either<<PathItem as Haystack>::Preview, <HistoryEntry as Haystack>::Preview>;
+    type PreviewLarge =
+        Either<<PathItem as Haystack>::PreviewLarge, <HistoryEntry as Haystack>::PreviewLarge>;
 
     fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
     where
@@ -99,11 +106,11 @@ impl Haystack for NavigatorItem {
         ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &sweep::Theme,
-    ) -> Box<dyn sweep::surf_n_term::view::View> {
+    ) -> Self::View {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.view(ctx, positions, theme),
-            History(history) => history.view(ctx, positions, theme),
+            Path(path) => path.view(ctx, positions, theme).left_view(),
+            History(history) => history.view(ctx, positions, theme).right_view(),
         }
     }
 
@@ -112,11 +119,26 @@ impl Haystack for NavigatorItem {
         ctx: &Self::Context,
         positions: &Positions,
         theme: &sweep::Theme,
-    ) -> Option<HaystackPreview> {
+    ) -> Option<Self::Preview> {
         use NavigatorItem::*;
         match self {
-            Path(path) => path.preview(ctx, positions, theme),
-            History(history) => history.preview(ctx, positions, theme),
+            Path(path) => path.preview(ctx, positions, theme).map(Either::Left),
+            History(history) => history.preview(ctx, positions, theme).map(Either::Right),
+        }
+    }
+
+    fn preview_large(
+        &self,
+        ctx: &Self::Context,
+        positions: &Positions,
+        theme: &sweep::Theme,
+    ) -> Option<Self::PreviewLarge> {
+        use NavigatorItem::*;
+        match self {
+            Path(path) => path.preview_large(ctx, positions, theme).map(Either::Left),
+            History(history) => history
+                .preview_large(ctx, positions, theme)
+                .map(Either::Right),
         }
     }
 }

@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 edition = "2021"
-version = "0.19.0"
+version = "0.20.0"
 repository = "https://github.com/aslpavel/sweep-rs"
 
 [workspace.dependencies]
@@ -21,7 +21,7 @@ tracing = { version = "^0.1" }
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
 surf_n_term = { version = "^0.17.1" }
-# surf_n_term = { path = "../../surf-n-term" }
+# surf_n_term = { path = "../surf-n-term" }
 # surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
 
 sweep = { path = "sweep-lib" }

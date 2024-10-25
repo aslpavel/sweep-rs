@@ -14,12 +14,11 @@ use sqlx::{
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
-    haystack_default_view,
     surf_n_term::{
-        view::{Align, Container, Flex, Justify, Text, View},
+        view::{Align, Container, Flex, Justify, Text},
         CellWrite, Face, FaceAttrs,
     },
-    Haystack, HaystackPreview, Theme,
+    Haystack, HaystackBasicPreview, HaystackDefaultView, Theme,
 };
 
 #[derive(Clone, Debug, FromRow)]
@@ -46,6 +45,9 @@ impl HistoryEntry {
 
 impl Haystack for HistoryEntry {
     type Context = NavigatorContext;
+    type View = Flex<'static>;
+    type Preview = HaystackBasicPreview<Container<Flex<'static>>>;
+    type PreviewLarge = ();
 
     fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
@@ -54,13 +56,8 @@ impl Haystack for HistoryEntry {
         self.cmd.chars().for_each(scope)
     }
 
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: &sweep::Positions,
-        theme: &Theme,
-    ) -> Box<dyn View> {
-        let cmd = haystack_default_view(ctx, self, positions, theme);
+    fn view(&self, ctx: &Self::Context, positions: &sweep::Positions, theme: &Theme) -> Self::View {
+        let cmd = HaystackDefaultView::new(ctx, self, positions, theme);
 
         let mut right = Text::new();
         if self.cwd == *ctx.cwd {
@@ -90,7 +87,6 @@ impl Haystack for HistoryEntry {
             .justify(Justify::SpaceBetween)
             .add_flex_child(1.0, cmd)
             .add_child(right)
-            .boxed()
     }
 
     fn preview(
@@ -98,7 +94,7 @@ impl Haystack for HistoryEntry {
         _ctx: &Self::Context,
         _positions: &sweep::Positions,
         theme: &Theme,
-    ) -> Option<HaystackPreview> {
+    ) -> Option<Self::Preview> {
         let mut text = Text::new();
         text.set_face(theme.list_selected);
         (|| {
@@ -153,9 +149,8 @@ impl Haystack for HistoryEntry {
         let view = Container::new(table)
             .with_horizontal(Align::Expand)
             .with_vertical(Align::Expand)
-            .with_color(theme.list_selected.bg.unwrap_or(theme.bg))
-            .arc();
-        Some(HaystackPreview::new(view, Some(0.7)))
+            .with_color(theme.list_selected.bg.unwrap_or(theme.bg));
+        Some(HaystackBasicPreview::new(view, Some(0.7)))
     }
 }
 

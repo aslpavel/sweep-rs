@@ -20,10 +20,10 @@ use std::{
 };
 use sweep::{
     surf_n_term::{
-        view::{BoxView, Flex, Justify, Text, View},
+        view::{Flex, Justify, Text},
         CellWrite, Face, FaceAttrs,
     },
-    Haystack,
+    Haystack, HaystackBasicPreview, HaystackDefaultView,
 };
 use time::OffsetDateTime;
 use tokio::fs;
@@ -105,6 +105,9 @@ impl fmt::Debug for PathItem {
 
 impl Haystack for PathItem {
     type Context = NavigatorContext;
+    type View = Flex<'static>;
+    type Preview = HaystackBasicPreview<Text>;
+    type PreviewLarge = ();
 
     fn haystack_scope<S>(&self, ctx: &Self::Context, mut scope: S)
     where
@@ -135,8 +138,8 @@ impl Haystack for PathItem {
         ctx: &Self::Context,
         positions: &sweep::Positions,
         theme: &sweep::Theme,
-    ) -> BoxView<'static> {
-        let path = sweep::haystack_default_view(ctx, self, positions, theme);
+    ) -> Self::View {
+        let path = HaystackDefaultView::new(ctx, self, positions, theme);
         let mut right = Text::new();
         right.set_face(theme.list_inactive);
         if let Some(visits) = self.visits {
@@ -146,7 +149,6 @@ impl Haystack for PathItem {
             .justify(Justify::SpaceBetween)
             .add_child(path)
             .add_child(right)
-            .boxed()
     }
 
     fn preview(
@@ -154,7 +156,7 @@ impl Haystack for PathItem {
         ctx: &Self::Context,
         _positions: &sweep::Positions,
         _theme: &sweep::Theme,
-    ) -> Option<sweep::HaystackPreview> {
+    ) -> Option<Self::Preview> {
         let metadata = self.metadata.as_ref()?;
         let left_face = Some(Face::default().with_attrs(FaceAttrs::BOLD));
         let mut text = Text::new()
@@ -194,7 +196,7 @@ impl Haystack for PathItem {
             text.put_fmt("Accessed ", left_face);
             text.put_fmt(&format_args!("{}\n", date), None);
         }
-        Some(sweep::HaystackPreview::new(text.arc(), None))
+        Some(HaystackBasicPreview::new(text, None))
     }
 }
 

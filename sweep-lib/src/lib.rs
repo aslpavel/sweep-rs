@@ -1,11 +1,11 @@
 #![deny(warnings)]
 #![allow(clippy::reversed_empty_ranges)]
 
+mod haystack;
+pub use haystack::{Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview};
+
 mod scorer;
-pub use scorer::{
-    haystack_default_view, FuzzyScorer, Haystack, HaystackPreview, KMPPattern, Positions, Score,
-    ScoreResult, Scorer, SubstrScorer,
-};
+pub use scorer::{FuzzyScorer, KMPPattern, Positions, Score, ScoreResult, Scorer, SubstrScorer};
 
 mod rank;
 pub use rank::{fuzzy_scorer, substr_scorer, RankedItems, Ranker, ScorerBuilder};

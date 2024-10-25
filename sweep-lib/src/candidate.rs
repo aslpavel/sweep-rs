@@ -2,7 +2,8 @@ use crate::{
     common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
     rpc::{RpcParams, RpcPeer},
     widgets::ProcessOutput,
-    Haystack, HaystackPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder, Theme,
+    Haystack, HaystackBasicPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder,
+    Theme,
 };
 use anyhow::Error;
 use futures::Stream;
@@ -23,8 +24,8 @@ use surf_n_term::{
     glyph::GlyphDeserializer,
     rasterize::SVG_COLORS,
     view::{
-        Align, ArcView, Axis, BoxView, Container, Flex, IntoView, Justify, Margins, Text, View,
-        ViewCache, ViewDeserializer,
+        Align, ArcView, Axis, Container, Flex, IntoView, Justify, Margins, Text, View, ViewCache,
+        ViewDeserializer,
     },
     CellWrite, Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
 };
@@ -358,6 +359,9 @@ impl<'a> Iterator for SplitInclusive<'a> {
 
 impl Haystack for Candidate {
     type Context = CandidateContext;
+    type View = Flex<'static>;
+    type Preview = HaystackBasicPreview<FieldsView>;
+    type PreviewLarge = HaystackBasicPreview<ProcessOutput>;
 
     fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
@@ -366,7 +370,7 @@ impl Haystack for Candidate {
         self.haystack().for_each(scope);
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> BoxView<'static> {
+    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Self::View {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
@@ -408,7 +412,7 @@ impl Haystack for Candidate {
             }
             view.push_child_ext(right, None, self.right_face(), Align::Start);
         }
-        view.boxed()
+        view
     }
 
     fn preview(
@@ -416,7 +420,7 @@ impl Haystack for Candidate {
         ctx: &Self::Context,
         positions: &Positions,
         theme: &Theme,
-    ) -> Option<HaystackPreview> {
+    ) -> Option<Self::Preview> {
         if self.inner.preview.is_empty() {
             return None;
         }
@@ -431,8 +435,8 @@ impl Haystack for Candidate {
             theme.list_text,
             Axis::Vertical,
         );
-        Some(HaystackPreview::new(
-            preview.arc(),
+        Some(HaystackBasicPreview::new(
+            preview,
             Some(self.inner.preview_flex),
         ))
     }
@@ -442,8 +446,8 @@ impl Haystack for Candidate {
         ctx: &Self::Context,
         _positions: &Positions,
         _theme: &Theme,
-    ) -> Option<HaystackPreview> {
-        Some(HaystackPreview::new(ctx.preview_get(self)?.arc(), None))
+    ) -> Option<Self::PreviewLarge> {
+        Some(HaystackBasicPreview::new(ctx.preview_get(self)?, None))
     }
 }
 
@@ -454,6 +458,8 @@ pub fn fields_haystack<'a>(fields: &'a [Field<'_>]) -> impl Iterator<Item = char
         .filter(|f| f.active && f.glyph.is_none())
         .flat_map(|f| f.text.chars())
 }
+
+type FieldsView = either::Either<Flex<'static>, Text>;
 
 /// Convert fields into [View]
 #[allow(clippy::too_many_arguments)]
@@ -466,7 +472,7 @@ pub fn fields_view(
     face_highlight: Face,
     face_inactive: Face,
     flex_axis: Axis,
-) -> impl View {
+) -> FieldsView {
     let mut flex = Flex::new(flex_axis);
     let mut has_views = false;
     let mut text = Text::new();
