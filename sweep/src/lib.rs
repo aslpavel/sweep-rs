@@ -14,12 +14,14 @@ mod candidate;
 pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, FieldSelector};
 
 mod sweep;
-pub use crate::sweep::{sweep, Sweep, SweepEvent, SweepLayout, SweepOptions, PROMPT_DEFAULT_ICON};
+pub use crate::sweep::{
+    sweep, Sweep, SweepEvent, SweepLayout, SweepLayoutSize, SweepOptions, PROMPT_DEFAULT_ICON,
+};
 
 pub mod rpc;
 
 mod widgets;
-pub use widgets::{Process, Theme};
+pub use widgets::{Process, ProcessCommandArg, ProcessCommandBuilder, Theme};
 
 pub mod common;
 

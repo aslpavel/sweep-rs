@@ -51,6 +51,7 @@ pub trait Haystack: Debug + Clone + Send + Sync + 'static {
 }
 
 /// Preview rendered for haystack item
+#[derive(Clone)]
 pub struct HaystackPreview {
     /// Preview of the item
     pub(crate) view: ArcView<'static>,

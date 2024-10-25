@@ -15,8 +15,8 @@ use std::{
 use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
-    Candidate, CandidateContext, FieldSelector, Sweep, SweepEvent, SweepLayout, SweepOptions,
-    Theme,
+    Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep, SweepEvent,
+    SweepLayout, SweepLayoutSize, SweepOptions, Theme,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -114,11 +114,22 @@ async fn main() -> Result<(), Error> {
             tty_path: args.tty_path.clone(),
             title: args.title.clone(),
             scorers: VecDeque::new(),
-            layout: args.layout,
+            layout: args.layout.unwrap_or_else(|| {
+                if args.preview_builder.is_some() {
+                    SweepLayout::Full {
+                        height: SweepLayoutSize::Fraction(-0.3),
+                    }
+                } else {
+                    SweepLayout::default()
+                }
+            }),
         },
     )?;
     sweep.query_set(args.query.clone());
     sweep.scorer_by_name(Some(args.scorer)).await?;
+    if let Some(preview_builder) = args.preview_builder {
+        candidate_context.preview_set(preview_builder, sweep.waker());
+    }
 
     if args.rpc {
         sweep
@@ -211,7 +222,7 @@ pub struct Args {
     #[argh(option, short = 'p', default = "\"INPUT\".to_string()")]
     pub prompt: String,
 
-    /// prompt icon `Glyph::form_str`
+    /// prompt icon
     #[argh(option, default = "sweep::PROMPT_DEFAULT_ICON.clone()")]
     pub prompt_icon: Glyph,
 
@@ -219,19 +230,19 @@ pub struct Args {
     #[argh(option, default = "String::new()")]
     pub query: String,
 
-    /// theme as a list of comma-separated attributes
+    /// theme `(light|dark),accent=<color>,fg=<color>,bg=<color>`
     #[argh(option, default = "Theme::from_env()")]
     pub theme: Theme,
 
-    /// comma-separated list of fields for limiting search scope
+    /// filed selectors (i.e `1,3..-1`)
     #[argh(option, long = "nth")]
     pub field_selector: Option<FieldSelector>,
 
-    /// filed delimiter
+    /// filed delimiter character
     #[argh(option, long = "delimiter", short = 'd', default = "' '")]
     pub field_delimiter: char,
 
-    /// keep order of items, that is only filter and do not sort
+    /// do not reorder candidates
     #[argh(switch, long = "keep-order")]
     pub keep_order: bool,
 
@@ -239,11 +250,11 @@ pub struct Args {
     #[argh(option, from_str_fn(scorer_arg), default = "\"fuzzy\".to_string()")]
     pub scorer: String,
 
-    /// use JSON-RPC protocol to communicate
+    /// switch to remote-procedure-call mode
     #[argh(switch)]
     pub rpc: bool,
 
-    /// path to the TTY
+    /// path to the TTY (default: /dev/tty)
     #[argh(option, long = "tty", default = "\"/dev/tty\".to_string()")]
     pub tty_path: String,
 
@@ -260,33 +271,33 @@ pub struct Args {
     #[argh(option, default = "\"sweep\".to_string()")]
     pub title: String,
 
-    /// expect candidates in JSON format (uses the same item format as RPC)
+    /// candidates in JSON pre line format (same encoding as RPC)
     #[argh(switch)]
     pub json: bool,
 
-    /// path or file descriptor of the unix socket used to communicate instead of stdio/stdin
+    /// use unix socket (path or descriptor) instead of stdin/stdout
     #[argh(option)]
     pub io_socket: Option<String>,
 
-    /// read input from the file instead of stdin, ignored if --io-socket is used
+    /// read input from the file (ignored if --io-socket)
     #[argh(option)]
     pub input: Option<String>,
+
+    /// log file (configure via RUST_LOG environment variable)
+    #[argh(option)]
+    pub log: Option<String>,
+
+    /// create preview subprocess, requires full layout
+    #[argh(option, long = "preview")]
+    pub preview_builder: Option<ProcessCommandBuilder>,
+
+    /// layout mode specified as `name(,attr=value)*`
+    #[argh(option)]
+    pub layout: Option<SweepLayout>,
 
     /// show sweep version and quit
     #[argh(switch)]
     pub version: bool,
-
-    /// enable logging into specified file path, logging verbosity is configure with RUST_LOG
-    #[argh(option)]
-    pub log: Option<String>,
-
-    /// preview cmd, {{}} will be replaced with current candidate
-    #[argh(option)]
-    pub preview: Option<String>,
-
-    /// layout mode specified as `name(,attr=value)*`
-    #[argh(option, default = "SweepLayout::default()")]
-    pub layout: SweepLayout,
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

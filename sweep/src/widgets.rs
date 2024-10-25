@@ -1,12 +1,13 @@
 use crate::{
     common::{AbortJoinHandle, LockExt},
-    haystack_default_view, Haystack, HaystackPreview, Positions,
+    haystack_default_view, FieldSelector, Haystack, HaystackPreview, Positions,
 };
+use anyhow::Context;
 use futures::{future, FutureExt, TryFutureExt};
 use std::{
+    borrow::Cow,
     cmp::max,
     collections::HashMap,
-    ffi::OsStr,
     io::Write,
     process::Stdio,
     str::FromStr,
@@ -20,7 +21,8 @@ use surf_n_term::{
         ScrollBarPosition, Text, Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
     BBox, Cell, CellWrite, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName,
-    Position, Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, RGBA,
+    Position, Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
+    RGBA,
 };
 use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
 
@@ -1035,33 +1037,39 @@ impl View for ListScrollBar {
 /// Widget that can run system command and show its output
 pub struct Process {
     spawn_channel: mpsc::Sender<Option<Command>>,
-    output: TTYOutput,
+    output: ProcessOutput,
+    command_builder: Option<ProcessCommandBuilder>,
     _spawner_handle: AbortJoinHandle<()>,
 }
 
 impl Process {
-    pub fn new(ctx: ViewContext) -> Self {
+    pub fn new(command_builder: Option<ProcessCommandBuilder>, waker: TerminalWaker) -> Self {
         let (spawn_channel, recv) = mpsc::channel(3);
-        let output = TTYOutput::new(ctx);
+        let output = ProcessOutput::new();
         let _spawner_handle = tokio::spawn(
-            Self::spawner(recv, output.clone())
+            Self::spawner(recv, output.clone(), waker)
                 .unwrap_or_else(|error| tracing::error!(?error, "[Process] spawner failed")),
         )
         .into();
         Self {
             spawn_channel,
             output,
+            command_builder,
             _spawner_handle,
         }
     }
 
     /// Spawn new process killing existing process and replacing its output
-    pub fn spawn(&self, args: impl IntoIterator<Item = impl AsRef<OsStr>>) {
+    pub fn spawn(&self, args: &[impl ProcessCommandArg]) {
+        let args = match &self.command_builder {
+            None => either::Left(args.iter().map(|arg| Cow::Borrowed(arg.as_command_arg()))),
+            Some(command_builder) => either::Right(command_builder.build(args)),
+        };
         let mut args = args.into_iter();
         let command = args.next().map(|prog| {
-            let mut command = Command::new(prog);
+            let mut command = Command::new(prog.as_command_arg());
             for arg in args {
-                command.arg(arg);
+                command.arg(arg.as_command_arg());
             }
             command
         });
@@ -1075,7 +1083,8 @@ impl Process {
 
     async fn spawner(
         mut spawn_channel: mpsc::Receiver<Option<Command>>,
-        output: TTYOutput,
+        output: ProcessOutput,
+        waker: TerminalWaker,
     ) -> Result<(), Error> {
         let mut command: Option<Command> = None;
         let mut command_running: bool;
@@ -1084,7 +1093,7 @@ impl Process {
                 Some(command) => {
                     command_running = true;
                     output.clear();
-                    Self::command_run(command, output.clone()).right_future()
+                    Self::command_run(command, output.clone(), waker.clone()).right_future()
                 }
                 None => {
                     command_running = false;
@@ -1099,6 +1108,7 @@ impl Process {
                     }
                 }
                 command_res = command_fut, if command_running => {
+                    let _ = waker.wake();
                     if let Err(error) = command_res {
                         tracing::error!(?error, "[Process] command faield with error");
                     }
@@ -1109,7 +1119,11 @@ impl Process {
         Ok(())
     }
 
-    async fn command_run(mut command: Command, output: TTYOutput) -> Result<(), Error> {
+    async fn command_run(
+        mut command: Command,
+        output: ProcessOutput,
+        waker: TerminalWaker,
+    ) -> Result<(), Error> {
         let mut child = command
             // TODO: pass `FZF_PREVIEW_(TOP|LEFT|LINES|COLUMNS)` and `LINES|COLUMNS`
             .stdin(Stdio::null())
@@ -1118,10 +1132,10 @@ impl Process {
             .kill_on_drop(true)
             .spawn()?;
         let mut stdout = child.stdout.take().expect("pipe expected, logic error");
-        let mut stdout_buf = [0u8; 1024];
+        let mut stdout_buf = [0u8; 4096];
         let mut stdout_done = false;
         let mut stderr = child.stderr.take().expect("pipe expected, logic error");
-        let mut stderr_buf = [0u8; 1024];
+        let mut stderr_buf = [0u8; 4096];
         let mut stderr_done = false;
         let mut writer = output.tty_writer();
 
@@ -1134,7 +1148,6 @@ impl Process {
                         stderr_done = true;
                         continue;
                     }
-                    // TODO: mark with error color?
                     writer.write_all(data)?;
                 }
                 stdout_res = stdout.read(&mut stdout_buf), if !stdout_done => {
@@ -1147,6 +1160,7 @@ impl Process {
                 }
                 else => { break; }
             }
+            waker.wake()?;
         }
         child.wait().await?;
 
@@ -1155,15 +1169,14 @@ impl Process {
 }
 
 impl<'a> IntoView for &'a Process {
-    type View = TTYOutput;
+    type View = ProcessOutput;
 
     fn into_view(self) -> Self::View {
         self.output.clone()
     }
 }
 
-struct TTYOutputInner {
-    ctx: ViewContext,
+struct ProcessOutputInner {
     size: Size,
     cursor: Position,
     cells: Vec<Cell>,
@@ -1171,39 +1184,38 @@ struct TTYOutputInner {
     offset: Position,
 }
 
-impl TTYOutputInner {
-    fn rows(&self, width: usize) -> impl Iterator<Item = &[Cell]> {
+impl ProcessOutputInner {
+    fn rows(&self) -> impl Iterator<Item = &[Cell]> {
         let mut row = self.offset.row;
         let col = self.offset.col;
         std::iter::from_fn(move || {
             let start = self.cells_offset(row)?;
             let end = self.cells_offset(row + 1).unwrap_or(self.cells.len());
             row += 1;
-            Some(self.cells.get(start..end).unwrap_or(&[]))
+            let row = self.cells.get(start..end)?;
+            Some(row.get(col..).unwrap_or(&[]))
         })
-        .filter_map(move |row| row.get(col..col + width))
     }
 
     fn cells_offset(&self, line: usize) -> Option<usize> {
         if line <= 0 {
             Some(0)
         } else {
-            self.lines.get(line + 1).copied()
+            self.lines.get(line - 1).copied()
         }
     }
 }
 
 #[derive(Clone)]
-pub struct TTYOutput {
+pub struct ProcessOutput {
     face: Face,
     wraps: bool,
-    inner: Arc<RwLock<TTYOutputInner>>,
+    inner: Arc<RwLock<ProcessOutputInner>>,
 }
 
-impl TTYOutput {
-    pub fn new(ctx: ViewContext) -> Self {
-        let inner = TTYOutputInner {
-            ctx,
+impl ProcessOutput {
+    pub fn new() -> Self {
+        let inner = ProcessOutputInner {
             size: Size::empty(),
             cursor: Position::origin(),
             cells: Vec::new(),
@@ -1237,7 +1249,7 @@ impl TTYOutput {
     }
 }
 
-impl CellWrite for TTYOutput {
+impl CellWrite for ProcessOutput {
     fn face(&self) -> Face {
         self.face
     }
@@ -1258,7 +1270,7 @@ impl CellWrite for TTYOutput {
         self.inner.with_mut(|inner| {
             let prev_row = inner.cursor.row;
             cell.layout(
-                &inner.ctx,
+                &ViewContext::dummy(), // we do not care about actual size here, only about new lines
                 usize::MAX,
                 self.wraps,
                 &mut inner.size,
@@ -1273,7 +1285,7 @@ impl CellWrite for TTYOutput {
     }
 }
 
-impl View for TTYOutput {
+impl View for ProcessOutput {
     fn render(
         &self,
         ctx: &ViewContext,
@@ -1283,10 +1295,7 @@ impl View for TTYOutput {
         let mut surf = layout.apply_to(surf);
         let mut writer = surf.writer(ctx).with_wraps(false);
         self.inner.with(|inner| {
-            let mut cells = inner
-                .rows(writer.size().width)
-                .flat_map(|row| row.iter())
-                .cloned();
+            let mut cells = inner.rows().flat_map(|row| row.iter()).cloned();
             loop {
                 let Some(cell) = cells.next() else {
                     // no more cells
@@ -1310,6 +1319,129 @@ impl View for TTYOutput {
         *layout = Layout::new().with_size(ct.max());
         Ok(())
     }
+}
+
+/// Builder that used to create argument list from a pattern and a list of fields
+pub struct ProcessCommandBuilder {
+    args: Vec<Result<String, Vec<Result<String, FieldSelector>>>>,
+}
+
+impl ProcessCommandBuilder {
+    pub fn new(pattern: &str) -> Result<Self, anyhow::Error> {
+        let mut args = Vec::new();
+        for arg in shlex::Shlex::new(pattern) {
+            if !arg.contains('{') {
+                args.push(Ok(arg));
+                continue;
+            }
+            let mut chunks = Vec::new();
+            for chunk in parse_command_pattern(&arg) {
+                match chunk {
+                    Ok(chunk) => chunks.push(Ok(chunk)),
+                    Err(pattern) => chunks.push(Err(FieldSelector::from_str(&pattern)
+                        .with_context(|| format!("failed to parse selector: \"{pattern}\""))?)),
+                }
+            }
+            args.push(Err(chunks));
+        }
+        Ok(Self { args })
+    }
+
+    pub fn build<'builder: 'args, 'args, A: ProcessCommandArg + 'args>(
+        &'builder self,
+        args: &'args [A],
+    ) -> impl Iterator<Item = Cow<'builder, str>> + 'args {
+        let mut index = 0;
+        std::iter::from_fn(move || {
+            let Some(arg) = self.args.get(index) else {
+                return None;
+            };
+            index += 1;
+
+            match arg {
+                Ok(arg) => Some(Cow::Borrowed(arg.as_ref())),
+                Err(chunks) => {
+                    let mut arg = String::new();
+                    for chunk in chunks {
+                        match chunk {
+                            Ok(chunk) => arg.push_str(chunk),
+                            Err(selector) => {
+                                selector
+                                    .matches_iter(args.len())
+                                    .map(|index| &args[index])
+                                    .enumerate()
+                                    .for_each(|(index, field)| {
+                                        if index != 0 {
+                                            arg.push(' ');
+                                        }
+                                        arg.push_str(field.as_command_arg().trim());
+                                    });
+                            }
+                        }
+                    }
+                    Some(Cow::Owned(arg))
+                }
+            }
+        })
+    }
+}
+
+impl std::str::FromStr for ProcessCommandBuilder {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ProcessCommandBuilder::new(s)
+    }
+}
+
+pub trait ProcessCommandArg {
+    fn as_command_arg(&self) -> &str;
+}
+
+impl<T: AsRef<str>> ProcessCommandArg for T {
+    fn as_command_arg(&self) -> &str {
+        self.as_ref()
+    }
+}
+
+/// Parse process command pattern
+fn parse_command_pattern(string: &str) -> impl Iterator<Item = Result<String, String>> + '_ {
+    let mut chars = string.chars().peekable();
+    let mut chunk = String::new();
+    let mut is_opened = false;
+    let mut is_done = false;
+    std::iter::from_fn(move || loop {
+        if is_done {
+            return None;
+        }
+        if let Some(char) = chars.next() {
+            if !matches!(char, '{' | '}') {
+                chunk.push(char);
+                continue;
+            }
+            if matches!(chars.peek(), Some(c) if *c == char) {
+                chars.next();
+                chunk.push(char);
+                continue;
+            }
+            if (char == '{' && is_opened) || (char == '}' && !is_opened) {
+                chunk.push(char);
+                continue;
+            }
+        } else {
+            is_done = true;
+        }
+        let item = std::mem::take(&mut chunk);
+        if is_opened {
+            is_opened = false;
+            return Some(Err(item));
+        } else {
+            is_opened = true;
+            if !item.is_empty() {
+                return Some(Ok(item));
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1443,6 +1575,40 @@ mod tests {
         print!("{:?}", list.into_view().debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 4);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_pattern() -> Result<(), Error> {
+        assert_eq!(
+            parse_command_pattern("one {two} {{three}}").collect::<Vec<_>>(),
+            vec![
+                Ok("one ".to_string()),
+                Err("two".to_string()),
+                Ok(" {three}".to_string())
+            ]
+        );
+
+        assert_eq!(
+            parse_command_pattern("cat {}").collect::<Vec<_>>(),
+            vec![Ok("cat ".to_string()), Err("".to_string())]
+        );
+
+        assert_eq!(
+            parse_command_pattern("{}").collect::<Vec<_>>(),
+            vec![Err("".to_string())]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_process_command_builder() -> Result<(), anyhow::Error> {
+        let builder = ProcessCommandBuilder::from_str("one '{} {0}' two")?;
+        assert_eq!(
+            builder.build(&["+", "-"]).collect::<String>(),
+            "one+ - +two".to_string()
+        );
         Ok(())
     }
 }

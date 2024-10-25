@@ -924,16 +924,19 @@ where
         })
     }
 
+    // get large preview for currently pointed haystack item
     fn preview_large(&self) -> Option<HaystackPreview> {
-        self.list.current().and_then(|item| {
+        let result = self.list.current().and_then(|item| {
             item.item.haystack.preview_large(
                 &self.haystack_context,
                 &item.item.positions,
                 &self.theme,
             )
-        })
+        });
+        result
     }
 
+    // update theme
     fn theme_set(&mut self, theme: Theme) {
         self.input.theme_set(theme.clone());
         self.list.theme_set(theme.clone());
@@ -969,10 +972,50 @@ where
         }
     }
 
+    /// Trigger ranker, should be called whenever needle might have changed
+    fn ranker_trigger(&self) {
+        // ranker only runs if needle has actually been updated, so it is safe
+        // to run whenever needle might have changed
+        self.ranker.needle_set(self.input.get().collect());
+    }
+
+    /// Retrieve latest ranker result and update list view
+    fn ranker_refresh(&mut self) -> Arc<RankedItems<H>> {
+        // check if list view needs to be updated
+        let ranker_result = self.ranker.result();
+        if self.list.items().generation() != ranker_result.generation() {
+            // find cursor position of currently pointed item in the new result
+            let cursor = if self.list.cursor() == 0 {
+                None
+            } else {
+                self.list
+                    .items()
+                    .ranked_items
+                    .get_haystack_index(self.list.cursor())
+                    .and_then(|haystack_index| ranker_result.find_match_index(haystack_index))
+            };
+            // update list with new results
+            let old_items = self.list.items_set(SweepItems::new(
+                ranker_result.clone(),
+                self.marked.clone(),
+                self.haystack_context.clone(),
+            ));
+            if let Some(cursor) = cursor {
+                self.list.cursor_set(cursor);
+            }
+            // dropping old result might add noticeable delay for large lists
+            rayon::spawn(move || std::mem::drop(old_items));
+        }
+        ranker_result
+    }
+
     fn apply(&mut self, action: &SweepAction) -> SweepKeyEvent<H> {
         use SweepKeyEvent::*;
         match action {
-            SweepAction::Input(action) => self.input.apply(action),
+            SweepAction::Input(action) => {
+                self.input.apply(action);
+                self.ranker_trigger();
+            }
             SweepAction::List(action) => self.list.apply(action),
             SweepAction::User { tag, chord, .. } => {
                 if !tag.is_empty() {
@@ -1052,6 +1095,7 @@ where
         {
             // send plain chars to the input
             self.input.apply(&InputAction::Insert(c));
+            self.ranker_trigger();
         }
         Nothing
     }
@@ -1126,32 +1170,6 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
                     }
                 };
             });
-
-        // rank new data and update item list if needed
-        self.ranker.needle_set(self.input.get().collect());
-        if self.list.items().generation() != ranker_result.generation() {
-            // find cursor position of currently pointed item in the new result
-            let cursor = if self.list.cursor() == 0 {
-                None
-            } else {
-                self.list
-                    .items()
-                    .ranked_items
-                    .get_haystack_index(self.list.cursor())
-                    .and_then(|haystack_index| ranker_result.find_match_index(haystack_index))
-            };
-            // update list with new results
-            let old_items = self.list.items_set(SweepItems::new(
-                ranker_result,
-                self.marked.clone(),
-                self.haystack_context.clone(),
-            ));
-            if let Some(cursor) = cursor {
-                self.list.cursor_set(cursor);
-            }
-            // dropping old result might add noticeable delay for large lists
-            rayon::spawn(move || std::mem::drop(old_items));
-        }
 
         // prompt
         let prompt = Text::new()
@@ -1242,7 +1260,7 @@ where
     let term_size = term.size()?;
     let mut win_layout = options
         .layout
-        .calc(term.position()?, term_size.cells, false);
+        .compute(term.position()?, term_size.cells, false);
     if win_layout.position().row + win_layout.size().height > term_size.cells.height {
         // scroll to reserve space
         let scroll = win_layout.position().row + win_layout.size().height - term_size.cells.height;
@@ -1281,7 +1299,7 @@ where
                 term.execute(TerminalCommand::EraseScreen)?;
                 win_layout = options
                     .layout
-                    .calc(win_layout.position(), term_size.cells, true);
+                    .compute(win_layout.position(), term_size.cells, true);
                 events.send(SweepEvent::Resize(TerminalSize {
                     cells: win_layout.size(),
                     pixels: term_size.cells_in_pixels(win_layout.size()),
@@ -1291,7 +1309,10 @@ where
                 for request in requests.try_iter() {
                     use SweepRequest::*;
                     match request {
-                        NeedleSet(needle) => state.input.set(needle.as_ref()),
+                        NeedleSet(needle) => {
+                            state.input.set(needle.as_ref());
+                            state.ranker_trigger();
+                        }
                         NeedleGet(resolve) => {
                             mem::drop(resolve.send(state.input.get().collect()));
                         }
@@ -1494,9 +1515,9 @@ where
                 return Ok(TerminalAction::WaitNoFrame);
             }
             render_supress_sync.take();
+            state.ranker_refresh();
 
             let view = if let SweepLayout::Full { height } = &options.layout {
-                // TODO: preview must be cached if item has not changed
                 if let Some(preview_large) = state.preview_large() {
                     let main_height = height.calc(win_layout.size().height);
                     let main = Container::new(&mut state);
@@ -1672,7 +1693,7 @@ impl SweepLayout {
         matches!(self, SweepLayout::Full { .. })
     }
 
-    fn calc(&self, term_pos: Position, term_size: Size, row_limit: bool) -> Layout {
+    fn compute(&self, term_pos: Position, term_size: Size, row_limit: bool) -> Layout {
         match self {
             SweepLayout::Float {
                 height,

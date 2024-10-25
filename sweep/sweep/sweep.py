@@ -396,6 +396,7 @@ class Bind[I]:
 class SweepArgs(TypedDict, total=False):
     sweep: list[str] | None
     prompt: str
+    preview: str | None
     query: str | None
     nth: str | None
     delimiter: str | None
@@ -494,6 +495,7 @@ class Sweep[I]:
         self,
         sweep: list[str] | None = None,
         prompt: str = "INPUT",
+        preview: str | None = None,
         query: str | None = None,
         nth: str | None = None,
         delimiter: str | None = None,
@@ -533,6 +535,8 @@ class Sweep[I]:
             args.extend(["--no-match", no_match])
         if layout:
             args.extend(["--layout", layout])
+        if preview:
+            args.extend(["--preview", preview])
         sweep = sweep or ["sweep"]
         self._args: list[str] = [*sweep, "--rpc", *args]
         self._proc: Process | None = None

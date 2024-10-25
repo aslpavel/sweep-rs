@@ -1,7 +1,8 @@
 use crate::{
     common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
     rpc::{RpcParams, RpcPeer},
-    Haystack, HaystackPreview, Positions, Theme,
+    widgets::ProcessOutput,
+    Haystack, HaystackPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder, Theme,
 };
 use anyhow::Error;
 use futures::Stream;
@@ -22,14 +23,14 @@ use surf_n_term::{
     glyph::GlyphDeserializer,
     rasterize::SVG_COLORS,
     view::{
-        Align, ArcView, Axis, BoxView, Container, Either, Flex, Justify, Margins, Text, View,
+        Align, ArcView, Axis, BoxView, Container, Flex, IntoView, Justify, Margins, Text, View,
         ViewCache, ViewDeserializer,
     },
     CellWrite, Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct CandidateInner {
     /// Searchable fields shown on left
     target: Vec<Field<'static>>,
@@ -50,7 +51,7 @@ struct CandidateInner {
     extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Candidate {
     inner: Arc<CandidateInner>,
 }
@@ -103,19 +104,15 @@ impl Candidate {
         delimiter: char,
         field_selector: Option<&FieldSelector>,
     ) -> Self {
-        let fields = match field_selector {
-            None => vec![string.into()],
-            Some(field_selector) => {
-                let mut fields: Vec<Field<'static>> = split_inclusive(delimiter, string.as_ref())
-                    .map(|field| Field::from(field.to_owned()))
-                    .collect();
-                let fields_len = fields.len();
-                fields.iter_mut().enumerate().for_each(|(index, field)| {
-                    field.active = field_selector.matches(index, fields_len)
-                });
-                fields
-            }
-        };
+        let mut fields: Vec<Field<'static>> = split_inclusive(delimiter, string.as_ref())
+            .map(|field| Field::from(field.to_owned()))
+            .collect();
+        if let Some(field_selector) = field_selector {
+            let fields_len = fields.len();
+            fields.iter_mut().enumerate().for_each(|(index, field)| {
+                field.active = field_selector.matches(index, fields_len)
+            });
+        }
         Self::new(fields, None, Vec::new(), 0, None, Vec::new(), 0.0)
     }
 
@@ -253,6 +250,12 @@ impl Candidate {
     }
 }
 
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for field in self.inner.target.iter() {
@@ -305,7 +308,7 @@ impl Serialize for Candidate {
 
 /// Split string into chunks separated by `sep` char.
 ///
-/// Separated a glued to the beginning of the chunk. Adjacent separators are treated as
+/// Separators a glued to the beginning of the chunk. Adjacent separators are treated as
 /// one separator.
 pub fn split_inclusive(sep: char, string: &str) -> impl Iterator<Item = &'_ str> {
     SplitInclusive {
@@ -433,6 +436,15 @@ impl Haystack for Candidate {
             Some(self.inner.preview_flex),
         ))
     }
+
+    fn preview_large(
+        &self,
+        ctx: &Self::Context,
+        _positions: &Positions,
+        _theme: &Theme,
+    ) -> Option<HaystackPreview> {
+        Some(HaystackPreview::new(ctx.preview_get(self)?.arc(), None))
+    }
 }
 
 /// Extract searchable character from fields list
@@ -502,9 +514,9 @@ pub fn fields_view(
         if !text.is_empty() {
             flex.push_child(text.take());
         }
-        Either::Left(flex)
+        flex.left_view()
     } else {
-        Either::Right(text)
+        text.right_view()
     }
 }
 
@@ -513,6 +525,8 @@ struct CandidateContextInner {
     view_cache: HashMap<i64, ArcView<'static>>,
     named_colors: Arc<HashMap<String, RGBA>>,
     peer: Option<RpcPeer>,
+    preview_process: Option<Process>,
+    preview_output: Option<(Candidate, ProcessOutput)>,
 }
 
 #[derive(Clone)]
@@ -527,6 +541,8 @@ impl CandidateContext {
             view_cache: HashMap::new(),
             named_colors: Arc::new(SVG_COLORS.clone()),
             peer: None,
+            preview_process: None,
+            preview_output: None,
         };
         Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -563,6 +579,30 @@ impl CandidateContext {
     /// Set rpc peer
     pub fn peer_set(&self, peer: RpcPeer) {
         self.inner.with_mut(|inner| inner.peer.replace(peer));
+    }
+
+    /// Set preview command builder
+    pub fn preview_set(&self, builder: ProcessCommandBuilder, waker: TerminalWaker) {
+        self.inner.with_mut(|inner| {
+            inner
+                .preview_process
+                .replace(Process::new(Some(builder), waker))
+        });
+    }
+
+    pub(crate) fn preview_get(&self, candidate: &Candidate) -> Option<ProcessOutput> {
+        self.inner.with_mut(|inner| match &inner.preview_output {
+            Some((candidate_prev, output)) if candidate == candidate_prev => Some(output.clone()),
+            _ => {
+                let Some(proc) = &inner.preview_process else {
+                    return None;
+                };
+                proc.spawn(candidate.target());
+                let output = proc.into_view();
+                inner.preview_output = Some((candidate.clone(), output.clone()));
+                Some(output)
+            }
+        })
     }
 
     /// Parse [Candidate] from JSON bytes
@@ -869,6 +909,12 @@ impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
     }
 }
 
+impl<'a> ProcessCommandArg for Field<'a> {
+    fn as_command_arg(&self) -> &str {
+        &self.text
+    }
+}
+
 impl<'de> Deserialize<'de> for Field<'static> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1084,6 +1130,19 @@ impl FieldSelector {
         }
         false
     }
+
+    pub fn matches_iter(&self, size: usize) -> impl Iterator<Item = usize> + '_ {
+        let mut index = 0;
+        std::iter::from_fn(move || loop {
+            if index >= size {
+                return None;
+            }
+            index += 1;
+            if self.matches(index - 1, size) {
+                return Some(index - 1);
+            }
+        })
+    }
 }
 
 impl FromStr for FieldSelector {
@@ -1131,6 +1190,9 @@ mod tests {
         assert!(selector.matches(2, 3));
         assert!(!selector.matches(1, 3));
         assert!(selector.matches(0, 3));
+
+        let selector = FieldSelector::from_str("1..3,-2")?;
+        assert_eq!(selector.matches_iter(6).collect::<Vec<_>>(), vec![1, 2, 4]);
 
         Ok(())
     }
