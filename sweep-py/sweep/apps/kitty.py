@@ -50,14 +50,18 @@ async def main(args: list[str] | None = None) -> None:
         "--keep-order",
         help="keep order of elements (do not use ranking score)",
     )
+    parser.add_argument(
+        "--input", type=argparse.FileType("r"), help="read input from a file"
+    )
     opts = parser.parse_args(args)
 
     candidates: list[Any]
+    input = sys.stdin if opts.input is None else opts.input
     if opts.json:
-        candidates = json.load(sys.stdin)
+        candidates = json.load(input)
     else:
         candidates = []
-        for line in sys.stdin:
+        for line in input:
             candidates.append(line.strip())
 
     kitty_args = ["kitty", "--title", opts.title or "sweep-menu"]

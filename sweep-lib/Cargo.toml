@@ -1,27 +1,17 @@
 [package]
 name = "sweep"
-build = "build.rs"
-include = ["**/*.rs", "src/icons.json", "Cargo.toml", "Cargo.lock", "README.md"]
 authors.workspace = true
 edition.workspace = true
 version.workspace = true
 repository.workspace = true
 
-[lib]
-name = "sweep"
-path = "src/lib.rs"
-
-[[bin]]
-name = "sweep"
-path = "src/main.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 futures = { workspace = true }
 lazy_static = { workspace = true }
-mimalloc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+surf_n_term = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
@@ -32,17 +22,10 @@ shlex = "^1.3.0"
 smallvec = "^1.9.0"
 tracing-futures = "^0.2"
 
-surf_n_term = "^0.17.1"
-# surf_n_term = { path = "../../surf-n-term" }
-# surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
-
-# main binary dependencies (TODO: use workspace)
-argh = { workspace = true }
-tracing-subscriber = { workspace = true }
-
-
 [dev-dependencies]
+mimalloc = { workspace = true }
 criterion = "^0.5"
+
 
 [[bench]]
 harness = false

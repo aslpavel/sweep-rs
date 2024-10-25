@@ -9,7 +9,7 @@ def sweep_default_cmd() -> list[str]:
     """
     from pathlib import Path
 
-    cargo_file = Path(__file__).parent.parent.parent / "Cargo.toml"
+    cargo_file = Path(__file__).parent.parent.parent.parent / "Cargo.toml"
     if cargo_file.is_file():
         return [
             "cargo",

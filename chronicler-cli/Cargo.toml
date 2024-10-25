@@ -1,10 +1,14 @@
 [package]
-name = "chronicler"
+name = "chronicler-cli"
 build = "build.rs"
 authors.workspace = true
 edition.workspace = true
 version.workspace = true
 repository.workspace = true
+
+[[bin]]
+name = "chronicler"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -14,6 +18,7 @@ lazy_static = { workspace = true }
 mimalloc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sweep = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -22,7 +27,6 @@ async-trait = "^0.1"
 dirs = "5.0"
 globset = "^0.4"
 sqlx = { version = "^0.8", features = ["runtime-tokio", "sqlite"] }
-sweep = { path = "../sweep" }
 time = { version = "^0.3", features = ["macros"] }
 tokio-stream = { version = "0.1.10", features = ["fs"] }
 tracing-appender = "^0.2"

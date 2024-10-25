@@ -9,7 +9,7 @@ Sweep is a tool used to interactively search through a list of entries. It is in
 - Beautiful
 - Easily customizable color palette by specifying only three main colors from which all other colors are derived.
 - JSON-RPC protocol can be used to communicate with sweep process.
-- Includes asyncio [python binding](sweep/sweep/sweep.py)
+- Includes asyncio [python binding](sweep-py/sweep/sweep.py)
 - Configurable key bindings
 - Support for rendering custom icons/glyphs from SVG path (requires kitty-image or sixel protocol support)
 
@@ -21,35 +21,30 @@ Sweep is a tool used to interactively search through a list of entries. It is in
   <summary><code>$ sweep --help</code></summary>
 
 ```
-Usage: sweep [--height <height>] [-p <prompt>] [--query <query>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--altscreen] [--json] [--io-socket <io-socket>] [--input <input>] [--version] [--log <log>] [--border <border>] [--preview <preview>]
+Usage: sweep [-p <prompt>] [--prompt-icon <prompt-icon>] [--query <query>] [--theme <theme>] [--nth <nth>] [-d <delimiter>] [--keep-order] [--scorer <scorer>] [--rpc] [--tty <tty>] [--no-match <no-match>] [--title <title>] [--json] [--io-socket <io-socket>] [--input <input>] [--log <log>] [--preview <preview>] [--layout <layout>] [--version]
 
 Sweep is a command line fuzzy finder
 
 Options:
-  --height          number of lines occupied by sweep
   -p, --prompt      prompt string
+  --prompt-icon     prompt icon
   --query           initial query string
-  --theme           theme as a list of comma-separated attributes
-  --nth             comma-separated list of fields for limiting search scope
-  -d, --delimiter   filed delimiter
-  --keep-order      keep order of items, that is only filter and do not sort
+  --theme           theme `(light|dark),accent=<color>,fg=<color>,bg=<color>`
+  --nth             filed selectors (i.e `1,3..-1`)
+  -d, --delimiter   filed delimiter character
+  --keep-order      do not reorder candidates
   --scorer          default scorer to rank items
-  --rpc             use JSON-RPC protocol to communicate
-  --tty             path to the TTY
+  --rpc             switch to remote-procedure-call mode
+  --tty             path to the TTY (default: /dev/tty)
   --no-match        action when there is no match and enter is pressed
   --title           set terminal title
-  --altscreen       use alternative screen
-  --json            expect candidates in JSON format (uses the same item format
-                    as RPC)
-  --io-socket       path or file descriptor of the unix socket used to
-                    communicate instead of stdio/stdin
-  --input           read input from the file instead of stdin, ignored if
-                    --io-socket is used
+  --json            candidates in JSON pre line format (same encoding as RPC)
+  --io-socket       use unix socket (path or descriptor) instead of stdin/stdout
+  --input           read input from the file (ignored if --io-socket)
+  --log             log file (configure via RUST_LOG environment variable)
+  --preview         create preview subprocess, requires full layout
+  --layout          layout mode specified as `name(,attr=value)*`
   --version         show sweep version and quit
-  --log             enable logging into specified file path, logging verbosity
-                    is configure with RUST_LOG
-  --border          leave border on the sides
-  --preview         whether to show item preview by default or not
   --help            display usage information
 ```
 

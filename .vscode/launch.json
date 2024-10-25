@@ -5,60 +5,39 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "sweep.py",
-      "type": "python",
+      "name": "sweep-py",
+      "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/scripts/sweep.py",
+      "cwd": "${workspaceFolder}/sweep-py",
+      "program": "debug.py",
       "args": [
-        "--input",
-        "${workspaceFolder}/Cargo.toml",
-        "--sweep",
-        "cargo run --"
+        "kitty",
+        "--sweep=cargo run --bin sweep --",
+        "--input=${workspaceFolder}/Cargo.toml"
       ],
       "console": "integratedTerminal"
     },
     {
-      "name": "path_history.py",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/path_history.py",
-      "args": ["select", "--readline", "--sweep", "cargo run --"],
-      "env": {
-        "READ_LINE": "${workspaceFolder}"
-      },
-      "console": "integratedTerminal"
-    },
-    {
       "name": "mpd",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
-      "cwd": "${workspaceFolder}/sweep",
+      "cwd": "${workspaceFolder}/sweep-py",
       "program": "debug.py",
-      "args": ["mpd", "--sweep", "cargo run --"],
+      "args": ["mpd", "--sweep", "cargo run --bin sweep --"],
       "console": "integratedTerminal"
-    },
-    {
-      "name": "cargo test",
-      "type": "lldb",
-      "request": "launch",
-      "sourceLanguages": ["rust"],
-      "cargo": {
-        "args": ["test", "--no-run", "--lib"] // Cargo command line to build the debug target
-        // "args": ["build", "--bin=foo"] is another possibility
-      }
     },
     {
       // NOTE:
       // There is ptrace protection to disable:
       // echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
-      "name": "attach",
+      "name": "rust-attach",
       "type": "lldb",
       "request": "attach",
       "sourceLanguages": ["rust"],
       "pid": "${command:pickMyProcess}"
     },
     {
-      "name": "chronicler",
+      "name": "chronicler-cli",
       "type": "lldb",
       "request": "launch",
       "sourceLanguages": ["rust"],
@@ -79,7 +58,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "sweep",
+      "name": "sweep-cli",
       "type": "lldb",
       "request": "launch",
       "sourceLanguages": ["rust"],
@@ -91,16 +70,18 @@
       },
       "program": "${workspaceFolder}/target/debug/sweep",
       "args": [
-        "--json",
         "--input",
-        "/tmp/test.json",
+        "${workspaceFolder}/Cargo.toml",
         // check target terminal with `tty` cmd, and run `sleep 3600`
         "--tty",
-        "/dev/pts/4",
+        "/dev/pts/1",
         "--log",
         "/tmp/sweep.log"
       ],
       "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_LOG": "info"
+      },
       "console": "integratedTerminal"
     }
   ]
