@@ -361,7 +361,7 @@ impl Haystack for Candidate {
     type Context = CandidateContext;
     type View = Flex<'static>;
     type Preview = HaystackBasicPreview<FieldsView>;
-    type PreviewLarge = HaystackBasicPreview<ProcessOutput>;
+    type PreviewLarge = ProcessOutput;
 
     fn haystack_scope<S>(&self, _ctx: &Self::Context, scope: S)
     where
@@ -447,7 +447,7 @@ impl Haystack for Candidate {
         _positions: &Positions,
         _theme: &Theme,
     ) -> Option<Self::PreviewLarge> {
-        Some(HaystackBasicPreview::new(ctx.preview_get(self)?, None))
+        ctx.preview_get(self)
     }
 }
 

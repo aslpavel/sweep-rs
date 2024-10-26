@@ -67,7 +67,7 @@ impl<'a, S: Scorer> Scorer for &'a S {
     }
 }
 
-impl Scorer for Box<dyn Scorer> {
+impl<T: Scorer + ?Sized> Scorer for Box<T> {
     fn name(&self) -> &str {
         (**self).name()
     }
@@ -79,7 +79,7 @@ impl Scorer for Box<dyn Scorer> {
     }
 }
 
-impl Scorer for Arc<dyn Scorer> {
+impl<T: Scorer + ?Sized> Scorer for Arc<T> {
     fn name(&self) -> &str {
         (**self).name()
     }

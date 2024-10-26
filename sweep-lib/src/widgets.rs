@@ -1,6 +1,6 @@
 use crate::{
     common::{AbortJoinHandle, LockExt},
-    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, Positions,
+    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview, Positions,
 };
 use anyhow::Context;
 use futures::{future, FutureExt, TryFutureExt};
@@ -17,7 +17,7 @@ use std::{
 use surf_n_term::{
     rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
     view::{
-        Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBar,
+        Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBarFn,
         ScrollBarPosition, Text, Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
     BBox, Cell, CellWrite, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName,
@@ -810,11 +810,12 @@ impl<T: ListItems> List<T> {
 
     /// Get scroll bar widget
     pub fn scroll_bar(&self) -> impl View {
-        ListScrollBar {
-            face: self.theme.scrollbar,
-            total: self.items.len(),
-            state: self.view_state.clone(),
-        }
+        let state = self.view_state.clone();
+        let total = self.items.len();
+        ScrollBarFn::new(Axis::Vertical, self.theme.scrollbar, move || {
+            let state = state.with(|state| *state);
+            ScrollBarPosition::from_counts(total, state.cursor, state.visible_count)
+        })
     }
 
     /// Set theme
@@ -997,41 +998,6 @@ where
         }
 
         *layout = Layout::new().with_size(Size::new(height, width));
-        Ok(())
-    }
-}
-
-/// Lazy list scroll bar that is generated on **render** since internal state of the
-/// list is updated on layout.
-struct ListScrollBar {
-    face: Face,
-    total: usize,
-    state: Arc<Mutex<ListState>>,
-}
-
-impl View for ListScrollBar {
-    fn render(
-        &self,
-        ctx: &ViewContext,
-        surf: TerminalSurface<'_>,
-        layout: ViewLayout<'_>,
-    ) -> Result<(), Error> {
-        let state = self.state.with(|st| *st);
-        ScrollBar::new(
-            Axis::Vertical,
-            self.face,
-            ScrollBarPosition::from_counts(self.total, state.cursor, state.visible_count),
-        )
-        .render(ctx, surf, layout)
-    }
-
-    fn layout(
-        &self,
-        _ctx: &ViewContext,
-        ct: BoxConstraint,
-        mut layout: ViewMutLayout<'_>,
-    ) -> Result<(), Error> {
-        *layout = Layout::new().with_size(Size::new(ct.max().height, 1));
         Ok(())
     }
 }
@@ -1236,8 +1202,10 @@ impl ProcessOutput {
     }
 
     pub fn set_offset(&self, offset: Position) -> Position {
-        self.inner
-            .with_mut(|inner| std::mem::replace(&mut inner.offset, offset))
+        self.inner.with_mut(|inner| {
+            inner.offset = offset;
+            offset
+        })
     }
 
     pub fn clear(&self) {
@@ -1320,6 +1288,24 @@ impl View for ProcessOutput {
     ) -> Result<(), Error> {
         *layout = Layout::new().with_size(ct.max());
         Ok(())
+    }
+}
+
+impl HaystackPreview for ProcessOutput {
+    fn flex(&self) -> Option<f64> {
+        None
+    }
+
+    fn preview_layout(&self) -> Layout {
+        self.inner.with(|inner| {
+            Layout::new()
+                .with_size(inner.size)
+                .with_position(inner.offset)
+        })
+    }
+
+    fn set_offset(&self, offset: Position) -> Position {
+        ProcessOutput::set_offset(&self, offset)
     }
 }
 

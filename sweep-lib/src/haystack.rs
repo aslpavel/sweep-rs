@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use either::Either;
 use surf_n_term::{
-    view::{BoxConstraint, Text, View, ViewContext, ViewLayout, ViewMutLayout},
-    CellWrite, TerminalSurface,
+    view::{BoxConstraint, Layout, Text, View, ViewContext, ViewLayout, ViewMutLayout},
+    CellWrite, Position, TerminalSurface,
 };
 
 use crate::{Positions, Theme};
@@ -15,9 +15,9 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Haystack context passed when generating view and preview (for example
     /// [Candidate](crate::Candidate) reference resolution)
     type Context: Clone + Send + Sync;
-    type View: View + Send + Sync;
+    type View: View;
     type Preview: HaystackPreview;
-    type PreviewLarge: HaystackPreview;
+    type PreviewLarge: HaystackPreview + Clone;
 
     /// Scope function is called with all characters one after another that will
     /// be searchable by [Scorer]
@@ -49,15 +49,32 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
     }
 }
 
+/// View that is used for preview, and include addition methods to make it more functional
 pub trait HaystackPreview: View {
-    fn flex(&self) -> Option<f64>;
-}
-
-impl HaystackPreview for () {
+    /// Flex value when use as a child
     fn flex(&self) -> Option<f64> {
-        None
+        Some(1.0)
+    }
+
+    /// Current preview layout
+    ///
+    /// Size represents full size of the preview
+    /// Offset represents vertical and horizontal scroll position
+    fn preview_layout(&self) -> Layout {
+        Layout::new()
+    }
+
+    /// When rendering offset by specified position (used for scrolling)
+    ///
+    /// Returns updated offset, default implementation is not scrollable hence
+    /// it is always returns `Position::origin()`
+    fn set_offset(&self, offset: Position) -> Position {
+        _ = offset;
+        Position::origin()
     }
 }
+
+impl HaystackPreview for () {}
 
 impl<L, R> HaystackPreview for Either<L, R>
 where
@@ -70,11 +87,33 @@ where
             Either::Right(right) => right.flex(),
         }
     }
+
+    fn preview_layout(&self) -> Layout {
+        match self {
+            Either::Left(left) => left.preview_layout(),
+            Either::Right(right) => right.preview_layout(),
+        }
+    }
+
+    fn set_offset(&self, offset: Position) -> Position {
+        match self {
+            Either::Left(left) => left.set_offset(offset),
+            Either::Right(right) => right.set_offset(offset),
+        }
+    }
 }
 
-impl HaystackPreview for Arc<dyn HaystackPreview> {
+impl<T: HaystackPreview + ?Sized> HaystackPreview for Arc<T> {
     fn flex(&self) -> Option<f64> {
         (**self).flex()
+    }
+
+    fn preview_layout(&self) -> Layout {
+        (**self).preview_layout()
+    }
+
+    fn set_offset(&self, offset: Position) -> Position {
+        (**self).set_offset(offset)
     }
 }
 
