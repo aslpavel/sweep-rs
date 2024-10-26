@@ -982,7 +982,7 @@ where
         message_data.clear();
         // serialize
         serde_json::to_writer(&mut message_data, &message)?;
-        write!(&mut message_data, "\n")?;
+        writeln!(&mut message_data)?;
         // write
         write.write_all(message_data.as_ref()).await?;
         write.flush().await?;

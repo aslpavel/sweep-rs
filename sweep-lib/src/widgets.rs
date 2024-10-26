@@ -13,7 +13,6 @@ use std::{
     process::Stdio,
     str::FromStr,
     sync::{Arc, Mutex, RwLock},
-    usize,
 };
 use surf_n_term::{
     rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
@@ -1178,6 +1177,7 @@ impl<'a> IntoView for &'a Process {
     }
 }
 
+#[derive(Default)]
 struct ProcessOutputInner {
     size: Size,
     cursor: Position,
@@ -1200,7 +1200,7 @@ impl ProcessOutputInner {
     }
 
     fn cells_offset(&self, line: usize) -> Option<usize> {
-        if line <= 0 {
+        if line == 0 {
             Some(0)
         } else {
             self.lines.get(line - 1).copied()
@@ -1208,7 +1208,7 @@ impl ProcessOutputInner {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ProcessOutput {
     face: Face,
     wraps: bool,
@@ -1217,17 +1217,10 @@ pub struct ProcessOutput {
 
 impl ProcessOutput {
     pub fn new() -> Self {
-        let inner = ProcessOutputInner {
-            size: Size::empty(),
-            cursor: Position::origin(),
-            cells: Vec::new(),
-            lines: Vec::new(),
-            offset: Position::origin(),
-        };
         Self {
             face: Face::default(),
             wraps: false,
-            inner: Arc::new(RwLock::new(inner)),
+            inner: Arc::new(RwLock::new(ProcessOutputInner::default())),
         }
     }
 
@@ -1339,7 +1332,7 @@ impl HaystackPreview for ProcessOutput {
     }
 
     fn set_offset(&self, offset: Position) -> Position {
-        ProcessOutput::set_offset(&self, offset)
+        ProcessOutput::set_offset(self, offset)
     }
 }
 
@@ -1375,9 +1368,7 @@ impl ProcessCommandBuilder {
     ) -> impl Iterator<Item = Cow<'builder, str>> + 'args {
         let mut index = 0;
         std::iter::from_fn(move || {
-            let Some(arg) = self.args.get(index) else {
-                return None;
-            };
+            let arg = self.args.get(index)?;
             index += 1;
 
             match arg {

@@ -1101,20 +1101,20 @@ where
                     .modify(|inner| inner.show_preview = !self.theme.show_preview),
             ),
             SweepAction::PreviewLineNext => {
-                self.preview_large.as_ref().map(|preview| {
+                if let Some(preview) = self.preview_large.as_ref() {
                     let layout = preview.preview.preview_layout();
                     let mut offset = layout.position();
                     offset.row = layout.size().height.min(offset.row + 1);
                     preview.preview.set_offset(offset);
-                });
+                }
             }
             SweepAction::PreviewLinePrev => {
-                self.preview_large.as_ref().map(|preview| {
+                if let Some(preview) = self.preview_large.as_ref() {
                     let layout = preview.preview.preview_layout();
                     let mut offset = layout.position();
                     offset.row = offset.row.saturating_sub(1);
                     preview.preview.set_offset(offset);
-                });
+                }
             }
         }
         Nothing
@@ -1785,7 +1785,7 @@ impl std::str::FromStr for SweepLayout {
         let Some(name) = iter.next() else {
             anyhow::bail!("invalid layout: {} (expected `name(,attr=value)`)", string);
         };
-        let mut kvs = iter.filter_map(|kv| {
+        let kvs = iter.filter_map(|kv| {
             let mut kv = kv.splitn(2, '=');
             let key = kv.next()?.trim();
             let value = kv.next()?.trim();
@@ -1797,7 +1797,7 @@ impl std::str::FromStr for SweepLayout {
                 let mut width = SweepLayoutSize::Full;
                 let mut column = SweepLayoutSize::Absolute(0);
                 let mut row = SweepLayoutSize::Full;
-                while let Some((key, value)) = kvs.next() {
+                for (key, value) in kvs {
                     match key {
                         "height" | "h" => height = value.parse()?,
                         "width" | "w" => width = value.parse()?,
@@ -1815,7 +1815,7 @@ impl std::str::FromStr for SweepLayout {
             }
             "full" => {
                 let mut height = SweepLayoutSize::Full;
-                while let Some((key, value)) = kvs.next() {
+                for (key, value) in kvs {
                     match key {
                         "height" | "h" => height = value.parse()?,
                         _ => {}

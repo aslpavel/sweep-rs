@@ -169,7 +169,7 @@ async fn main() -> Result<(), Error> {
                 }
                 let input = sweep.query_get().await?;
                 std::mem::drop(sweep); // cleanup terminal
-                let result = if args.json {
+                let mut result = if args.json {
                     serde_json::to_string(&items)?
                 } else {
                     use std::fmt::Write as _;
@@ -182,6 +182,7 @@ async fn main() -> Result<(), Error> {
                     }
                     result
                 };
+                result.push('\n');
                 output.write_all(result.as_bytes()).await?;
                 break;
             }

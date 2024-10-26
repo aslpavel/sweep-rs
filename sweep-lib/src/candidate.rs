@@ -101,7 +101,7 @@ impl Candidate {
 
     /// Construct from string
     pub fn from_string(
-        string: String,
+        string: &str,
         delimiter: char,
         field_selector: Option<&FieldSelector>,
     ) -> Self {
@@ -140,14 +140,15 @@ impl Candidate {
         };
         futures::stream::try_unfold(init, |mut state| async move {
             let mut batch = Vec::with_capacity(state.batch_size);
+            let mut line = String::new();
             loop {
-                let mut line = String::new();
+                line.clear();
                 let line_len = state.reader.read_line(&mut line).await?;
                 if line_len == 0 || batch.len() >= state.batch_size {
                     break;
                 };
                 batch.push(Candidate::from_string(
-                    line,
+                    line.trim_end(),
                     state.delimiter,
                     state.field_selector.as_ref(),
                 ));

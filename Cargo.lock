@@ -247,7 +247,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chronicler-cli"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "argh",
@@ -1379,9 +1379,9 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11188ce4da2ed5d755b6934285b0fb88f4d3f7e0b4413edcaa4bd77e3be865f6"
+checksum = "6a5ba45fe1a5d6c28429e9075836a14e940e53e65434c5aacd38de0f14b90e46"
 dependencies = [
  "bytemuck",
  "lazy_static",
@@ -1921,9 +1921,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surf_n_term"
-version = "0.17.3"
+version = "0.17.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87d6857f46b99aabc4023f5ddb35c9b93db41d19f16704d917faabccf5507a18"
+checksum = "40368815090de25f79b6e77f0722b14edf15df7ca6474df27605ea04a6844f96"
 dependencies = [
  "either",
  "fnv",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1965,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "sweep-cli"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "argh",
