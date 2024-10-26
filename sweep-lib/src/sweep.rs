@@ -1096,10 +1096,10 @@ where
                 self.scorer_by_name(None);
                 return Nothing;
             }
-            SweepAction::PreviewToggle => self.theme_set(Theme {
-                show_preview: !self.theme.show_preview,
-                ..self.theme.clone()
-            }),
+            SweepAction::PreviewToggle => self.theme_set(
+                self.theme
+                    .modify(|inner| inner.show_preview = !self.theme.show_preview),
+            ),
             SweepAction::PreviewLineNext => {
                 self.preview_large.as_ref().map(|preview| {
                     let layout = preview.preview.preview_layout();
@@ -1177,10 +1177,7 @@ where
             "BINDINGS".to_owned(),
             Some(KEYBOARD_ICON.clone()),
             ranker,
-            Theme {
-                show_preview: true,
-                ..self.theme.clone()
-            },
+            self.theme.modify(|inner| inner.show_preview = true),
             self.scorers.clone(),
             (),
         )
@@ -1299,10 +1296,7 @@ where
     term.execute_many(TerminalCommand::mouse_events_set(true, false))?;
     // force dumb four color theme for dumb terminal
     if ColorDepth::Gray == term.capabilities().depth {
-        options.theme = Theme {
-            show_preview: options.theme.show_preview,
-            ..Theme::dumb()
-        }
+        options.theme = Theme::dumb().modify(|inner| inner.show_preview = true);
     }
 
     // prepare terminal based on layout
@@ -1424,10 +1418,11 @@ where
                                 Some(value) => value,
                                 None => !state.theme.show_preview,
                             };
-                            state.theme_set(Theme {
-                                show_preview,
-                                ..state.theme.clone()
-                            });
+                            state.theme_set(
+                                state
+                                    .theme
+                                    .modify(|inner| inner.show_preview = show_preview),
+                            );
                         }
                         FooterSet(view) => state.footer = view,
                         ScorerSet(scorer) => state.ranker.scorer_set(scorer),

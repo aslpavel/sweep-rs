@@ -9,9 +9,10 @@ use std::{
     cmp::max,
     collections::HashMap,
     io::Write,
+    ops::Deref,
     process::Stdio,
     str::FromStr,
-    sync::{Arc, Mutex, RwLock /* , RwLock */},
+    sync::{Arc, Mutex, RwLock},
     usize,
 };
 use surf_n_term::{
@@ -26,8 +27,8 @@ use surf_n_term::{
 };
 use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
 
-#[derive(Clone, Debug)]
-pub struct Theme {
+#[derive(Debug, Clone)]
+pub struct ThemeInner {
     pub fg: RGBA,
     pub bg: RGBA,
     pub accent: RGBA,
@@ -48,6 +49,25 @@ pub struct Theme {
     pub separator_left: Text,
     pub show_preview: bool,
     pub named_colors: Arc<HashMap<String, RGBA>>,
+}
+
+#[derive(Clone)]
+pub struct Theme {
+    inner: Arc<ThemeInner>,
+}
+
+impl Deref for Theme {
+    type Target = ThemeInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::fmt::Debug for Theme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 impl Theme {
@@ -122,7 +142,7 @@ impl Theme {
         named_colors.insert("bg".to_owned(), bg);
         named_colors.insert("accent".to_owned(), accent);
         named_colors.insert("base".to_owned(), accent);
-        Self {
+        let inner = ThemeInner {
             fg,
             bg,
             accent,
@@ -143,6 +163,9 @@ impl Theme {
             separator_left,
             show_preview: true,
             named_colors: Arc::new(named_colors),
+        };
+        Self {
+            inner: Arc::new(inner),
         }
     }
 
@@ -189,7 +212,7 @@ impl Theme {
         named_colors.insert("bg".to_owned(), bg);
         named_colors.insert("accent".to_owned(), accent);
         named_colors.insert("base".to_owned(), accent);
-        Self {
+        let inner = ThemeInner {
             fg,
             bg,
             accent,
@@ -210,6 +233,9 @@ impl Theme {
             separator_left: Text::new(),
             show_preview: true,
             named_colors: Arc::new(named_colors),
+        };
+        Self {
+            inner: Arc::new(inner),
         }
     }
 
@@ -220,6 +246,14 @@ impl Theme {
                 Theme::from_str(&theme_var).unwrap_or(Theme::light())
             }
             _ => Theme::light(),
+        }
+    }
+
+    pub fn modify(&self, modify: impl FnOnce(&mut ThemeInner)) -> Theme {
+        let mut inner = self.inner.deref().clone();
+        modify(&mut inner);
+        Theme {
+            inner: Arc::new(inner),
         }
     }
 }
@@ -1467,8 +1501,8 @@ mod tests {
 
     #[test]
     fn test_list_basic() -> Result<(), Error> {
-        let mut theme = Theme::light();
-        theme.list_selected.bg = Some("#8ec07c".parse()?);
+        let list_selected_bg = Some("#8ec07c".parse()?);
+        let theme = Theme::light().modify(|inner| inner.list_selected.bg = list_selected_bg);
 
         let items = VecItems((0..60).collect());
         let mut list = List::new(items, theme.clone());
@@ -1492,8 +1526,8 @@ mod tests {
 
     #[test]
     fn test_list_multiline() -> Result<(), Error> {
-        let mut theme = Theme::light();
-        theme.list_selected.bg = Some("#8ec07c".parse()?);
+        let list_selected_bg = Some("#8ec07c".parse()?);
+        let theme = Theme::light().modify(|inner| inner.list_selected.bg = list_selected_bg);
 
         println!("multi-line entry");
         let items = VecItems::new([
