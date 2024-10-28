@@ -1546,9 +1546,10 @@ where
         // render
         let mut win_surf = win_layout.apply_to(surf);
         let ctx = ViewContext::new(term)?;
-        let layout_id_next = if let Some(state) = state_help.as_mut() {
+        let layout_id_next = if let Some(state_help) = state_help.as_mut() {
+            state_help.ranker_refresh();
             tracing::debug_span!("[sweep_ui_worker][draw] sweep help state")
-                .in_scope(|| win_surf.draw_view(&ctx, Some(&mut layout_store), state))?
+                .in_scope(|| win_surf.draw_view(&ctx, Some(&mut layout_store), state_help))?
         } else {
             if render_suppress
                 || !render_supress_sync
