@@ -649,7 +649,7 @@ impl ViewCache for CandidateContext {
     }
 }
 
-impl<'de, 'a> DeserializeSeed<'de> for &'a CandidateContext {
+impl<'de> DeserializeSeed<'de> for &CandidateContext {
     type Value = Candidate;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -671,7 +671,7 @@ impl<'de> DeserializeSeed<'de> for CandidateContext {
     }
 }
 
-impl<'de, 'a> de::Visitor<'de> for &'a CandidateContext {
+impl<'de> de::Visitor<'de> for &CandidateContext {
     type Value = Candidate;
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("String or Struct")
@@ -779,7 +779,7 @@ pub struct Field<'a> {
     pub field_ref: Option<FieldRef>,
 }
 
-impl<'a> fmt::Debug for Field<'a> {
+impl fmt::Debug for Field<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug_struct = f.debug_struct("Field");
         debug_struct
@@ -795,7 +795,7 @@ impl<'a> fmt::Debug for Field<'a> {
     }
 }
 
-impl<'a> std::cmp::PartialEq for Field<'a> {
+impl std::cmp::PartialEq for Field<'_> {
     fn eq(&self, other: &Self) -> bool {
         let eq = self.text == other.text
             && self.active == other.active
@@ -813,9 +813,9 @@ impl<'a> std::cmp::PartialEq for Field<'a> {
     }
 }
 
-impl<'a> std::cmp::Eq for Field<'a> {}
+impl std::cmp::Eq for Field<'_> {}
 
-impl<'a> Default for Field<'a> {
+impl Default for Field<'_> {
     fn default() -> Self {
         Self {
             text: Cow::Borrowed(""),
@@ -922,7 +922,7 @@ impl<'a, 'b: 'a> From<Cow<'b, str>> for Field<'a> {
     }
 }
 
-impl<'a> ProcessCommandArg for Field<'a> {
+impl ProcessCommandArg for Field<'_> {
     fn as_command_arg(&self) -> &str {
         &self.text
     }
@@ -947,7 +947,7 @@ pub struct FieldDeserializer<'a> {
     pub view_cache: Option<Arc<dyn ViewCache>>,
 }
 
-impl<'de, 'a> DeserializeSeed<'de> for FieldDeserializer<'a> {
+impl<'de> DeserializeSeed<'de> for FieldDeserializer<'_> {
     type Value = Field<'static>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -958,7 +958,7 @@ impl<'de, 'a> DeserializeSeed<'de> for FieldDeserializer<'a> {
     }
 }
 
-impl<'de, 'a> de::Visitor<'de> for FieldDeserializer<'a> {
+impl<'de> de::Visitor<'de> for FieldDeserializer<'_> {
     type Value = Field<'static>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

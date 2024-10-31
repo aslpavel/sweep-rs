@@ -580,7 +580,7 @@ impl Input {
     }
 }
 
-impl<'a> View for &'a Input {
+impl View for &Input {
     fn render(
         &self,
         ctx: &ViewContext,
@@ -876,7 +876,7 @@ struct ListItemView {
     pointed: bool,
 }
 
-impl<'a, T> View for ListView<'a, T>
+impl<T> View for ListView<'_, T>
 where
     T: ListItems + Send + Sync,
     T::ItemView: 'static,
@@ -1179,7 +1179,7 @@ impl Process {
     }
 }
 
-impl<'a> IntoView for &'a Process {
+impl IntoView for &Process {
     type View = ProcessOutput;
 
     fn into_view(self) -> Self::View {

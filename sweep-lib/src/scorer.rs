@@ -147,7 +147,7 @@ impl ScoreArray {
 impl fmt::Debug for ScoreArray {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
-        list.entries(&*self);
+        list.entries(self);
         list.finish()
     }
 }
@@ -194,7 +194,7 @@ pub struct ScoreResult<H> {
     pub positions: Positions,
 }
 
-impl<'a, S: Scorer + ?Sized> Scorer for &'a S {
+impl<S: Scorer + ?Sized> Scorer for &S {
     fn name(&self) -> &str {
         (**self).name()
     }
@@ -748,7 +748,7 @@ pub struct PositionsIter<'a> {
     index: usize,
 }
 
-impl<'a> Iterator for PositionsIter<'a> {
+impl Iterator for PositionsIter<'_> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -827,7 +827,7 @@ mod tests {
         assert_eq!(
             p.into_iter()
                 .enumerate()
-                .filter_map(|(i, m)| m.then(|| i))
+                .filter_map(|(i, m)| m.then_some(i))
                 .collect::<Vec<_>>(),
             vec![1, 15, 67, 300]
         );

@@ -177,10 +177,10 @@ async fn main() -> Result<(), Error> {
                     use std::fmt::Write as _;
                     let mut result = String::new();
                     for item in &items {
-                        write!(&mut result, "{}\n", item)?;
+                        writeln!(&mut result, "{}", item)?;
                     }
                     if result.is_empty() {
-                        write!(&mut result, "{}\n", input)?;
+                        writeln!(&mut result, "{}", input)?;
                     }
                     result
                 };

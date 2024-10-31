@@ -401,7 +401,7 @@ impl<'de> Deserialize<'de> for RpcId {
     {
         struct RpcIdVisit;
 
-        impl<'de> Visitor<'de> for RpcIdVisit {
+        impl Visitor<'_> for RpcIdVisit {
             type Value = RpcId;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -1213,7 +1213,7 @@ mod tests {
             b: String,
         }
         a.register("concat", |mut params: ConcatParams| async move {
-            params.a.extend(params.b.chars());
+            params.a.push_str(&params.b);
             Ok(params.a)
         });
         a.register("index_or_name", |mut params: RpcParams| async move {

@@ -15,7 +15,7 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     let kmp = KMPPattern::new(needle);
 
     let mut group = c.benchmark_group("scorer");
-    group.throughput(Throughput::Elements(1 as u64));
+    group.throughput(Throughput::Elements(1_u64));
 
     let mut score = Score::MIN;
     let mut positions = Positions::new(CANDIDATE.len());
