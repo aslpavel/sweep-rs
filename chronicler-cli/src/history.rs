@@ -56,7 +56,12 @@ impl Haystack for HistoryEntry {
         self.cmd.chars().for_each(scope)
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &sweep::Positions, theme: &Theme) -> Self::View {
+    fn view(
+        &self,
+        ctx: &Self::Context,
+        positions: sweep::PositionsRef<&[u8]>,
+        theme: &Theme,
+    ) -> Self::View {
         let cmd = HaystackDefaultView::new(ctx, self, positions, theme);
 
         let mut right = Text::new();
@@ -92,7 +97,7 @@ impl Haystack for HistoryEntry {
     fn preview(
         &self,
         _ctx: &Self::Context,
-        _positions: &sweep::Positions,
+        _positions: sweep::PositionsRef<&[u8]>,
         theme: &Theme,
     ) -> Option<Self::Preview> {
         let mut text = Text::new();

@@ -2,8 +2,8 @@ use crate::{
     common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
     rpc::{RpcParams, RpcPeer},
     widgets::ProcessOutput,
-    Haystack, HaystackBasicPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder,
-    Theme,
+    Haystack, HaystackBasicPreview, PositionsRef, Process, ProcessCommandArg,
+    ProcessCommandBuilder, Theme,
 };
 use anyhow::Error;
 use futures::Stream;
@@ -105,7 +105,7 @@ impl Candidate {
         delimiter: char,
         field_selector: Option<&FieldSelector>,
     ) -> Self {
-        let mut fields: Vec<Field<'static>> = split_inclusive(delimiter, string.as_ref())
+        let mut fields: Vec<Field<'static>> = split_inclusive(delimiter, string)
             .map(|field| Field::from(field.to_owned()))
             .collect();
         if let Some(field_selector) = field_selector {
@@ -141,10 +141,10 @@ impl Candidate {
         futures::stream::try_unfold(init, |mut state| async move {
             let mut batch = Vec::with_capacity(state.batch_size);
             let mut line = String::new();
-            loop {
+            while batch.len() < state.batch_size {
                 line.clear();
                 let line_len = state.reader.read_line(&mut line).await?;
-                if line_len == 0 || batch.len() >= state.batch_size {
+                if line_len == 0 {
                     break;
                 };
                 batch.push(Candidate::from_string(
@@ -153,6 +153,7 @@ impl Candidate {
                     state.field_selector.as_ref(),
                 ));
             }
+            state.batch_size += state.batch_size / 2;
             if batch.is_empty() {
                 Ok(None)
             } else {
@@ -371,12 +372,17 @@ impl Haystack for Candidate {
         self.haystack().for_each(scope);
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Self::View {
+    fn view(
+        &self,
+        ctx: &Self::Context,
+        positions: PositionsRef<&[u8]>,
+        theme: &Theme,
+    ) -> Self::View {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
             self.target(),
-            positions,
+            positions.clone(),
             &mut positions_offset,
             ctx,
             theme.list_text,
@@ -419,7 +425,7 @@ impl Haystack for Candidate {
     fn preview(
         &self,
         ctx: &Self::Context,
-        positions: &Positions,
+        positions: PositionsRef<&[u8]>,
         theme: &Theme,
     ) -> Option<Self::Preview> {
         if self.inner.preview.is_empty() {
@@ -445,7 +451,7 @@ impl Haystack for Candidate {
     fn preview_large(
         &self,
         ctx: &Self::Context,
-        _positions: &Positions,
+        _positions: PositionsRef<&[u8]>,
         _theme: &Theme,
     ) -> Option<Self::PreviewLarge> {
         ctx.preview_get(self)
@@ -466,7 +472,7 @@ type FieldsView = either::Either<Flex<'static>, Text>;
 #[allow(clippy::too_many_arguments)]
 pub fn fields_view(
     fields: &[Field<'_>],
-    positions: &Positions,
+    positions: PositionsRef<&[u8]>,
     positions_offset: &mut usize,
     candidate_context: &CandidateContext,
     face_default: Face,

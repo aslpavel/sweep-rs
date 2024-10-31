@@ -5,7 +5,9 @@ mod haystack;
 pub use haystack::{Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview};
 
 mod scorer;
-pub use scorer::{FuzzyScorer, KMPPattern, Positions, Score, ScoreResult, Scorer, SubstrScorer};
+pub use scorer::{
+    FuzzyScorer, KMPPattern, Positions, PositionsRef, Score, ScoreResult, Scorer, SubstrScorer,
+};
 
 mod rank;
 pub use rank::{fuzzy_scorer, substr_scorer, RankedItems, Ranker, ScorerBuilder};

@@ -149,11 +149,11 @@ fn ranker_worker<H, N>(
     loop {
         #[derive(Clone, Copy)]
         enum RankAction {
-            DoNothing,
-            Notify,
-            Offset(usize),
-            CurrentMatch,
-            All,
+            DoNothing,     // ignore
+            Notify,        // only notify
+            Offset(usize), // rank items starting from offset
+            CurrentMatch,  // rank only current match
+            All,           // rank everything
         }
         use RankAction::*;
         let mut action = DoNothing;
@@ -235,7 +235,7 @@ fn ranker_worker<H, N>(
                 matches.clear();
                 // score new matches
                 matches.extend((offset..haystack.with(|hs| hs.len())).rev().map(Match::new));
-                rank(&ctx, scorer.clone(), &haystack, &mut matches, false);
+                haystack.with(|haystack| rank(&ctx, scorer.clone(), haystack, &mut matches, false));
                 // copy previous matches
                 matches.extend(matches_prev.iter().rev().cloned());
                 matches.reverse();
@@ -246,19 +246,23 @@ fn ranker_worker<H, N>(
                 pool.promote(matches)
             }
             CurrentMatch => {
+                // score previous matches
                 let mut matches = pool.alloc();
                 matches.clear();
-                // score previous matches
                 matches.extend(matches_prev.iter().cloned());
-                rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
+                haystack.with(|haystack| {
+                    rank(&ctx, scorer.clone(), haystack, &mut matches, !keep_order)
+                });
                 pool.promote(matches)
             }
             All => {
+                // score all haystack elements
                 let mut matches = pool.alloc();
                 matches.clear();
-                // score all haystack elements
                 matches.extend((0..haystack.with(|hs| hs.len())).map(Match::new));
-                rank(&ctx, scorer.clone(), &haystack, &mut matches, !keep_order);
+                haystack.with(|haystack| {
+                    rank(&ctx, scorer.clone(), haystack, &mut matches, !keep_order)
+                });
                 pool.promote(matches)
             }
         };
@@ -470,13 +474,8 @@ thread_local! {
     static TARGET: Cell<Vec<char>> = Default::default();
 }
 
-fn rank<S, H>(
-    ctx: &H::Context,
-    scorer: S,
-    hastack: &Arc<RwLock<Vec<H>>>,
-    matches: &mut Vec<Match>,
-    sort: bool,
-) where
+fn rank<S, H>(ctx: &H::Context, scorer: S, haystack: &[H], matches: &mut Vec<Match>, sort: bool)
+where
     S: Scorer + Clone,
     H: Haystack,
 {
@@ -485,27 +484,25 @@ fn rank<S, H>(
     }
 
     // score haystack items
-    hastack.with(|haystack| {
-        matches
-            .par_iter_mut()
-            .for_each_with(scorer, |scorer, item| {
-                TARGET.with(|target_cell| {
-                    let mut target = target_cell.take();
-                    target.clear();
-                    haystack[item.haystack_index]
-                        .haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
-                    let mut score = Score::MIN;
-                    let mut positions = Positions::new(target.len());
-                    if scorer.score_ref(target.as_slice(), &mut score, &mut positions) {
-                        item.score = Some(score);
-                        item.positions = positions;
-                    } else {
-                        item.score = None;
-                    }
-                    target_cell.set(target);
-                })
+    matches
+        .par_iter_mut()
+        .for_each_with(scorer, |scorer, item| {
+            TARGET.with(|target_cell| {
+                let mut target = target_cell.take();
+                target.clear();
+                haystack[item.haystack_index]
+                    .haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
+                let mut score = Score::MIN;
+                let mut positions = Positions::new(target.len());
+                if scorer.score_ref(target.as_slice(), &mut score, positions.as_mut()) {
+                    item.score = Some(score);
+                    item.positions = positions;
+                } else {
+                    item.score = None;
+                }
+                target_cell.set(target);
             })
-    });
+        });
 
     // filter out items that failed to match
     matches.retain(|item| item.score.is_some());

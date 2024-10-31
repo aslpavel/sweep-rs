@@ -20,13 +20,13 @@ pub fn scorer_benchmark(c: &mut Criterion) {
     let mut score = Score::MIN;
     let mut positions = Positions::new(CANDIDATE.len());
     group.bench_function("fuzzy", |b| {
-        b.iter(|| fuzzy.score_ref(haystack.as_slice(), &mut score, &mut positions))
+        b.iter(|| fuzzy.score_ref(haystack.as_slice(), &mut score, positions.as_mut()))
     });
 
     let mut score = Score::MIN;
     let mut positions = Positions::new(CANDIDATE.len());
     group.bench_function("substr", |b| {
-        b.iter(|| substr.score_ref(haystack.as_slice(), &mut score, &mut positions))
+        b.iter(|| substr.score_ref(haystack.as_slice(), &mut score, positions.as_mut()))
     });
 
     group.bench_function("knuth-morris-pratt", |b| {

@@ -5,6 +5,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use arrow_array::{builder::StringViewBuilder, Array, StringViewArray};
+use arrow_data::ByteView;
 use serde::{
     de::{self, DeserializeSeed},
     Deserializer,
@@ -153,6 +155,53 @@ pub fn json_from_slice_seed<'de, 'a: 'de, S: DeserializeSeed<'de>>(
 
     let mut deserializer = Deserializer::new(SliceRead::new(slice));
     seed.deserialize(&mut deserializer)
+}
+
+/// Efficient [StringViewArray] filter that reuses buffers from items
+pub(crate) fn string_view_filter<P>(
+    items: &StringViewArray,
+    builder: &mut StringViewBuilder,
+    mut predicate: P,
+) where
+    P: FnMut(usize, &str) -> bool,
+{
+    let buffers = items.data_buffers();
+    let buffer_offset = if buffers.is_empty() {
+        0
+    } else {
+        let buffer_offset = builder.append_block(buffers[0].clone());
+        for buffer in &buffers[1..] {
+            builder.append_block(buffer.clone());
+        }
+        buffer_offset
+    };
+
+    let nulls = items.nulls();
+    items.views().iter().enumerate().for_each(|(index, view)| {
+        let item = unsafe {
+            // Safety: index comes from iterating views
+            items.value_unchecked(index)
+        };
+        if !predicate(index, item) {
+            return;
+        }
+        if nulls.map(|nulls| nulls.is_null(index)).unwrap_or(false) {
+            return;
+        }
+        let view = ByteView::from(*view);
+        if view.length <= 12 {
+            builder.append_value(item);
+        } else {
+            unsafe {
+                // Safety: view/blocks are taken for source string view array
+                builder.append_view_unchecked(
+                    buffer_offset + view.buffer_index,
+                    view.offset,
+                    view.length,
+                );
+            }
+        }
+    });
 }
 
 #[cfg(test)]

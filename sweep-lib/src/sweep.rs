@@ -950,9 +950,11 @@ where
     // get preview of the currently pointed haystack item
     fn preview(&self) -> Option<H::Preview> {
         let item = self.list.current()?;
-        item.item
-            .haystack
-            .preview(&self.haystack_context, &item.item.positions, &self.theme)
+        item.item.haystack.preview(
+            &self.haystack_context,
+            item.item.positions.as_ref(),
+            &self.theme,
+        )
     }
 
     // get large preview for currently pointed haystack item
@@ -961,7 +963,7 @@ where
         if !matches!(&self.preview_large, Some(preview) if preview.id == item.item.id) {
             let preview = item.item.haystack.preview_large(
                 &self.haystack_context,
-                &item.item.positions,
+                item.item.positions.as_ref(),
                 &self.theme,
             )?;
             self.preview_large = Some(SweepPreview::new(item.item.id, self.theme.clone(), preview));
@@ -1659,9 +1661,11 @@ impl<H: Haystack> IntoView for SweepItem<H> {
     type View = H::View;
 
     fn into_view(self) -> Self::View {
-        self.item
-            .haystack
-            .view(&self.haystack_context, &self.item.positions, &self.theme)
+        self.item.haystack.view(
+            &self.haystack_context,
+            self.item.positions.as_ref(),
+            &self.theme,
+        )
     }
 }
 

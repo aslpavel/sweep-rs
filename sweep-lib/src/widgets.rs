@@ -1,6 +1,7 @@
 use crate::{
     common::{AbortJoinHandle, LockExt},
-    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview, Positions,
+    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview,
+    PositionsRef,
 };
 use anyhow::Context;
 use futures::{future, FutureExt, TryFutureExt};
@@ -303,7 +304,12 @@ impl Haystack for ActionDesc {
         self.name.chars().for_each(scope);
     }
 
-    fn view(&self, ctx: &Self::Context, positions: &Positions, theme: &Theme) -> Self::View {
+    fn view(
+        &self,
+        ctx: &Self::Context,
+        positions: PositionsRef<&[u8]>,
+        theme: &Theme,
+    ) -> Self::View {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             chords_text
@@ -322,7 +328,7 @@ impl Haystack for ActionDesc {
     fn preview(
         &self,
         _ctx: &Self::Context,
-        _positions: &Positions,
+        _positions: PositionsRef<&[u8]>,
         _theme: &Theme,
     ) -> Option<Self::Preview> {
         let desc = Text::new().put_fmt(&self.description, None).take();

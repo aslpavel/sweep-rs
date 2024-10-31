@@ -1,10 +1,9 @@
-use crate::Haystack;
-use std::{
-    cell::RefCell,
-    cmp::Ordering,
-    fmt::{self, Debug},
-    sync::Arc,
+use crate::{common::string_view_filter, Haystack};
+use arrow_array::{
+    builder::{BinaryViewBuilder, Float32Builder, StringViewBuilder, UInt32Builder},
+    Array, BinaryViewArray, Float32Array, StringViewArray, UInt32Array,
 };
+use std::{cell::RefCell, cmp::Ordering, fmt, sync::Arc};
 
 thread_local! {
     static HAYSTACK: RefCell<Vec<char>> = Default::default();
@@ -13,15 +12,22 @@ thread_local! {
 /// Scorer
 ///
 /// Scorer is used to score haystack against the needle stored inside the scorer
-pub trait Scorer: Send + Sync + Debug {
+pub trait Scorer: Send + Sync + fmt::Debug {
     /// Name of the scorer
     fn name(&self) -> &str;
 
     /// Needle
     fn needle(&self) -> &str;
 
-    /// Actual scorer non generic implementation
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool;
+    /// Score haystack item
+    ///
+    /// Returns true if there was a match, false otherwise
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        positions: PositionsRef<&mut [u8]>,
+    ) -> bool;
 
     /// Generic implementation over anything that implements `Haystack` trait.
     fn score<H>(&self, ctx: &H::Context, haystack: H) -> Option<ScoreResult<H>>
@@ -35,7 +41,7 @@ pub trait Scorer: Send + Sync + Debug {
             haystack.haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
             let mut score = Score::MIN;
             let mut positions = Positions::new(target.len());
-            self.score_ref(target.as_slice(), &mut score, &mut positions)
+            self.score_ref(target.as_slice(), &mut score, positions.as_mut())
                 .then_some(ScoreResult {
                     haystack,
                     score,
@@ -43,6 +49,139 @@ pub trait Scorer: Send + Sync + Debug {
                 })
         })
     }
+
+    /// Run scorer on an arrow of strings and ids (position in the haystack)
+    fn score_arrow(
+        &self,
+        target: &StringViewArray,
+        haystack_id: Option<&[u32]>,
+        rank: bool,
+    ) -> ScoreArray {
+        if let Some(haystack_id) = haystack_id {
+            assert_eq!(target.len(), haystack_id.len());
+        }
+
+        let mut target_buf: Vec<char> = Vec::new();
+        let mut positions_buf: Vec<u8> = Vec::new();
+
+        let mut target_builder = StringViewBuilder::new();
+        let mut id_builder = UInt32Builder::new();
+        let mut score_builder = Float32Builder::new();
+        let mut positions_builder = BinaryViewBuilder::new();
+
+        string_view_filter(target, &mut target_builder, |index, target| {
+            target_buf.clear();
+            target_buf.extend(target.chars().flat_map(char::to_lowercase));
+            let mut score_local = Score::MIN;
+            positions_buf.clear();
+            positions_buf.resize(positions_data_size(target_buf.len()), 0);
+            let positions = PositionsRef::new_data(positions_buf.as_mut());
+            if !(self.score_ref(target_buf.as_slice(), &mut score_local, positions)) {
+                return false;
+            }
+
+            id_builder.append_value(
+                haystack_id.map_or_else(|| index as u32, |haystack_id| haystack_id[index]),
+            );
+            score_builder.append_value(score_local.0);
+            positions_builder.append_value(positions_buf.as_slice());
+
+            true
+        });
+
+        let score = score_builder.finish();
+        let rank = rank.then(|| {
+            let mut indices: Vec<_> = (0..score.len() as u32).collect();
+            indices.sort_unstable_by_key(|index| Score(-score.value(*index as usize)));
+            indices.into()
+        });
+
+        ScoreArray {
+            target: target_builder.finish(),
+            id: id_builder.finish(),
+            score,
+            positions: positions_builder.finish(),
+            rank,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ScoreArray {
+    target: StringViewArray,
+    id: UInt32Array,
+    score: Float32Array,
+    positions: BinaryViewArray,
+    rank: Option<UInt32Array>,
+}
+
+impl ScoreArray {
+    pub fn len(&self) -> usize {
+        self.target.len()
+    }
+
+    pub fn get(&self, index: usize) -> Option<ScoreItem<'_>> {
+        if index >= self.target.len() {
+            return None;
+        }
+        let index = self
+            .rank
+            .as_ref()
+            .map_or_else(|| index, |rank| rank.value(index) as usize);
+        Some(ScoreItem {
+            target: self.target.value(index),
+            id: self.id.value(index) as usize,
+            score: Score(self.score.value(index)),
+            positions: PositionsRef::new_data(self.positions.value(index)),
+        })
+    }
+
+    pub fn iter(&self) -> ScoreIter<'_> {
+        ScoreIter {
+            index: 0,
+            score: self,
+        }
+    }
+}
+
+impl fmt::Debug for ScoreArray {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        list.entries(&*self);
+        list.finish()
+    }
+}
+
+pub struct ScoreIter<'a> {
+    index: usize,
+    score: &'a ScoreArray,
+}
+
+impl<'a> Iterator for ScoreIter<'a> {
+    type Item = ScoreItem<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.score.get(self.index)?;
+        self.index += 1;
+        Some(value)
+    }
+}
+
+impl<'a> IntoIterator for &'a ScoreArray {
+    type Item = ScoreItem<'a>;
+    type IntoIter = ScoreIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Debug)]
+pub struct ScoreItem<'a> {
+    pub target: &'a str,
+    pub id: usize,
+    pub score: Score,
+    pub positions: PositionsRef<&'a [u8]>,
 }
 
 /// Result of the scoring
@@ -55,14 +194,19 @@ pub struct ScoreResult<H> {
     pub positions: Positions,
 }
 
-impl<'a, S: Scorer> Scorer for &'a S {
+impl<'a, S: Scorer + ?Sized> Scorer for &'a S {
     fn name(&self) -> &str {
         (**self).name()
     }
     fn needle(&self) -> &str {
         (**self).needle()
     }
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        positions: PositionsRef<&mut [u8]>,
+    ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
 }
@@ -74,7 +218,12 @@ impl<T: Scorer + ?Sized> Scorer for Box<T> {
     fn needle(&self) -> &str {
         (**self).needle()
     }
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        positions: PositionsRef<&mut [u8]>,
+    ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
 }
@@ -86,7 +235,12 @@ impl<T: Scorer + ?Sized> Scorer for Arc<T> {
     fn needle(&self) -> &str {
         (**self).needle()
     }
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        positions: PositionsRef<&mut [u8]>,
+    ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
 }
@@ -172,7 +326,12 @@ impl Scorer for SubstrScorer {
         self.needle.as_str()
     }
 
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        mut positions: PositionsRef<&mut [u8]>,
+    ) -> bool {
         positions.clear();
         if self.words.is_empty() {
             *score = Score::MAX;
@@ -343,7 +502,7 @@ impl FuzzyScorer {
         needle: &[char],
         haystack: &[char],
         score: &mut Score,
-        positions: &mut Positions,
+        mut positions: PositionsRef<&mut [u8]>,
     ) -> bool {
         positions.clear();
         let n_len = needle.len();
@@ -429,7 +588,12 @@ impl Scorer for FuzzyScorer {
         &self.needle_str
     }
 
-    fn score_ref(&self, haystack: &[char], score: &mut Score, positions: &mut Positions) -> bool {
+    fn score_ref(
+        &self,
+        haystack: &[char],
+        score: &mut Score,
+        positions: PositionsRef<&mut [u8]>,
+    ) -> bool {
         Self::subseq(self.needle.as_ref(), haystack)
             && Self::score_impl(self.needle.as_ref(), haystack, score, positions)
     }
@@ -456,52 +620,110 @@ impl<'a> ScoreMatrix<'a> {
     }
 }
 
-/// Position set implemented as bit-set
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Positions {
-    chunks: smallvec::SmallVec<[u64; 3]>,
+// sizeof(u8) = 1 << SHIFT
+const POISTIONS_SHIFT: usize = 3;
+// given index return `byte_index` and `byte_mask`
+fn positions_offset(index: usize) -> (usize, u8) {
+    let byte_index = index >> POISTIONS_SHIFT; // index // 8
+    let byte_mask = 1u8 << (index - (byte_index << POISTIONS_SHIFT));
+    (byte_index, byte_mask)
 }
+// calculate buffer size give maximum index
+fn positions_data_size(size: usize) -> usize {
+    if size == 0 {
+        0
+    } else {
+        ((size - 1) >> POISTIONS_SHIFT) + 1
+    }
+}
+
+/// Position set implemented as bit-set
+#[derive(Clone, Hash)]
+pub struct PositionsRef<D> {
+    data: D,
+}
+
+pub type Positions = PositionsRef<smallvec::SmallVec<[u8; 16]>>;
 
 impl Positions {
     pub fn new(size: usize) -> Self {
-        let chunks_size = if size == 0 { 0 } else { ((size - 1) >> 6) + 1 };
         let mut chunks = smallvec::SmallVec::new();
-        chunks.resize(chunks_size, 0);
-        Self { chunks }
+        chunks.resize(positions_data_size(size), 0);
+        Self { data: chunks }
     }
+}
 
-    /// set specified index as selected
-    pub fn set(&mut self, index: usize) {
-        let (index, mask) = Self::offset(index);
-        self.chunks[index] |= mask;
+impl<D: AsRef<[u8]>> PositionsRef<D> {
+    pub fn new_data(data: D) -> Self {
+        Self { data }
     }
 
     /// check if index is present
     pub fn get(&self, index: usize) -> bool {
-        let (index, mask) = Self::offset(index);
-        if let Some(chunk) = self.chunks.get(index) {
+        let (index, mask) = positions_offset(index);
+        if let Some(chunk) = self.data.as_ref().get(index) {
             chunk & mask != 0
         } else {
             false
         }
     }
 
-    /// unset all
-    pub fn clear(&mut self) {
-        for chunk in self.chunks.iter_mut() {
-            *chunk = 0;
+    pub fn as_ref(&self) -> PositionsRef<&[u8]> {
+        PositionsRef {
+            data: self.data.as_ref(),
         }
-    }
-
-    /// given index return chunk_index and chunk_mask
-    fn offset(index: usize) -> (usize, u64) {
-        let chunk_index = index >> 6; // index / 64
-        let chunk_mask = 1u64 << (index - (chunk_index << 6));
-        (chunk_index, chunk_mask)
     }
 }
 
-impl std::fmt::Debug for Positions {
+impl<D: AsMut<[u8]>> PositionsRef<D> {
+    /// set specified index as selected
+    pub fn set(&mut self, index: usize) {
+        let (index, mask) = positions_offset(index);
+        self.data.as_mut()[index] |= mask;
+    }
+
+    pub fn as_mut(&mut self) -> PositionsRef<&mut [u8]> {
+        PositionsRef {
+            data: self.data.as_mut(),
+        }
+    }
+
+    /// unset all
+    pub fn clear(&mut self) {
+        for chunk in self.data.as_mut().iter_mut() {
+            *chunk = 0;
+        }
+    }
+}
+
+impl<DL, DR> std::cmp::PartialEq<PositionsRef<DR>> for PositionsRef<DL>
+where
+    DL: AsRef<[u8]>,
+    DR: AsRef<[u8]>,
+{
+    fn eq(&self, other: &PositionsRef<DR>) -> bool {
+        let data_left = self.data.as_ref();
+        let data_right = other.data.as_ref();
+        let (data_large, data_small) = if data_left.len() >= data_right.len() {
+            (data_left, data_right)
+        } else {
+            (data_right, data_left)
+        };
+        if &data_large[..data_small.len()] != data_small {
+            return false;
+        }
+        for byte in &data_large[data_small.len()..] {
+            if *byte != 0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<D: AsRef<[u8]>> std::cmp::Eq for PositionsRef<D> {}
+
+impl<D: AsRef<[u8]>> std::fmt::Debug for PositionsRef<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
             .entries(
@@ -513,7 +735,7 @@ impl std::fmt::Debug for Positions {
     }
 }
 
-impl Extend<usize> for Positions {
+impl<D: AsMut<[u8]>> Extend<usize> for PositionsRef<D> {
     fn extend<T: IntoIterator<Item = usize>>(&mut self, iter: T) {
         for item in iter {
             self.set(item)
@@ -522,7 +744,7 @@ impl Extend<usize> for Positions {
 }
 
 pub struct PositionsIter<'a> {
-    positions: &'a Positions,
+    data: &'a [u8],
     index: usize,
 }
 
@@ -530,23 +752,26 @@ impl<'a> Iterator for PositionsIter<'a> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (index, mask) = Positions::offset(self.index);
-        if index < self.positions.chunks.len() {
+        let (index, mask) = positions_offset(self.index);
+        if index < self.data.len() {
             self.index += 1;
-            Some(self.positions.chunks[index] & mask != 0)
+            Some(self.data[index] & mask != 0)
         } else {
             None
         }
     }
 }
 
-impl<'a> IntoIterator for &'a Positions {
+impl<'a, D> IntoIterator for &'a PositionsRef<D>
+where
+    D: AsRef<[u8]>,
+{
     type Item = bool;
     type IntoIter = PositionsIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         PositionsIter {
-            positions: self,
+            data: self.data.as_ref(),
             index: 0,
         }
     }
@@ -606,7 +831,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 15, 67, 300]
         );
-        assert_eq!(p.chunks.len(), 5);
+        assert_eq!(p.data.len(), 38);
         assert!(p.get(1));
         assert!(p.get(15));
         assert!(p.get(67));
@@ -636,6 +861,42 @@ mod tests {
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
         let score = scorer.score(&(), "one".to_string()).unwrap();
         assert_eq!(score.positions, ps([0]));
+    }
+
+    #[test]
+    fn test_scorer() {
+        let haystack: StringViewArray = [
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+            "ten",
+            "very long string to create buffer",
+        ]
+        .into_iter()
+        .map(Some)
+        .collect();
+
+        let scorer = SubstrScorer::new("o".chars().collect());
+        let result = scorer.score_arrow(&haystack, None, true);
+        assert_eq!(result.len(), 4);
+        assert_eq!(
+            result.iter().map(|s| s.id).collect::<Vec<_>>(),
+            &[0, 1, 3, 10]
+        );
+
+        let scorer = SubstrScorer::new("e".chars().collect());
+        let result = scorer.score_arrow(&haystack, None, true);
+        assert_eq!(result.len(), 8);
+        assert_eq!(
+            result.iter().map(|s| s.id).collect::<Vec<_>>(),
+            &[0, 4, 8, 7, 9, 2, 6, 10]
+        );
     }
 
     #[test]
