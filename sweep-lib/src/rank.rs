@@ -8,7 +8,7 @@ use std::{
     ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -33,56 +33,53 @@ pub fn substr_scorer() -> ScorerBuilder {
 }
 
 #[derive(Clone)]
-pub struct Ranker<H> {
-    sender: Sender<RankerCmd<H>>,
-    result: Arc<Mutex<Arc<RankedItems<H>>>>,
+pub struct Ranker {
+    sender: Sender<RankerCmd>,
+    result: Arc<Mutex<Arc<RankedItems>>>,
 }
 
-impl<H> Ranker<H>
-where
-    H: Haystack,
-{
-    pub fn new<N>(ctx: H::Context, notify: N) -> Self
+impl Ranker {
+    pub fn new<N>(notify: N) -> Self
     where
-        N: Fn(Arc<RankedItems<H>>) -> bool + Send + 'static,
+        N: Fn(Arc<RankedItems>) -> bool + Send + 'static,
     {
         let (sender, receiver) = unbounded();
-        let result: Arc<Mutex<Arc<RankedItems<H>>>> = Default::default();
+        let result: Arc<Mutex<Arc<RankedItems>>> = Default::default();
         std::thread::Builder::new()
             .name("sweep-ranker".to_string())
             .spawn({
                 let result = result.clone();
-                move || ranker_worker(ctx, receiver, result, notify)
+                move || ranker_worker(receiver, result, notify)
             })
             .expect("failed to start sweep-ranker thread");
         Self { sender, result }
     }
 
     /// Extend haystack with new entries
-    pub fn haystack_extend(&self, haystack: Vec<H>) {
+    pub fn haystack_extend<'a, H>(
+        &self,
+        ctx: &H::Context,
+        haystack: impl IntoIterator<Item = &'a H>,
+    ) where
+        H: Haystack,
+    {
+        let haystack = haystack
+            .into_iter()
+            .map(|haystack| {
+                let mut item = String::new();
+                haystack.haystack_scope(ctx, |ch| item.push(ch));
+                item
+            })
+            .collect();
         self.sender
             .send(RankerCmd::HaystackAppend(haystack))
             .expect("failed to send haystack");
-    }
-
-    /// Update haystack item by its index
-    pub fn haystack_update(&self, index: usize, item: H) {
-        self.sender
-            .send(RankerCmd::HaystackUpdate(index, item))
-            .expect("failed to update haystack");
     }
 
     /// Clear haystack
     pub fn haystack_clear(&self) {
         self.sender
             .send(RankerCmd::HaystackClear)
-            .expect("failed to clear haystack")
-    }
-
-    /// Reverse order of elements in the haystack
-    pub fn haystack_reverse(&self) {
-        self.sender
-            .send(RankerCmd::HaystackReverse)
             .expect("failed to clear haystack")
     }
 
@@ -110,7 +107,7 @@ where
     }
 
     /// Get last result
-    pub fn result(&self) -> Arc<RankedItems<H>> {
+    pub fn result(&self) -> Arc<RankedItems> {
         self.result.with(|result| result.clone())
     }
 
@@ -124,16 +121,11 @@ where
     }
 }
 
-fn ranker_worker<H, N>(
-    ctx: H::Context,
-    receiver: Receiver<RankerCmd<H>>,
-    result: Arc<Mutex<Arc<RankedItems<H>>>>,
-    notify: N,
-) where
-    H: Haystack,
-    N: Fn(Arc<RankedItems<H>>) -> bool,
+fn ranker_worker<N>(receiver: Receiver<RankerCmd>, result: Arc<Mutex<Arc<RankedItems>>>, notify: N)
+where
+    N: Fn(Arc<RankedItems>) -> bool,
 {
-    let haystack: Arc<RwLock<Vec<H>>> = Default::default();
+    let mut haystack: Vec<String> = Default::default();
     let mut needle = String::new();
     let mut keep_order = false;
 
@@ -182,29 +174,16 @@ fn ranker_worker<H, N>(
                 }
                 HaystackAppend(haystack_append) => {
                     action = match action {
-                        DoNothing => Offset(haystack.with(|hs| hs.len())),
+                        DoNothing => Offset(haystack.len()),
                         Offset(offset) => Offset(offset),
                         _ => All,
                     };
-                    haystack.with_mut(|hs| hs.extend(haystack_append));
-                }
-                HaystackUpdate(index, item) => haystack.with_mut(|hs| {
-                    if let Some(slot) = hs.get_mut(index) {
-                        *slot = item;
-                        action = match action {
-                            DoNothing => Notify,
-                            _ => action,
-                        };
-                    }
-                }),
-                HaystackReverse => {
-                    action = All;
-                    haystack.with_mut(|hs| hs.reverse());
+                    haystack.extend(haystack_append);
                 }
                 HaystackClear => {
                     action = All;
                     haystack_gen += 1;
-                    haystack.with_mut(|hs| hs.clear());
+                    haystack.clear();
                 }
                 KeepOrder(toggle) => {
                     action = All;
@@ -234,8 +213,8 @@ fn ranker_worker<H, N>(
                 let mut matches = pool.alloc();
                 matches.clear();
                 // score new matches
-                matches.extend((offset..haystack.with(|hs| hs.len())).rev().map(Match::new));
-                haystack.with(|haystack| rank(&ctx, scorer.clone(), haystack, &mut matches, false));
+                matches.extend((offset..haystack.len()).rev().map(Match::new));
+                rank(&(), scorer.clone(), &haystack, &mut matches, false);
                 // copy previous matches
                 matches.extend(matches_prev.iter().rev().cloned());
                 matches.reverse();
@@ -250,29 +229,25 @@ fn ranker_worker<H, N>(
                 let mut matches = pool.alloc();
                 matches.clear();
                 matches.extend(matches_prev.iter().cloned());
-                haystack.with(|haystack| {
-                    rank(&ctx, scorer.clone(), haystack, &mut matches, !keep_order)
-                });
+                rank(&(), scorer.clone(), &haystack, &mut matches, !keep_order);
                 pool.promote(matches)
             }
             All => {
                 // score all haystack elements
                 let mut matches = pool.alloc();
                 matches.clear();
-                matches.extend((0..haystack.with(|hs| hs.len())).map(Match::new));
-                haystack.with(|haystack| {
-                    rank(&ctx, scorer.clone(), haystack, &mut matches, !keep_order)
-                });
+                matches.extend((0..haystack.len()).map(Match::new));
+                rank(&(), scorer.clone(), &haystack, &mut matches, !keep_order);
                 pool.promote(matches)
             }
         };
         let rank_elapsed = rank_instant.elapsed();
 
         // update result
+        // TODO: ArcSwap?
         rank_gen += 1;
         result.with_mut(|result| {
             *result = Arc::new(RankedItems {
-                haystack: haystack.clone(),
                 haystack_gen,
                 matches: matches_prev.clone(),
                 scorer: scorer.clone(),
@@ -290,9 +265,7 @@ fn ranker_worker<H, N>(
     }
 }
 
-#[derive(Clone)]
-pub struct RankedItems<H> {
-    haystack: Arc<RwLock<Vec<H>>>,
+pub struct RankedItems {
     haystack_gen: usize,
     matches: Arc<Vec<Match>>,
     scorer: Arc<dyn Scorer>,
@@ -301,8 +274,7 @@ pub struct RankedItems<H> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RankedItem<H> {
-    pub haystack: H,
+pub struct RankedItem {
     pub score: Score,
     pub positions: Positions,
     pub id: RankedItemId,
@@ -310,11 +282,11 @@ pub struct RankedItem<H> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RankedItemId {
-    haystack_index: usize,
+    pub haystack_index: usize,
     haystack_gen: usize,
 }
 
-impl<H> RankedItems<H> {
+impl RankedItems {
     /// Number of matched items
     pub fn len(&self) -> usize {
         self.matches.len()
@@ -322,11 +294,6 @@ impl<H> RankedItems<H> {
 
     pub fn is_empty(&self) -> bool {
         self.matches.is_empty()
-    }
-
-    /// Number of all items
-    pub fn haystack_len(&self) -> usize {
-        self.haystack.with(|hs| hs.len())
     }
 
     /// Scorer used to score items
@@ -345,15 +312,9 @@ impl<H> RankedItems<H> {
     }
 
     /// Get score result by index
-    pub fn get(&self, index: usize) -> Option<RankedItem<H>>
-    where
-        H: Clone,
-    {
+    pub fn get(&self, index: usize) -> Option<RankedItem> {
         let matched = self.matches.get(index)?.clone();
         Some(RankedItem {
-            haystack: self
-                .haystack
-                .with(|hs| hs.get(matched.haystack_index).cloned())?,
             score: matched.score.unwrap_or(Score::MIN),
             positions: matched.positions,
             id: RankedItemId {
@@ -379,18 +340,14 @@ impl<H> RankedItems<H> {
     }
 
     /// Iterator over all matched items
-    pub fn iter(&self) -> impl Iterator<Item = RankedItem<H>> + '_
-    where
-        H: Clone,
-    {
+    pub fn iter(&self) -> impl Iterator<Item = RankedItem> + '_ {
         (0..self.matches.len()).flat_map(|index| self.get(index))
     }
 }
 
-impl<H> Default for RankedItems<H> {
+impl Default for RankedItems {
     fn default() -> Self {
         Self {
-            haystack: Default::default(),
             haystack_gen: Default::default(),
             matches: Default::default(),
             scorer: fuzzy_scorer()(""),
@@ -400,12 +357,11 @@ impl<H> Default for RankedItems<H> {
     }
 }
 
-impl<H> std::fmt::Debug for RankedItems<H> {
+impl std::fmt::Debug for RankedItems {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RankerResult")
             .field("len", &self.len())
             .field("haystack_gen", &self.haystack_gen)
-            .field("haystack_len", &self.haystack_len())
             .field("scorer", &self.scorer)
             .field("duration", &self.duration)
             .field("rank_gen", &self.rank_gen)
@@ -413,37 +369,35 @@ impl<H> std::fmt::Debug for RankedItems<H> {
     }
 }
 
-impl<H> PartialEq for RankedItem<H> {
+impl PartialEq for RankedItem {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl<H> Eq for RankedItem<H> {}
+impl Eq for RankedItem {}
 
-impl<I> Hash for RankedItem<I> {
+impl Hash for RankedItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
 
-impl<H> PartialOrd for RankedItem<H> {
+impl PartialOrd for RankedItem {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.id.cmp(&other.id))
     }
 }
 
-impl<H> Ord for RankedItem<H> {
+impl Ord for RankedItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.id.cmp(&other.id)
     }
 }
 
-enum RankerCmd<H> {
+enum RankerCmd {
     HaystackClear,
-    HaystackReverse,
-    HaystackAppend(Vec<H>),
-    HaystackUpdate(usize, H),
+    HaystackAppend(Vec<String>),
     Needle(String),
     Scorer(ScorerBuilder),
     KeepOrder(Option<bool>),
@@ -581,13 +535,12 @@ mod tests {
     fn ranker_test() -> Result<(), Error> {
         let timeout = Duration::from_millis(100);
         let (send, recv) = unbounded();
-        let ranker = Ranker::new((), move |result| send.send(result).is_ok());
+        let ranker = Ranker::new(move |result| send.send(result).is_ok());
 
-        ranker.haystack_extend(vec!["one", "two", "tree"]);
+        ranker.haystack_extend(&(), &["one", "two", "tree"]);
         let result = recv.recv_timeout(timeout)?;
         println!("{:?}", Vec::from_iter(result.iter()));
         assert_eq!(result.len(), 3);
-        assert_eq!(result.haystack_len(), 3);
 
         ranker.needle_set("o".to_string());
         let result = recv.recv_timeout(timeout)?;
@@ -599,22 +552,21 @@ mod tests {
         println!("{:?}", Vec::from_iter(result.iter()));
         assert_eq!(result.len(), 1);
 
-        ranker.haystack_extend(vec!["ponee", "oe"]);
+        ranker.haystack_extend(&(), &["ponee", "oe"]);
         let result = recv.recv_timeout(timeout)?;
         println!("{:?}", Vec::from_iter(result.iter()));
         assert_eq!(result.len(), 3);
-        assert_eq!(result.get(0).map(|r| r.haystack), Some("oe"));
+        assert_eq!(result.get(0).map(|r| r.id.haystack_index), Some(4));
 
         ranker.keep_order(Some(true));
         let result = recv.recv_timeout(timeout)?;
         println!("{:?}", Vec::from_iter(result.iter()));
         assert_eq!(result.len(), 3);
-        assert_eq!(result.get(0).map(|r| r.haystack), Some("one"));
+        assert_eq!(result.get(0).map(|r| r.id.haystack_index), Some(0));
 
         ranker.haystack_clear();
         let result = recv.recv_timeout(timeout)?;
         assert_eq!(result.len(), 0);
-        assert_eq!(result.haystack_len(), 0);
 
         Ok(())
     }

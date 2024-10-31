@@ -140,7 +140,6 @@ enum SweepRequest<H> {
         item: H,
     },
     HaystackClear,
-    HaystackReverse,
     RankerKeepOrder(Option<bool>),
     StatePush,
     StatePop,
@@ -253,11 +252,6 @@ where
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::Marked(send));
         Ok(recv.await?)
-    }
-
-    /// Reverse haystack
-    pub fn items_reverse(&self) {
-        self.send_request(SweepRequest::HaystackReverse)
     }
 
     /// Set needle to the specified string
@@ -861,7 +855,9 @@ struct SweepState<H: Haystack> {
     // marked items (multi-select)
     marked: Arc<RwLock<MarkedItems<H>>>,
     // ranker
-    ranker: Ranker<H>,
+    ranker: Ranker,
+    // haystack
+    haystack: Vec<H>,
     // haystack context
     haystack_context: H::Context,
     // cached large preview of the current item
@@ -885,7 +881,7 @@ where
         waker: TerminalWaker,
         haystack_context: H::Context,
     ) -> Self {
-        let ranker = Ranker::new(haystack_context.clone(), move |_| waker.wake().is_ok());
+        let ranker = Ranker::new(move |_| waker.wake().is_ok());
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
         SweepState::new(
@@ -901,7 +897,7 @@ where
     fn new(
         prompt: String,
         prompt_icon: Option<Glyph>,
-        ranker: Ranker<H>,
+        ranker: Ranker,
         theme: Theme,
         scorers: VecDeque<ScorerBuilder>,
         haystack_context: H::Context,
@@ -921,7 +917,7 @@ where
         let input = Input::new(theme.clone());
         let list = List::new(
             SweepItems::new(
-                Arc::new(RankedItems::<H>::default()),
+                Arc::new(RankedItems::default()),
                 Default::default(),
                 haystack_context.clone(),
             ),
@@ -942,31 +938,39 @@ where
             list,
             marked: Default::default(),
             ranker,
+            haystack: Vec::new(),
             haystack_context,
             preview_large: None,
         }
     }
 
+    fn current(&self) -> Option<(RankedItem, &H)> {
+        self.list.current().and_then(|item| {
+            let haystack = self.haystack.get(item.id.haystack_index)?;
+            Some((item, haystack))
+        })
+    }
+
     // get preview of the currently pointed haystack item
     fn preview(&self) -> Option<H::Preview> {
-        let item = self.list.current()?;
-        item.item.haystack.preview(
+        let (ranked, haystack) = self.current()?;
+        haystack.preview(
             &self.haystack_context,
-            item.item.positions.as_ref(),
+            ranked.positions.as_ref(),
             &self.theme,
         )
     }
 
     // get large preview for currently pointed haystack item
     fn preview_large(&mut self) -> Option<SweepPreview<H::PreviewLarge>> {
-        let item = self.list.current()?;
-        if !matches!(&self.preview_large, Some(preview) if preview.id == item.item.id) {
-            let preview = item.item.haystack.preview_large(
+        let (ranked, haystack) = self.current()?;
+        if !matches!(&self.preview_large, Some(preview) if preview.id == ranked.id) {
+            let preview = haystack.preview_large(
                 &self.haystack_context,
-                item.item.positions.as_ref(),
+                ranked.positions.as_ref(),
                 &self.theme,
             )?;
-            self.preview_large = Some(SweepPreview::new(item.item.id, self.theme.clone(), preview));
+            self.preview_large = Some(SweepPreview::new(ranked.id, self.theme.clone(), preview));
         }
         self.preview_large.clone()
     }
@@ -1015,7 +1019,7 @@ where
     }
 
     /// Retrieve latest ranker result and update list view
-    fn ranker_refresh(&mut self) -> Arc<RankedItems<H>> {
+    fn ranker_refresh(&mut self) -> Arc<RankedItems> {
         // check if list view needs to be updated
         let ranker_result = self.ranker.result();
         if self.list.items().generation() != ranker_result.generation() {
@@ -1068,15 +1072,16 @@ where
                     let marked = self.marked.with_mut(|marked| marked.take()).collect();
                     return Event(SweepEvent::Select(marked));
                 }
-                if let Some(current) = self.list.current() {
-                    return Event(SweepEvent::Select(vec![current.item.haystack]));
+                if let Some((_, haystack)) = self.current() {
+                    return Event(SweepEvent::Select(vec![haystack.clone()]));
                 } else {
                     return Event(SweepEvent::Select(Vec::new()));
                 }
             }
             SweepAction::Mark => {
-                if let Some(current) = self.list.current() {
-                    self.marked.with_mut(|marked| marked.toggle(current.item));
+                if let Some((ranked, haystack)) = self.current() {
+                    self.marked
+                        .with_mut(|marked| marked.toggle(ranked, haystack.clone()));
                     self.list.apply(&ListAction::ItemNext);
                 }
             }
@@ -1084,8 +1089,11 @@ where
                 self.marked.with_mut(|marked| {
                     if marked.is_empty() {
                         // mark all
-                        for item in self.list.items().ranked_items.iter() {
-                            marked.toggle(item)
+                        for ranked in self.list.items().ranked_items.iter() {
+                            let Some(haystack) = self.haystack.get(ranked.id.haystack_index) else {
+                                continue;
+                            };
+                            marked.toggle(ranked, haystack.clone())
                         }
                     } else {
                         // un-mark all
@@ -1172,9 +1180,9 @@ where
         let mut entries: Vec<_> = descriptions.into_values().collect();
         entries.sort_by_key(|desc| self.key_actions.get(&desc.name));
 
-        let ranker = Ranker::new((), move |_| term_waker.wake().is_ok());
+        let ranker = Ranker::new(move |_| term_waker.wake().is_ok());
         ranker.keep_order(Some(true));
-        ranker.haystack_extend(entries);
+        ranker.haystack_extend(&(), &entries);
         SweepState::new(
             "BINDINGS".to_owned(),
             Some(KEYBOARD_ICON.clone()),
@@ -1203,7 +1211,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         }
         stats
             .put_fmt(
-                &format_args!("{}/{} ", ranker_result.len(), ranker_result.haystack_len(),),
+                &format_args!("{}/{} ", ranker_result.len(), self.haystack.len(),),
                 None,
             )
             .put_fmt(&format_args!("{:.0?}", ranker_result.duration()), None)
@@ -1241,7 +1249,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
 
         // list
         let mut body = Flex::row();
-        body.push_flex_child(1.0, &self.list);
+        body.push_flex_child(1.0, self.list.view(&self.haystack));
         // preview
         if self.theme.show_preview {
             if let Some(preview) = self.preview() {
@@ -1326,7 +1334,8 @@ where
     }))?;
 
     // sweep state
-    let mut state = SweepState::new_from_options(&options, term.waker(), haystack_context.clone());
+    let mut state =
+        SweepState::<H>::new_from_options(&options, term.waker(), haystack_context.clone());
     let mut state_stack: Vec<SweepState<H>> = Vec::new();
     let mut state_help: Option<SweepState<ActionDesc>> = None;
 
@@ -1402,8 +1411,7 @@ where
                             state.prompt_icon = new_icon;
                         }
                         Current(resolve) => {
-                            let current = state.list.current().map(|item| item.item.haystack);
-                            _ = resolve.send(current);
+                            _ = resolve.send(state.current().map(|(_, haystack)| haystack.clone()));
                         }
                         Marked(resolve) => {
                             let items = state.marked.with_mut(|marked| marked.take()).collect();
@@ -1428,10 +1436,19 @@ where
                         }
                         FooterSet(view) => state.footer = view,
                         ScorerSet(scorer) => state.ranker.scorer_set(scorer),
-                        HaystackExtend(items) => state.ranker.haystack_extend(items),
-                        HaystackUpdate { index, item } => state.ranker.haystack_update(index, item),
-                        HaystackClear => state.ranker.haystack_clear(),
-                        HaystackReverse => state.ranker.haystack_reverse(),
+                        HaystackExtend(items) => {
+                            state.ranker.haystack_extend(&haystack_context, &items);
+                            state.haystack.extend(items);
+                        }
+                        HaystackUpdate { index, item } => {
+                            if let Some(item_ref) = state.haystack.get_mut(index) {
+                                *item_ref = item;
+                            }
+                        }
+                        HaystackClear => {
+                            state.ranker.haystack_clear();
+                            state.haystack.clear();
+                        }
                         RankerKeepOrder(toggle) => state.ranker.keep_order(toggle),
                         StatePush => {
                             let state_old = std::mem::replace(
@@ -1607,14 +1624,14 @@ where
 }
 
 struct SweepItems<H: Haystack> {
-    ranked_items: Arc<RankedItems<H>>,
+    ranked_items: Arc<RankedItems>,
     marked_items: Arc<RwLock<MarkedItems<H>>>,
     haystack_context: H::Context,
 }
 
 impl<H: Haystack> SweepItems<H> {
     fn new(
-        ranked_items: Arc<RankedItems<H>>,
+        ranked_items: Arc<RankedItems>,
         marked_items: Arc<RwLock<MarkedItems<H>>>,
         haystack_context: H::Context,
     ) -> Self {
@@ -1631,28 +1648,41 @@ impl<H: Haystack> SweepItems<H> {
 }
 
 impl<H: Haystack> ListItems for SweepItems<H> {
-    type Item = SweepItem<H>;
+    type Item = RankedItem;
+    type ItemView = SweepItem<H>;
+    type Context = [H];
 
     fn len(&self) -> usize {
         self.ranked_items.len()
     }
 
-    fn get(&self, index: usize, theme: Theme) -> Option<Self::Item> {
-        self.ranked_items.get(index).map(|item| SweepItem {
-            item: item.clone(),
+    fn get(&self, index: usize) -> Option<Self::Item> {
+        self.ranked_items.get(index)
+    }
+
+    fn get_view(
+        &self,
+        item: Self::Item,
+        theme: Theme,
+        ctx: &Self::Context,
+    ) -> Option<Self::ItemView> {
+        let haystack = ctx.get(item.id.haystack_index)?.clone();
+        Some(SweepItem {
+            haystack,
+            item,
             theme,
             haystack_context: self.haystack_context.clone(),
         })
     }
 
     fn is_marked(&self, item: &Self::Item) -> bool {
-        self.marked_items
-            .with(|marked| marked.contains_id(item.item.id))
+        self.marked_items.with(|marked| marked.contains_id(item.id))
     }
 }
 
 struct SweepItem<H: Haystack> {
-    item: RankedItem<H>,
+    haystack: H,
+    item: RankedItem,
     theme: Theme,
     haystack_context: H::Context,
 }
@@ -1661,7 +1691,7 @@ impl<H: Haystack> IntoView for SweepItem<H> {
     type View = H::View;
 
     fn into_view(self) -> Self::View {
-        self.item.haystack.view(
+        self.haystack.view(
             &self.haystack_context,
             self.item.positions.as_ref(),
             &self.theme,
@@ -1699,8 +1729,8 @@ impl<H> MarkedItems<H> {
         self.ids.is_empty()
     }
 
-    fn toggle(&mut self, item: RankedItem<H>) {
-        let id = item.id;
+    fn toggle(&mut self, ranked: RankedItem, haystack: H) {
+        let id = ranked.id;
         match self.ids.get(&id) {
             Some(index) => {
                 self.items.remove(index);
@@ -1708,7 +1738,7 @@ impl<H> MarkedItems<H> {
             }
             None => {
                 self.ids.insert(id, self.index);
-                self.items.insert(self.index, item.haystack);
+                self.items.insert(self.index, haystack);
                 self.index += 1;
             }
         }

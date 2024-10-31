@@ -720,21 +720,26 @@ impl ListAction {
 }
 
 pub trait ListItems {
-    type Item: IntoView;
+    type Item;
+    type ItemView: IntoView;
+    type Context: Send + Sync + ?Sized;
 
     /// Number of items in the list
     fn len(&self) -> usize;
 
     /// Get entry in the list by it's index
-    fn get(&self, index: usize, theme: Theme) -> Option<Self::Item>;
+    fn get(&self, index: usize) -> Option<Self::Item>;
+
+    /// Get view for specified item
+    fn get_view(
+        &self,
+        item: Self::Item,
+        theme: Theme,
+        ctx: &Self::Context,
+    ) -> Option<Self::ItemView>;
 
     /// Whether item is marked (multi-select)
     fn is_marked(&self, item: &Self::Item) -> bool;
-
-    /// Check if list is empty
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 pub struct List<T> {
@@ -777,7 +782,14 @@ impl<T: ListItems> List<T> {
 
     /// Currently pointed item
     pub fn current(&self) -> Option<T::Item> {
-        self.items.get(self.cursor, self.theme.clone())
+        self.items.get(self.cursor)
+    }
+
+    pub fn view<'a, 'b: 'a>(&'a self, ctx: &'b T::Context) -> ListView<'a, T> {
+        ListView {
+            list_ctx: ctx,
+            list: self,
+        }
     }
 
     /// Current cursor position
@@ -826,27 +838,6 @@ impl<T: ListItems> List<T> {
         }
     }
 
-    /// Handle terminal event
-    pub fn handle(&mut self, event: &TerminalEvent) {
-        if let TerminalEvent::Key(Key { name, mode }) = event {
-            match *mode {
-                KeyMod::EMPTY => match name {
-                    KeyName::Down => self.apply(&ListAction::ItemNext),
-                    KeyName::Up => self.apply(&ListAction::ItemPrev),
-                    KeyName::PageDown => self.apply(&ListAction::PageNext),
-                    KeyName::PageUp => self.apply(&ListAction::PagePrev),
-                    _ => {}
-                },
-                KeyMod::CTRL => match name {
-                    KeyName::Char('n') => self.apply(&ListAction::ItemNext),
-                    KeyName::Char('p') => self.apply(&ListAction::ItemPrev),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-
     /// Get scroll bar widget
     pub fn scroll_bar(&self) -> impl View {
         let state = self.view_state.clone();
@@ -874,16 +865,21 @@ impl<T: ListItems> List<T> {
     }
 }
 
+pub struct ListView<'a, T: ListItems> {
+    list_ctx: &'a T::Context,
+    list: &'a List<T>,
+}
+
 struct ListItemView {
     view: BoxView<'static>,
     marked: bool,
     pointed: bool,
 }
 
-impl<'a, T> View for &'a List<T>
+impl<'a, T> View for ListView<'a, T>
 where
     T: ListItems + Send + Sync,
-    T::Item: 'static,
+    T::ItemView: 'static,
 {
     fn render(
         &self,
@@ -897,7 +893,7 @@ where
         let mut surf = layout.apply_to(surf);
 
         // render items and scroll-bar (last layout in the list)
-        surf.erase(self.theme.list_default);
+        surf.erase(self.list.theme.list_default);
         for item_layout in layout.children() {
             let row = item_layout.position().row;
             let height = item_layout.size().height;
@@ -908,11 +904,11 @@ where
             // render cursor
             if item_data.pointed {
                 let mut surf = surf.view_mut(row..row + height, ..);
-                surf.erase(self.theme.list_selected);
-                surf.draw_view(ctx, None, &self.theme.list_selected_indicator)?;
+                surf.erase(self.list.theme.list_selected);
+                surf.draw_view(ctx, None, &self.list.theme.list_selected_indicator)?;
             } else if item_data.marked {
                 let mut surf = surf.view_mut(row..row + height, ..);
-                surf.draw_view(ctx, None, &self.theme.list_marked_indicator)?;
+                surf.draw_view(ctx, None, &self.list.theme.list_marked_indicator)?;
             }
 
             item_data
@@ -931,7 +927,8 @@ where
     ) -> Result<(), Error> {
         // indicator (tag on the left side of the highlighted item)
         let indicator_layout =
-            self.theme
+            self.list
+                .theme
                 .list_selected_indicator
                 .layout_new(ctx, ct, layout.store_mut())?;
         let indicator_width = indicator_layout.size().width;
@@ -944,13 +941,14 @@ where
 
         // adjust offset so item pointed by cursor will be visible
         let offset = self
+            .list
             .view_state
             .with(|st| st.offset)
-            .min(self.items.len().saturating_sub(height)); // offset is at least hight from the bottom
-        let offset = if offset > self.cursor {
-            self.cursor
-        } else if height > 0 && offset + height - 1 < self.cursor {
-            self.cursor - height + 1
+            .min(self.list.items.len().saturating_sub(height)); // offset is at least hight from the bottom
+        let offset = if offset > self.list.cursor {
+            self.list.cursor
+        } else if height > 0 && offset + height - 1 < self.list.cursor {
+            self.list.cursor - height + 1
         } else {
             offset
         };
@@ -965,15 +963,21 @@ where
         let mut children_count = 0;
         // looping over items starting from offset
         for index in offset..offset + 2 * height {
-            let item = match self.items().get(index, self.theme.clone()) {
-                None => break,
-                Some(item) => item,
+            let Some(item) = self.list.items.get(index) else {
+                break;
+            };
+            let marked = self.list.items.is_marked(&item);
+            let Some(item_view) =
+                self.list
+                    .items
+                    .get_view(item, self.list.theme.clone(), self.list_ctx)
+            else {
+                break;
             };
 
             // create view and calculate layout
-            let pointed = index == self.cursor;
-            let marked = self.items.is_marked(&item);
-            let view = item.into_view().boxed();
+            let pointed = index == self.list.cursor;
+            let view = item_view.into_view().boxed();
             let mut child_layout = layout.push_default();
             children_count += 1;
             view.layout(ctx, child_ct, child_layout.view_mut())?;
@@ -996,13 +1000,13 @@ where
 
             if children_height > height {
                 // cursor is rendered, all height is taken
-                if index > self.cursor {
+                if index > self.list.cursor {
                     break;
                 }
                 // cursor is not rendered, remove children from the top until
                 // we have some space available
                 while children_height > height {
-                    if index == self.cursor && children_count == 1 {
+                    if index == self.list.cursor && children_count == 1 {
                         // do not remove the item if it is pointed by cursor
                         break;
                     }
@@ -1019,9 +1023,9 @@ where
         }
 
         // update view state
-        self.view_state.with_mut(|st| {
+        self.list.view_state.with_mut(|st| {
             *st = ListState {
-                cursor: self.cursor,
+                cursor: self.list.cursor,
                 offset: offset + children_removed,
                 visible_count: children_count,
             }
@@ -1481,14 +1485,20 @@ mod tests {
         T: Display + Clone,
     {
         type Item = String;
+        type ItemView = String;
+        type Context = ();
 
         fn len(&self) -> usize {
             self.0.len()
         }
 
-        fn get(&self, index: usize, _theme: Theme) -> Option<Self::Item> {
+        fn get(&self, index: usize) -> Option<Self::Item> {
             let value = self.0.get(index)?;
             Some(value.to_string())
+        }
+
+        fn get_view(&self, item: Self::Item, _theme: Theme, _ctx: &()) -> Option<Self::ItemView> {
+            Some(item)
         }
 
         fn is_marked(&self, _item: &Self::Item) -> bool {
@@ -1504,18 +1514,18 @@ mod tests {
         let items = VecItems((0..60).collect());
         let mut list = List::new(items, theme.clone());
 
-        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
         (0..20).for_each(|_| list.apply(&ListAction::ItemNext));
-        print!("{:?}", list.into_view().debug(Size::new(8, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 14);
 
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 17);
 
         Ok(())
@@ -1535,15 +1545,15 @@ mod tests {
         ]);
         let mut list = List::new(items, theme);
 
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
         (0..2).for_each(|_| list.apply(&ListAction::ItemNext));
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
         println!("tall multi-line entry");
@@ -1553,15 +1563,15 @@ mod tests {
             "last",
         ]);
         list.items_set(items);
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(5, 50)));
+        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
         println!("very long line");
@@ -1575,23 +1585,23 @@ mod tests {
             ]
         );
         list.items_set(items);
-        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 2);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 3);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.into_view().debug(Size::new(4, 20)));
+        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 4);
 
         Ok(())

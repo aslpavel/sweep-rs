@@ -169,20 +169,21 @@ async fn main() -> Result<(), Error> {
                 }
                 let input = sweep.query_get().await?;
                 std::mem::drop(sweep); // cleanup terminal
-                let mut result = if args.json {
-                    serde_json::to_string(&items)?
+                let result = if args.json {
+                    let mut result = serde_json::to_string(&items)?;
+                    result.push('\n');
+                    result
                 } else {
                     use std::fmt::Write as _;
                     let mut result = String::new();
                     for item in &items {
-                        write!(&mut result, "{}", item)?;
+                        write!(&mut result, "{}\n", item)?;
                     }
                     if result.is_empty() {
-                        write!(&mut result, "{}", input)?;
+                        write!(&mut result, "{}\n", input)?;
                     }
                     result
                 };
-                result.push('\n');
                 output.write_all(result.as_bytes()).await?;
                 break;
             }
