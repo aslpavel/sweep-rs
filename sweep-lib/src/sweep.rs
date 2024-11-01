@@ -1183,14 +1183,16 @@ where
         let ranker = Ranker::new(move |_| term_waker.wake().is_ok());
         ranker.keep_order(Some(true));
         ranker.haystack_extend(&(), &entries);
-        SweepState::new(
+        let mut help_state = SweepState::new(
             "BINDINGS".to_owned(),
             Some(KEYBOARD_ICON.clone()),
             ranker,
             self.theme.modify(|inner| inner.show_preview = true),
             self.scorers.clone(),
             (),
-        )
+        );
+        help_state.haystack = entries;
+        help_state
     }
 }
 
