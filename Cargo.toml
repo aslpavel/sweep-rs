@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 edition = "2021"
-version = "0.20.4"
+version = "0.21.0"
 repository = "https://github.com/aslpavel/sweep-rs"
 
 [workspace.dependencies]
@@ -21,7 +21,7 @@ tracing = { version = "^0.1" }
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
 surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git" }
-# surf_n_term = { version = "^0.17.5" } # wait for rustix to publish version with select 
+# surf_n_term = { version = "^0.17.5" } # wait for rustix to publish version with select
 # surf_n_term = { path = "../surf-n-term" }
 
 sweep = { path = "sweep-lib" }

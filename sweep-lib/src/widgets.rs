@@ -580,7 +580,7 @@ impl Input {
     }
 }
 
-impl View for &Input {
+impl<'a> View for &'a Input {
     fn render(
         &self,
         ctx: &ViewContext,
@@ -722,7 +722,7 @@ impl ListAction {
 pub trait ListItems {
     type Item;
     type ItemView: IntoView;
-    type Context: Send + Sync + ?Sized;
+    type Context<'a>: Send + Sync;
 
     /// Number of items in the list
     fn len(&self) -> usize;
@@ -735,7 +735,7 @@ pub trait ListItems {
         &self,
         item: Self::Item,
         theme: Theme,
-        ctx: &Self::Context,
+        ctx: &Self::Context<'_>,
     ) -> Option<Self::ItemView>;
 
     /// Whether item is marked (multi-select)
@@ -785,7 +785,7 @@ impl<T: ListItems> List<T> {
         self.items.get(self.cursor)
     }
 
-    pub fn view<'a, 'b: 'a>(&'a self, ctx: &'b T::Context) -> ListView<'a, T> {
+    pub fn view<'a>(&'a self, ctx: T::Context<'a>) -> ListView<'a, T> {
         ListView {
             list_ctx: ctx,
             list: self,
@@ -866,7 +866,7 @@ impl<T: ListItems> List<T> {
 }
 
 pub struct ListView<'a, T: ListItems> {
-    list_ctx: &'a T::Context,
+    list_ctx: T::Context<'a>,
     list: &'a List<T>,
 }
 
@@ -876,7 +876,7 @@ struct ListItemView {
     pointed: bool,
 }
 
-impl<T> View for ListView<'_, T>
+impl<'a, T> View for ListView<'a, T>
 where
     T: ListItems + Send + Sync,
     T::ItemView: 'static,
@@ -970,7 +970,7 @@ where
             let Some(item_view) =
                 self.list
                     .items
-                    .get_view(item, self.list.theme.clone(), self.list_ctx)
+                    .get_view(item, self.list.theme.clone(), &self.list_ctx)
             else {
                 break;
             };
@@ -1179,7 +1179,7 @@ impl Process {
     }
 }
 
-impl IntoView for &Process {
+impl<'a> IntoView for &'a Process {
     type View = ProcessOutput;
 
     fn into_view(self) -> Self::View {
@@ -1486,7 +1486,7 @@ mod tests {
     {
         type Item = String;
         type ItemView = String;
-        type Context = ();
+        type Context<'a> = ();
 
         fn len(&self) -> usize {
             self.0.len()
@@ -1514,18 +1514,18 @@ mod tests {
         let items = VecItems((0..60).collect());
         let mut list = List::new(items, theme.clone());
 
-        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 0);
 
         (0..20).for_each(|_| list.apply(&ListAction::ItemNext));
-        print!("{:?}", list.view(&()).debug(Size::new(8, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(8, 50)));
         assert_eq!(list.offset(), 14);
 
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 17);
 
         Ok(())
@@ -1545,15 +1545,15 @@ mod tests {
         ]);
         let mut list = List::new(items, theme);
 
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
         (0..2).for_each(|_| list.apply(&ListAction::ItemNext));
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
         println!("tall multi-line entry");
@@ -1563,15 +1563,15 @@ mod tests {
             "last",
         ]);
         list.items_set(items);
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 1);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(5, 50)));
+        print!("{:?}", list.view(()).debug(Size::new(5, 50)));
         assert_eq!(list.offset(), 2);
 
         println!("very long line");
@@ -1585,23 +1585,23 @@ mod tests {
             ]
         );
         list.items_set(items);
-        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
+        print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
+        print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
+        print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 2);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
+        print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 3);
 
         list.apply(&ListAction::ItemNext);
-        print!("{:?}", list.view(&()).debug(Size::new(4, 20)));
+        print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 4);
 
         Ok(())

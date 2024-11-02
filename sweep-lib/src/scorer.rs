@@ -1,6 +1,12 @@
-use crate::{common::string_view_filter, Haystack};
+use crate::{
+    common::{byte_view_concat, byte_view_filter, primitive_concat},
+    Haystack,
+};
 use arrow_array::{
-    builder::{BinaryViewBuilder, Float32Builder, StringViewBuilder, UInt32Builder},
+    builder::{
+        BinaryViewBuilder, Float32Builder, GenericByteViewBuilder, PrimitiveBuilder,
+        StringViewBuilder, UInt32Builder,
+    },
     Array, BinaryViewArray, Float32Array, StringViewArray, UInt32Array,
 };
 use std::{cell::RefCell, cmp::Ordering, fmt, sync::Arc};
@@ -30,7 +36,7 @@ pub trait Scorer: Send + Sync + fmt::Debug {
     ) -> bool;
 
     /// Generic implementation over anything that implements `Haystack` trait.
-    fn score<H>(&self, ctx: &H::Context, haystack: H) -> Option<ScoreResult<H>>
+    fn score_haystack<H>(&self, ctx: &H::Context, haystack: H) -> Option<ScoreResult<H>>
     where
         H: Haystack,
         Self: Sized,
@@ -50,39 +56,40 @@ pub trait Scorer: Send + Sync + fmt::Debug {
         })
     }
 
-    /// Run scorer on an arrow of strings and ids (position in the haystack)
-    fn score_arrow(
+    /// Run scorer on an arrow array of strings
+    fn score(
         &self,
-        target: &StringViewArray,
-        haystack_id: Option<&[u32]>,
+        haystack: &StringViewArray,
+        haystack_offset: Result<u32, &[u32]>,
         rank: bool,
     ) -> ScoreArray {
-        if let Some(haystack_id) = haystack_id {
-            assert_eq!(target.len(), haystack_id.len());
+        if let Err(haystack_id) = haystack_offset {
+            assert_eq!(haystack.len(), haystack_id.len());
         }
 
-        let mut target_buf: Vec<char> = Vec::new();
+        let mut haystack_buf: Vec<char> = Vec::new();
         let mut positions_buf: Vec<u8> = Vec::new();
 
-        let mut target_builder = StringViewBuilder::new();
-        let mut id_builder = UInt32Builder::new();
+        let mut haystack_builder = StringViewBuilder::new();
+        let mut hyastack_index_builder = UInt32Builder::new();
         let mut score_builder = Float32Builder::new();
         let mut positions_builder = BinaryViewBuilder::new();
 
-        string_view_filter(target, &mut target_builder, |index, target| {
-            target_buf.clear();
-            target_buf.extend(target.chars().flat_map(char::to_lowercase));
+        byte_view_filter(haystack, &mut haystack_builder, |index, target| {
+            haystack_buf.clear();
+            haystack_buf.extend(target.chars().flat_map(char::to_lowercase));
             let mut score_local = Score::MIN;
             positions_buf.clear();
-            positions_buf.resize(positions_data_size(target_buf.len()), 0);
+            positions_buf.resize(positions_data_size(haystack_buf.len()), 0);
             let positions = PositionsRef::new_data(positions_buf.as_mut());
-            if !(self.score_ref(target_buf.as_slice(), &mut score_local, positions)) {
+            if !(self.score_ref(haystack_buf.as_slice(), &mut score_local, positions)) {
                 return false;
             }
 
-            id_builder.append_value(
-                haystack_id.map_or_else(|| index as u32, |haystack_id| haystack_id[index]),
-            );
+            hyastack_index_builder.append_value(haystack_offset.map_or_else(
+                |haystack_id| haystack_id[index],
+                |offset| offset + index as u32,
+            ));
             score_builder.append_value(score_local.0);
             positions_builder.append_value(positions_buf.as_slice());
 
@@ -90,52 +97,117 @@ pub trait Scorer: Send + Sync + fmt::Debug {
         });
 
         let score = score_builder.finish();
-        let rank = rank.then(|| {
+        let rank_index = rank.then(|| {
             let mut indices: Vec<_> = (0..score.len() as u32).collect();
             indices.sort_unstable_by_key(|index| Score(-score.value(*index as usize)));
             indices.into()
         });
 
-        ScoreArray {
-            target: target_builder.finish(),
-            id: id_builder.finish(),
+        ScoreArray::new(
+            haystack_builder.finish(),
+            hyastack_index_builder.finish(),
             score,
-            positions: positions_builder.finish(),
-            rank,
-        }
+            positions_builder.finish(),
+            rank_index,
+        )
     }
 }
 
+struct ScoreArrayInner {
+    /// target strings
+    haystack: StringViewArray,
+    /// haystack index/position
+    haystack_index: UInt32Array,
+    /// score value
+    score: Float32Array,
+    /// matched positions
+    positions: BinaryViewArray,
+    /// target indices sorted by decreasing value of score
+    rank_index: Option<UInt32Array>,
+}
+
+/// Array of scored/filtered/ranked target items
 #[derive(Clone)]
 pub struct ScoreArray {
-    target: StringViewArray,
-    id: UInt32Array,
-    score: Float32Array,
-    positions: BinaryViewArray,
-    rank: Option<UInt32Array>,
+    inner: Arc<ScoreArrayInner>,
 }
 
 impl ScoreArray {
-    pub fn len(&self) -> usize {
-        self.target.len()
+    fn new(
+        haystack: StringViewArray,
+        haystack_index: UInt32Array,
+        score: Float32Array,
+        positions: BinaryViewArray,
+        rank_index: Option<UInt32Array>,
+    ) -> Self {
+        let inner = ScoreArrayInner {
+            haystack,
+            haystack_index,
+            score,
+            positions,
+            rank_index,
+        };
+        Self {
+            inner: Arc::new(inner),
+        }
     }
 
-    pub fn get(&self, index: usize) -> Option<ScoreItem<'_>> {
-        if index >= self.target.len() {
+    /// Number of elements
+    pub fn len(&self) -> usize {
+        self.inner.haystack.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Get element by it index
+    pub fn get(&self, rank_index: usize) -> Option<ScoreItem<'_>> {
+        if rank_index >= self.inner.haystack.len() {
             return None;
         }
         let index = self
-            .rank
+            .inner
+            .rank_index
             .as_ref()
-            .map_or_else(|| index, |rank| rank.value(index) as usize);
+            .map_or_else(|| rank_index, |rank| rank.value(rank_index) as usize);
         Some(ScoreItem {
-            target: self.target.value(index),
-            id: self.id.value(index) as usize,
-            score: Score(self.score.value(index)),
-            positions: PositionsRef::new_data(self.positions.value(index)),
+            haystack: self.inner.haystack.value(index),
+            haystack_index: self.inner.haystack_index.value(index) as usize,
+            score: Score(self.inner.score.value(index)),
+            positions: PositionsRef::new_data(self.inner.positions.value(index)),
+            rank_index,
         })
     }
 
+    /// Merge two score arrays, re-rank if requested
+    pub fn merge(&self, other: ScoreArray, rank: bool) -> ScoreArray {
+        let haystack = byte_view_concat([&self.inner.haystack, &other.inner.haystack]);
+        let haystack_index =
+            primitive_concat([&self.inner.haystack_index, &other.inner.haystack_index]);
+        let score = primitive_concat([&self.inner.score, &other.inner.score]);
+        let positions = byte_view_concat([&self.inner.positions, &other.inner.positions]);
+        let rank_index = rank.then(|| {
+            let mut indices: Vec<_> = (0..score.len() as u32).collect();
+            indices.sort_unstable_by_key(|index| Score(-score.value(*index as usize)));
+            indices.into()
+        });
+        Self::new(haystack, haystack_index, score, positions, rank_index)
+    }
+
+    /// Run scorer on already scored values
+    pub fn score<S>(&self, scorer: &S, rank: bool) -> Self
+    where
+        S: Scorer + ?Sized,
+    {
+        scorer.score(
+            &self.inner.haystack,
+            Err(self.inner.haystack_index.values()),
+            rank,
+        )
+    }
+
+    /// Iterator over [ScoreItem] in rank order
     pub fn iter(&self) -> ScoreIter<'_> {
         ScoreIter {
             index: 0,
@@ -149,6 +221,21 @@ impl fmt::Debug for ScoreArray {
         let mut list = f.debug_list();
         list.entries(self);
         list.finish()
+    }
+}
+
+impl Default for ScoreArray {
+    fn default() -> Self {
+        let inner = ScoreArrayInner {
+            haystack: GenericByteViewBuilder::new().finish(),
+            haystack_index: PrimitiveBuilder::new().finish(),
+            score: PrimitiveBuilder::new().finish(),
+            positions: GenericByteViewBuilder::new().finish(),
+            rank_index: None,
+        };
+        Self {
+            inner: Arc::new(inner),
+        }
     }
 }
 
@@ -178,10 +265,11 @@ impl<'a> IntoIterator for &'a ScoreArray {
 
 #[derive(Debug)]
 pub struct ScoreItem<'a> {
-    pub target: &'a str,
-    pub id: usize,
+    pub haystack: &'a str,
+    pub haystack_index: usize,
     pub score: Score,
     pub positions: PositionsRef<&'a [u8]>,
+    pub rank_index: usize,
 }
 
 /// Result of the scoring
@@ -843,23 +931,25 @@ mod tests {
         let needle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
-        let result = scorer.score(&(), " on/e two".to_string()).unwrap();
+        let result = scorer.score_haystack(&(), " on/e two".to_string()).unwrap();
         assert_eq!(result.positions, ps([1, 2, 4]));
         assert!((result.score.0 - 2.665).abs() < 0.001);
 
-        assert!(scorer.score(&(), "two".to_string()).is_none());
+        assert!(scorer.score_haystack(&(), "two".to_string()).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
         let needle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score(&(), " one babababcd ".to_string()).unwrap();
+        let score = scorer
+            .score_haystack(&(), " one babababcd ".to_string())
+            .unwrap();
         assert_eq!(score.positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
 
         let needle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score(&(), "one".to_string()).unwrap();
+        let score = scorer.score_haystack(&(), "one".to_string()).unwrap();
         assert_eq!(score.positions, ps([0]));
     }
 
@@ -883,18 +973,18 @@ mod tests {
         .collect();
 
         let scorer = SubstrScorer::new("o".chars().collect());
-        let result = scorer.score_arrow(&haystack, None, true);
+        let result = scorer.score(&haystack, Ok(0), true);
         assert_eq!(result.len(), 4);
         assert_eq!(
-            result.iter().map(|s| s.id).collect::<Vec<_>>(),
+            result.iter().map(|s| s.haystack_index).collect::<Vec<_>>(),
             &[0, 1, 3, 10]
         );
 
         let scorer = SubstrScorer::new("e".chars().collect());
-        let result = scorer.score_arrow(&haystack, None, true);
+        let result = scorer.score(&haystack, Ok(0), true);
         assert_eq!(result.len(), 8);
         assert_eq!(
-            result.iter().map(|s| s.id).collect::<Vec<_>>(),
+            result.iter().map(|s| s.haystack_index).collect::<Vec<_>>(),
             &[0, 4, 8, 7, 9, 2, 6, 10]
         );
     }

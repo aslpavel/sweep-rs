@@ -5,7 +5,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use arrow_array::{builder::StringViewBuilder, Array, StringViewArray};
+use arrow_array::{
+    builder::{GenericByteViewBuilder, PrimitiveBuilder},
+    types::ByteViewType,
+    Array, ArrowPrimitiveType, GenericByteViewArray, PrimitiveArray,
+};
 use arrow_data::ByteView;
 use serde::{
     de::{self, DeserializeSeed},
@@ -157,15 +161,16 @@ pub fn json_from_slice_seed<'de, 'a: 'de, S: DeserializeSeed<'de>>(
     seed.deserialize(&mut deserializer)
 }
 
-/// Efficient [StringViewArray] filter that reuses buffers from items
-pub(crate) fn string_view_filter<P>(
-    items: &StringViewArray,
-    builder: &mut StringViewBuilder,
+/// Efficient [GenericByteViewArray] filter that reuses buffers from input array
+pub(crate) fn byte_view_filter<T, P>(
+    array: &GenericByteViewArray<T>,
+    builder: &mut GenericByteViewBuilder<T>,
     mut predicate: P,
 ) where
-    P: FnMut(usize, &str) -> bool,
+    T: ByteViewType,
+    P: FnMut(usize, &T::Native) -> bool,
 {
-    let buffers = items.data_buffers();
+    let buffers = array.data_buffers();
     let buffer_offset = if buffers.is_empty() {
         0
     } else {
@@ -176,11 +181,11 @@ pub(crate) fn string_view_filter<P>(
         buffer_offset
     };
 
-    let nulls = items.nulls();
-    items.views().iter().enumerate().for_each(|(index, view)| {
+    let nulls = array.nulls();
+    array.views().iter().enumerate().for_each(|(index, view)| {
         let item = unsafe {
             // Safety: index comes from iterating views
-            items.value_unchecked(index)
+            array.value_unchecked(index)
         };
         if !predicate(index, item) {
             return;
@@ -202,6 +207,32 @@ pub(crate) fn string_view_filter<P>(
             }
         }
     });
+}
+
+pub(crate) fn byte_view_concat<'a, T>(
+    arrays: impl IntoIterator<Item = &'a GenericByteViewArray<T>>,
+) -> GenericByteViewArray<T>
+where
+    T: ByteViewType,
+{
+    let mut builder = GenericByteViewBuilder::new();
+    arrays
+        .into_iter()
+        .for_each(|array| byte_view_filter(array, &mut builder, |_, _| true));
+    builder.finish()
+}
+
+pub(crate) fn primitive_concat<'a, T>(
+    arrays: impl IntoIterator<Item = &'a PrimitiveArray<T>>,
+) -> PrimitiveArray<T>
+where
+    T: ArrowPrimitiveType,
+{
+    let mut builder = PrimitiveBuilder::new();
+    arrays.into_iter().for_each(|array| {
+        builder.extend(array.iter());
+    });
+    builder.finish()
 }
 
 #[cfg(test)]
