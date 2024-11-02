@@ -9,6 +9,7 @@ use arrow_array::{
     },
     Array, BinaryViewArray, Float32Array, StringViewArray, UInt32Array,
 };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{cell::RefCell, cmp::Ordering, fmt, sync::Arc};
 
 thread_local! {
@@ -111,6 +112,47 @@ pub trait Scorer: Send + Sync + fmt::Debug {
             rank_index,
         )
     }
+
+    /// Run scorer on an arrow array of strings, running in parallel
+    fn score_par(
+        &self,
+        haystack: &StringViewArray,
+        haystack_offset: Result<u32, &[u32]>,
+        rank: bool,
+        chunk_size: usize,
+    ) -> ScoreArray {
+        if let Err(haystack_id) = haystack_offset {
+            assert_eq!(haystack.len(), haystack_id.len());
+        }
+        if haystack.len() <= chunk_size {
+            return self.score(haystack, haystack_offset, rank);
+        }
+        let chunk_count = {
+            let whole = haystack.len() / chunk_size;
+            let part = if haystack.len() % chunk_size > 0 {
+                1
+            } else {
+                0
+            };
+            whole + part
+        };
+        let chunks: Vec<_> = (0..chunk_count)
+            .into_par_iter()
+            .map(|chunk_index| {
+                let start = chunk_index * chunk_size;
+                let end = haystack.len().min((chunk_index + 1) * chunk_size);
+                self.score(
+                    &haystack.slice(start, end - start),
+                    match haystack_offset {
+                        Ok(offset) => Ok(offset.saturating_add(start as u32)),
+                        Err(offsets) => Err(&offsets[start..end]),
+                    },
+                    false,
+                )
+            })
+            .collect();
+        ScoreArray::merge_many(chunks.as_slice(), rank)
+    }
 }
 
 struct ScoreArrayInner {
@@ -182,11 +224,14 @@ impl ScoreArray {
 
     /// Merge two score arrays, re-rank if requested
     pub fn merge(&self, other: ScoreArray, rank: bool) -> ScoreArray {
-        let haystack = byte_view_concat([&self.inner.haystack, &other.inner.haystack]);
-        let haystack_index =
-            primitive_concat([&self.inner.haystack_index, &other.inner.haystack_index]);
-        let score = primitive_concat([&self.inner.score, &other.inner.score]);
-        let positions = byte_view_concat([&self.inner.positions, &other.inner.positions]);
+        Self::merge_many(&[self.clone(), other], rank)
+    }
+
+    pub fn merge_many(arrays: &[ScoreArray], rank: bool) -> ScoreArray {
+        let haystack = byte_view_concat(arrays.iter().map(|a| &a.inner.haystack));
+        let haystack_index = primitive_concat(arrays.iter().map(|a| &a.inner.haystack_index));
+        let score = primitive_concat(arrays.iter().map(|a| &a.inner.score));
+        let positions = byte_view_concat(arrays.iter().map(|a| &a.inner.positions));
         let rank_index = rank.then(|| {
             let mut indices: Vec<_> = (0..score.len() as u32).collect();
             indices.sort_unstable_by_key(|index| Score(-score.value(*index as usize)));
@@ -204,6 +249,18 @@ impl ScoreArray {
             &self.inner.haystack,
             Err(self.inner.haystack_index.values()),
             rank,
+        )
+    }
+
+    pub fn score_par<S>(&self, scorer: &S, rank: bool, chunk_size: usize) -> Self
+    where
+        S: Scorer + ?Sized,
+    {
+        scorer.score_par(
+            &self.inner.haystack,
+            Err(self.inner.haystack_index.values()),
+            rank,
+            chunk_size,
         )
     }
 

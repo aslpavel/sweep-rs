@@ -303,7 +303,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chronicler-cli"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "anyhow",
  "argh",
@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -2114,6 +2114,7 @@ dependencies = [
  "futures",
  "lazy_static",
  "mimalloc",
+ "rayon",
  "serde",
  "serde_json",
  "shlex",
@@ -2126,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "sweep-cli"
-version = "0.21.0"
+version = "0.21.1"
 dependencies = [
  "anyhow",
  "argh",

@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const SCORE_CHUNK_SIZE: usize = 65_536;
+
 /// Function to create scorer with the given needle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
 
@@ -219,21 +221,22 @@ where
             Offset(offset) => {
                 // score new data
                 score.merge(
-                    scorer.score(
+                    scorer.score_par(
                         &haystack.slice(offset, haystack.len() - offset),
                         Ok(offset as u32),
                         false,
+                        SCORE_CHUNK_SIZE,
                     ),
                     !keep_order,
                 )
             }
             CurrentMatch => {
                 // score current matches
-                score.score(&scorer, !keep_order)
+                score.score_par(&scorer, !keep_order, SCORE_CHUNK_SIZE)
             }
             All => {
                 // score all haystack elements
-                scorer.score(&haystack, Ok(0), !keep_order)
+                scorer.score_par(&haystack, Ok(0), !keep_order, SCORE_CHUNK_SIZE)
             }
         };
         let rank_elapsed = rank_instant.elapsed();
