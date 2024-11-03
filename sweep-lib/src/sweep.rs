@@ -953,14 +953,14 @@ where
     }
 
     // get preview of the currently pointed haystack item
-    fn preview(&self) -> Option<H::Preview> {
+    fn current_preview(&self) -> Option<H::Preview> {
         let item = self.current()?;
         item.haystack
             .preview(&self.haystack_context, item.score.positions, &self.theme)
     }
 
     // get large preview for currently pointed haystack item
-    fn preview_large(&mut self) -> Option<SweepPreview<H::PreviewLarge>> {
+    fn current_preview_large(&mut self) -> Option<SweepPreview<H::PreviewLarge>> {
         let item = self.current()?;
         if !matches!(&self.preview_large, Some(preview) if preview.id == item.id) {
             let preview = item.haystack.preview_large(
@@ -1162,6 +1162,96 @@ where
         Nothing
     }
 
+    fn handle_request(&mut self, request: SweepRequest<H>) -> Result<(), SweepRequest<H>> {
+        use SweepRequest::*;
+        match request {
+            NeedleSet(needle) => {
+                self.input.set(needle.as_ref());
+                self.ranker_trigger();
+            }
+            NeedleGet(resolve) => {
+                mem::drop(resolve.send(self.input.get().collect()));
+            }
+            ThemeGet(resolve) => {
+                mem::drop(resolve.send(self.theme.clone()));
+            }
+            Bind { chord, tag, desc } => match *chord.keys() {
+                [Key {
+                    name: KeyName::Backspace,
+                    mode: KeyMod::EMPTY,
+                }] => {
+                    self.key_empty_backspace = if tag.is_empty() { None } else { Some(tag) };
+                }
+                _ => {
+                    let action = if tag.is_empty() {
+                        // empty user action means unbind
+                        SweepAction::User {
+                            chord: KeyChord::new(Vec::new()),
+                            tag: String::new(),
+                            desc: String::new(),
+                        }
+                    } else {
+                        self.key_actions
+                            .entry(tag.clone())
+                            .or_insert_with(|| SweepAction::User {
+                                chord: chord.clone(),
+                                tag,
+                                desc,
+                            })
+                            .clone()
+                    };
+                    self.key_map.register(chord.as_ref(), action);
+                }
+            },
+            PromptSet(new_prompt, new_icon) => {
+                if let Some(new_prompt) = new_prompt {
+                    self.prompt = new_prompt;
+                }
+                self.prompt_icon = new_icon;
+            }
+            Current(resolve) => {
+                _ = resolve.send(self.current().map(|item| item.haystack.clone()));
+            }
+            Marked(resolve) => {
+                let items = self.marked.with_mut(|marked| marked.take()).collect();
+                _ = resolve.send(items);
+            }
+            CursorSet { position } => {
+                self.list.cursor_set(position);
+            }
+            ScorerByName(name, resolve) => {
+                let _ = resolve.send(self.scorer_by_name(name));
+            }
+            PreviewSet(value) => {
+                let show_preview = match value {
+                    Some(value) => value,
+                    None => !self.theme.show_preview,
+                };
+                self.theme_set(self.theme.modify(|inner| inner.show_preview = show_preview));
+            }
+            FooterSet(view) => self.footer = view,
+            ScorerSet(scorer) => self.ranker.scorer_set(scorer),
+            HaystackExtend(items) => {
+                self.ranker.haystack_extend(&self.haystack_context, &items);
+                self.haystack.extend(items);
+            }
+            HaystackUpdate { index, item } => {
+                if let Some(item_ref) = self.haystack.get_mut(index) {
+                    *item_ref = item;
+                }
+            }
+            HaystackClear => {
+                self.ranker.haystack_clear();
+                self.haystack.clear();
+            }
+            RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
+            _ => {
+                return Err(request);
+            }
+        }
+        Ok(())
+    }
+
     /// Crate sweep states which renders help view
     fn help_state(&self, term_waker: TerminalWaker) -> SweepState<ActionDesc> {
         // Tag -> ActionDesc
@@ -1263,7 +1353,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepState<H> {
         );
         // preview
         if self.theme.show_preview {
-            if let Some(preview) = self.preview() {
+            if let Some(preview) = self.current_preview() {
                 let flex = preview.flex().unwrap_or(0.0);
                 let mut view = Container::new(preview)
                     .with_margins(Margins {
@@ -1373,94 +1463,11 @@ where
             Some(TerminalEvent::Wake) => {
                 for request in requests.try_iter() {
                     use SweepRequest::*;
+                    let Err(request) = state.handle_request(request) else {
+                        continue;
+                    };
                     match request {
-                        NeedleSet(needle) => {
-                            state.input.set(needle.as_ref());
-                            state.ranker_trigger();
-                        }
-                        NeedleGet(resolve) => {
-                            mem::drop(resolve.send(state.input.get().collect()));
-                        }
-                        ThemeGet(resolve) => {
-                            mem::drop(resolve.send(state.theme.clone()));
-                        }
                         Terminate => return Ok(TerminalAction::Quit(())),
-                        Bind { chord, tag, desc } => match *chord.keys() {
-                            [Key {
-                                name: KeyName::Backspace,
-                                mode: KeyMod::EMPTY,
-                            }] => {
-                                state.key_empty_backspace =
-                                    if tag.is_empty() { None } else { Some(tag) };
-                            }
-                            _ => {
-                                let action = if tag.is_empty() {
-                                    // empty user action means unbind
-                                    SweepAction::User {
-                                        chord: KeyChord::new(Vec::new()),
-                                        tag: String::new(),
-                                        desc: String::new(),
-                                    }
-                                } else {
-                                    state
-                                        .key_actions
-                                        .entry(tag.clone())
-                                        .or_insert_with(|| SweepAction::User {
-                                            chord: chord.clone(),
-                                            tag,
-                                            desc,
-                                        })
-                                        .clone()
-                                };
-                                state.key_map.register(chord.as_ref(), action);
-                            }
-                        },
-                        PromptSet(new_prompt, new_icon) => {
-                            if let Some(new_prompt) = new_prompt {
-                                state.prompt = new_prompt;
-                            }
-                            state.prompt_icon = new_icon;
-                        }
-                        Current(resolve) => {
-                            _ = resolve.send(state.current().map(|item| item.haystack.clone()));
-                        }
-                        Marked(resolve) => {
-                            let items = state.marked.with_mut(|marked| marked.take()).collect();
-                            _ = resolve.send(items);
-                        }
-                        CursorSet { position } => {
-                            state.list.cursor_set(position);
-                        }
-                        ScorerByName(name, resolve) => {
-                            let _ = resolve.send(state.scorer_by_name(name));
-                        }
-                        PreviewSet(value) => {
-                            let show_preview = match value {
-                                Some(value) => value,
-                                None => !state.theme.show_preview,
-                            };
-                            state.theme_set(
-                                state
-                                    .theme
-                                    .modify(|inner| inner.show_preview = show_preview),
-                            );
-                        }
-                        FooterSet(view) => state.footer = view,
-                        ScorerSet(scorer) => state.ranker.scorer_set(scorer),
-                        HaystackExtend(items) => {
-                            state.ranker.haystack_extend(&haystack_context, &items);
-                            state.haystack.extend(items);
-                        }
-                        HaystackUpdate { index, item } => {
-                            if let Some(item_ref) = state.haystack.get_mut(index) {
-                                *item_ref = item;
-                            }
-                        }
-                        HaystackClear => {
-                            state.ranker.haystack_clear();
-                            state.haystack.clear();
-                        }
-                        RankerKeepOrder(toggle) => state.ranker.keep_order(toggle),
                         StatePush => {
                             let state_old = std::mem::replace(
                                 &mut state,
@@ -1483,6 +1490,9 @@ where
                                 render_supress_sync = Some(state.ranker.sync());
                             }
                             tracing::debug!(?suppress, "[sweep_ui_worker][render_suppress]");
+                        }
+                        _ => {
+                            unreachable!("unhandled request");
                         }
                     }
                 }
@@ -1593,7 +1603,7 @@ where
             state.ranker_refresh();
 
             let view = if let SweepLayout::Full { height } = &options.layout {
-                if let Some(preview_large) = state.preview_large() {
+                if let Some(preview_large) = state.current_preview_large() {
                     let main_height = height.calc(win_layout.size().height);
                     let main = Container::new(&mut state);
                     let mut flex = Flex::column();
