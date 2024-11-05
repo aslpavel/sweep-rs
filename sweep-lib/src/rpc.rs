@@ -1083,10 +1083,10 @@ mod tests {
         // request
         let mut request = RpcRequest {
             method: "func".to_owned(),
-            params: json!([3.141, 127]),
+            params: json!([3.1, 127]),
             id: RpcId::Int(1),
         };
-        let expected = "{\"method\":\"func\",\"params\":[3.141,127],\"id\":1}";
+        let expected = "{\"method\":\"func\",\"params\":[3.1,127],\"id\":1}";
         let value: Value = serde_json::from_str(expected)?;
         assert_eq!(request, serde_json::from_value(value)?);
         assert_eq!(expected, serde_json::to_string(&request)?);

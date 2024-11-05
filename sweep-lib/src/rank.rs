@@ -100,8 +100,6 @@ impl Ranker {
     }
 
     /// Whether to keep order of elements or sort by the best score
-    ///
-    /// `None` will toggle current state, `Some(value)` will set it
     pub fn keep_order(&self, toggle: Option<bool>) {
         self.sender
             .send(RankerCmd::KeepOrder(toggle))
@@ -121,6 +119,15 @@ impl Ranker {
             .expect("failed to send sync request");
         synced
     }
+}
+
+enum RankerCmd {
+    HaystackClear,
+    HaystackAppend(StringViewArray),
+    Needle(String),
+    Scorer(ScorerBuilder),
+    KeepOrder(Option<bool>),
+    Sync(Arc<AtomicBool>),
 }
 
 fn ranker_worker<N>(receiver: Receiver<RankerCmd>, result: Arc<Mutex<Arc<RankedItems>>>, notify: N)
@@ -337,15 +344,6 @@ impl std::fmt::Debug for RankedItems {
             .field("rank_gen", &self.rank_gen)
             .finish()
     }
-}
-
-enum RankerCmd {
-    HaystackClear,
-    HaystackAppend(StringViewArray),
-    Needle(String),
-    Scorer(ScorerBuilder),
-    KeepOrder(Option<bool>),
-    Sync(Arc<AtomicBool>),
 }
 
 #[cfg(test)]
