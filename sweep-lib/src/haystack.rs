@@ -3,7 +3,7 @@ use std::sync::Arc;
 use either::Either;
 use surf_n_term::{
     view::{BoxConstraint, Layout, Text, View, ViewContext, ViewLayout, ViewMutLayout},
-    CellWrite, Position, TerminalSurface,
+    CellWrite, KeyChord, Position, TerminalSurface,
 };
 
 use crate::{PositionsRef, Theme};
@@ -24,6 +24,11 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
     where
         S: FnMut(char);
+
+    /// Key that can be used to select that item in hotkey mode
+    fn hotkey(&self) -> Option<KeyChord> {
+        None
+    }
 
     /// Return a view that renders haystack item in a list
     fn view(

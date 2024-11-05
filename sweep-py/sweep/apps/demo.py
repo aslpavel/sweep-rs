@@ -162,36 +162,42 @@ async def main(args: list[str] | None = None) -> None:
 
     candidates = [
         # counter
-        candidate_clicked(0),
+        candidate_clicked(0).hotkey_set("1"),
         # simple fields
         "Simple string entry",
         Candidate()
         .target_push("Disabled text: ", active=False)
-        .target_push("Enabled text"),
+        .target_push("Enabled text")
+        .hotkey_set("3"),
         # colored text
         Candidate()
         .target_push("Colored", face="fg=#8f3f71,bold,underline")
         .target_push(" ")
-        .target_push("Text", face="fg=#fbf1c7,bg=#79740e,italic"),
+        .target_push("Text", face="fg=#fbf1c7,bg=#79740e,italic")
+        .hotkey_set("4"),
         # multi line entry
         Candidate()
         .target_push("Muli line entry\n - Second Line")
         .right_push(glyph=PANEL_RIGHT)
         .right_push("right text field")
-        .right_face_set("bg=accent/.2"),
+        .right_face_set("bg=accent/.2")
+        .hotkey_set("5"),
         # direct glyph icon usage example
         Candidate()
         .target_push("Entry with beer icon: ")
-        .target_push(glyph=ICON_BEER, face="fg=#cc241d"),
+        .target_push(glyph=ICON_BEER, face="fg=#cc241d")
+        .hotkey_set("6"),
         # glyph icon used from reference
         Candidate()
         .target_push("Entry with reference to backpack: ")
-        .target_push(ref=ref_backpack),
+        .target_push(ref=ref_backpack)
+        .hotkey_set("7"),
         # right text
         Candidate()
         .target_push("Entry with data to the right")
         .right_push(ref=ref_cocktail, face="fg=#427b58")
-        .right_push(" Have a cocktail"),
+        .right_push(" Have a cocktail")
+        .hotkey_set("8"),
         # has preview
         Candidate()
         .target_push("Point to this item (it has a preview)")
@@ -201,13 +207,15 @@ async def main(args: list[str] | None = None) -> None:
         .preview_push(glyph=ICON_BEER)
         .preview_push(" - beer\n", active=True)
         .preview_push(glyph=ICON_BACKPACK)
-        .preview_push(" - backpack", active=True),
+        .preview_push(" - backpack", active=True)
+        .hotkey_set("9"),
         # dynamic preview
         Candidate()
         .target_push("Item with lazily fetched preview")
         .preview_push("This icon is lazy loaded\n")
         .preview_flex_set(0.5)
-        .preview_push(ref=ref_sofa),
+        .preview_push(ref=ref_sofa)
+        .hotkey_set("0"),
     ]
 
     result: SweepEvent[Candidate | str] | None = None

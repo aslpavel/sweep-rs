@@ -697,6 +697,7 @@ enum SweepAction {
         desc: String,
     },
     Select,
+    SelectByIndex(usize),
     Mark,
     MarkAll,
     Quit,
@@ -735,6 +736,11 @@ impl SweepAction {
                 ],
                 name: "sweep.select".to_owned(),
                 description: "Select item pointed by cursor".to_owned(),
+            },
+            SelectByIndex(index) => ActionDesc {
+                chords: Vec::new(),
+                name: format!("sweep.select.{}", index),
+                description: format!("Select item by index {}", index),
             },
             Mark => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
@@ -924,25 +930,7 @@ where
         event_handler: SweepEventHandler<H>,
         is_help: bool,
     ) -> Self {
-        // key map
-        let mut key_map = KeyMap::new();
-        let mut key_actions = HashMap::new();
-        for action in SweepAction::all() {
-            let desc = action.description();
-            key_actions.insert(desc.name, action.clone());
-            for chord in desc.chords {
-                key_map.register(chord, action.clone());
-            }
-        }
-
-        // widgets
-        let input = Input::new(theme.clone());
-        let list = List::new(
-            SweepItems::new(Arc::new(RankedItems::default()), Default::default()),
-            theme.clone(),
-        );
-
-        Self {
+        let mut window = Self {
             term_waker,
             requests,
             event_handler,
@@ -952,11 +940,14 @@ where
             footer: None,
             key_map_state: Vec::new(),
             key_empty_backspace: None,
-            key_map,
-            key_actions,
-            theme,
-            input,
-            list,
+            key_map: KeyMap::new(),
+            key_actions: HashMap::new(),
+            theme: theme.clone(),
+            input: Input::new(theme.clone()),
+            list: List::new(
+                SweepItems::new(Arc::new(RankedItems::default()), Default::default()),
+                theme,
+            ),
             marked: Default::default(),
             ranker,
             haystack: Vec::new(),
@@ -964,7 +955,37 @@ where
             preview_large: None,
             render_suppress_sync: None,
             is_help,
+        };
+        window.key_map_reset();
+        window
+    }
+
+    fn key_map_reset(&mut self) {
+        self.key_map = KeyMap::new();
+        self.key_actions = HashMap::new();
+        for action in SweepAction::all() {
+            let desc = action.description();
+            self.key_actions.insert(desc.name, action.clone());
+            for chord in desc.chords {
+                self.key_map.register(chord, action.clone());
+            }
         }
+    }
+
+    fn haystack_extend(&mut self, haystack: Vec<H>) {
+        self.ranker
+            .haystack_extend(&self.haystack_context, &haystack);
+        let index_offset = self.haystack.len();
+        haystack.iter().enumerate().for_each(|(index, haystack)| {
+            let Some(chord) = haystack.hotkey() else {
+                return;
+            };
+            let action = SweepAction::SelectByIndex(index_offset + index);
+            let desc = action.description();
+            self.key_actions.insert(desc.name, action.clone());
+            self.key_map.register(chord, action);
+        });
+        self.haystack.extend(haystack);
     }
 
     // get currently pointed item
@@ -1103,6 +1124,11 @@ where
                 };
                 return (self.event_handler)(SweepEvent::Select(selected));
             }
+            SweepAction::SelectByIndex(index) => {
+                if let Some(item) = self.haystack.get(*index) {
+                    return (self.event_handler)(SweepEvent::Select(vec![item.clone()]));
+                }
+            }
             SweepAction::Mark => {
                 if let Some(item) = self.current() {
                     self.marked
@@ -1189,7 +1215,7 @@ where
         let mut entries: Vec<_> = descriptions.into_values().collect();
         entries.sort_by_key(|desc| self.key_actions.get(&desc.name));
 
-        let mut state = SweepWindow::new(
+        let mut window = SweepWindow::new(
             "HELP".to_owned(),
             Some(KEYBOARD_ICON.clone()),
             Ranker::new({
@@ -1214,10 +1240,9 @@ where
             }),
             true,
         );
-        state.ranker.keep_order(Some(true));
-        state.ranker.haystack_extend(&(), &entries);
-        state.haystack = entries;
-        Box::new(state)
+        window.ranker.keep_order(Some(true));
+        window.haystack_extend(entries);
+        Box::new(window)
     }
 }
 
@@ -1296,8 +1321,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 FooterSet(view) => self.footer = view,
                 ScorerSet(scorer) => self.ranker.scorer_set(scorer),
                 HaystackExtend(items) => {
-                    self.ranker.haystack_extend(&self.haystack_context, &items);
-                    self.haystack.extend(items);
+                    self.haystack_extend(items);
                 }
                 HaystackUpdate { index, item } => {
                     if let Some(item_ref) = self.haystack.get_mut(index) {
@@ -1307,6 +1331,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 HaystackClear => {
                     self.ranker.haystack_clear();
                     self.haystack.clear();
+                    self.key_map_reset();
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 Terminate => return Ok(WindowAction::Quit),
@@ -1484,35 +1509,39 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepWindow<H> {
                 .into(),
         ));
 
-        // list
-        let mut body = Flex::row();
-        body.push_flex_child(
-            1.0,
-            self.list.view(SweepItemsContext {
+        let body = FlexRef::row((
+            // list
+            FlexChild::new(self.list.view(SweepItemsContext {
                 haystack_context: self.haystack_context.clone(),
                 haystack: &self.haystack,
-            }),
-        );
-        // preview
-        if self.theme.show_preview {
-            if let Some(preview) = self.current_preview() {
-                let flex = preview.flex().unwrap_or(0.0);
-                let mut view = Container::new(preview)
-                    .with_margins(Margins {
-                        left: 1,
-                        right: 1,
-                        ..Default::default()
-                    })
-                    .with_vertical(Align::Expand)
-                    .with_face(self.theme.list_selected);
-                if flex > 0.0 {
-                    view = view.with_horizontal(Align::Expand);
-                }
-                body.push_flex_child(flex, view);
-            }
-        }
-        // scroll bar
-        body.push_child(self.list.scroll_bar());
+            }))
+            .flex(1.0),
+            // preview
+            self.theme
+                .show_preview
+                .then(|| self.current_preview())
+                .flatten()
+                .map_or_else(
+                    || FlexChild::new(().left_view()).flex(0.0),
+                    |preview| {
+                        let flex = preview.flex().unwrap_or(0.0);
+                        let mut view = Container::new(preview)
+                            .with_margins(Margins {
+                                left: 1,
+                                right: 1,
+                                ..Default::default()
+                            })
+                            .with_vertical(Align::Expand)
+                            .with_face(self.theme.list_selected);
+                        if flex > 0.0 {
+                            view = view.with_horizontal(Align::Expand);
+                        }
+                        FlexChild::new(view.right_view()).flex(flex)
+                    },
+                ),
+            // scrollbar
+            self.list.scroll_bar().into(),
+        ));
 
         let mut view = Flex::column()
             .add_child(Container::new(header).with_height(1))

@@ -206,7 +206,7 @@ class ToCandidate(Protocol):
     def to_candidate(self) -> Candidate: ...
 
 
-@dataclass
+@dataclass(slots=True)
 class Candidate:
     """Convenient sweep item implementation"""
 
@@ -217,6 +217,7 @@ class Candidate:
     right_face: str | None = None
     preview: list[Any] | None = None
     preview_flex: float = 0.0
+    hotkey: str | None = None
 
     def to_candidate(self) -> Candidate:
         return self
@@ -288,6 +289,11 @@ class Candidate:
         self.extra.update(entries)
         return self
 
+    def hotkey_set(self, hotkey: str) -> Candidate:
+        """Assign hotkey for this candidate"""
+        self.hotkey = hotkey
+        return self
+
     def __repr__(self) -> str:
         attrs: list[str] = []
         if self.target is not None:
@@ -304,6 +310,8 @@ class Candidate:
             attrs.append(f"preview={self.preview}")
         if self.preview_flex != 0.0:
             attrs.append(f"preview_flex={self.preview_flex}")
+        if self.hotkey is not None:
+            attrs.append(f"hotkey={self.hotkey}")
         return f'Candidate({", ".join(attrs)})'
 
     def to_json(self) -> dict[str, Any]:
@@ -321,6 +329,8 @@ class Candidate:
             obj["preview"] = [field.to_json() for field in self.preview]
         if self.preview_flex != 0.0:
             obj["preview_flex"] = self.preview_flex
+        if self.hotkey is not None:
+            obj["hotkey"] = self.hotkey
         return obj
 
     @staticmethod
@@ -349,6 +359,7 @@ class Candidate:
         right_face = obj.pop("right_face", None)
         preview = fields_from_json(obj.pop("preview", None))
         preview_flex = obj.pop("preview_flex", None) or 0.0
+        hotkey = obj.pop("hotkey", None)
         return Candidate(
             target=target,
             extra=obj or None,
@@ -357,6 +368,7 @@ class Candidate:
             right_face=right_face,
             preview=preview,
             preview_flex=preview_flex,
+            hotkey=hotkey,
         )
 
 

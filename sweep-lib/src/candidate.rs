@@ -27,7 +27,7 @@ use surf_n_term::{
         Align, ArcView, Axis, Container, Flex, IntoView, Justify, Margins, Text, View, ViewCache,
         ViewDeserializer,
     },
-    CellWrite, Face, FaceDeserializer, Glyph, Size, TerminalWaker, RGBA,
+    CellWrite, Face, FaceDeserializer, Glyph, KeyChord, Size, TerminalWaker, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -47,6 +47,8 @@ struct CandidateInner {
     preview_flex: f64,
     /// Preview haystack position (offset in [Position] to preview match)
     preview_haystack_position: usize,
+    /// Hotkey associated with this item
+    hotkey: Option<KeyChord>,
     /// Extra fields extracted from candidate object during parsing, this
     /// can be useful when candidate has some additional data associated with it
     extra: HashMap<String, Value>,
@@ -76,6 +78,7 @@ impl Candidate {
         right_face: Option<Face>,
         preview: Vec<Field<'static>>,
         preview_flex: f64,
+        hotkey: Option<KeyChord>,
     ) -> Self {
         let preview_haystack_position = fields_haystack(&target)
             .chain(fields_haystack(&right))
@@ -90,6 +93,7 @@ impl Candidate {
                 preview,
                 preview_flex: preview_flex.max(0.0),
                 preview_haystack_position,
+                hotkey,
             }),
         }
     }
@@ -114,7 +118,7 @@ impl Candidate {
                 field.active = field_selector.matches(index, fields_len)
             });
         }
-        Self::new(fields, None, Vec::new(), 0, None, Vec::new(), 0.0)
+        Self::new(fields, None, Vec::new(), 0, None, Vec::new(), 0.0, None)
     }
 
     /// Read batched stream of candidates from `AsyncRead`
@@ -370,6 +374,10 @@ impl Haystack for Candidate {
         S: FnMut(char),
     {
         self.haystack().for_each(scope);
+    }
+
+    fn hotkey(&self) -> Option<KeyChord> {
+        self.inner.hotkey.clone()
     }
 
     fn view(
@@ -690,6 +698,7 @@ impl<'de> de::Visitor<'de> for &CandidateContext {
             None,
             Vec::new(),
             0.0,
+            None,
         ))
     }
 
@@ -704,6 +713,7 @@ impl<'de> de::Visitor<'de> for &CandidateContext {
         let mut right_face = None;
         let mut preview = None;
         let mut preview_flex = 0.0;
+        let mut hotkey = None;
 
         let view_cache: Arc<dyn ViewCache> = Arc::new(self.clone());
         let ctx = self.inner.read().map_err(de::Error::custom)?;
@@ -734,6 +744,9 @@ impl<'de> de::Visitor<'de> for &CandidateContext {
                 "preview_flex" => {
                     preview_flex = map.next_value()?;
                 }
+                "hotkey" => {
+                    hotkey.replace(map.next_value()?);
+                }
                 _ => {
                     extra.insert(name.into_owned(), map.next_value()?);
                 }
@@ -747,6 +760,7 @@ impl<'de> de::Visitor<'de> for &CandidateContext {
             right_face,
             preview.unwrap_or_default(),
             preview_flex,
+            hotkey,
         ))
     }
 }
@@ -1266,6 +1280,7 @@ mod tests {
                 ..Field::default()
             }],
             1.0,
+            None,
         );
         let value = json!({
             "fields": [
@@ -1308,6 +1323,7 @@ mod tests {
             None,
             Vec::new(),
             0.0,
+            None,
         );
         assert_eq!(
             candidate.inner,
