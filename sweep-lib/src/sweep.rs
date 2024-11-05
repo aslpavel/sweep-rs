@@ -930,7 +930,16 @@ where
         event_handler: SweepEventHandler<H>,
         is_help: bool,
     ) -> Self {
-        let mut window = Self {
+        let mut key_map = KeyMap::new();
+        let mut key_actions = HashMap::new();
+        for action in SweepAction::all() {
+            let desc = action.description();
+            key_actions.insert(desc.name, action.clone());
+            for chord in desc.chords {
+                key_map.register(chord, action.clone());
+            }
+        }
+        Self {
             term_waker,
             requests,
             event_handler,
@@ -940,8 +949,8 @@ where
             footer: None,
             key_map_state: Vec::new(),
             key_empty_backspace: None,
-            key_map: KeyMap::new(),
-            key_actions: HashMap::new(),
+            key_map,
+            key_actions,
             theme: theme.clone(),
             input: Input::new(theme.clone()),
             list: List::new(
@@ -955,20 +964,6 @@ where
             preview_large: None,
             render_suppress_sync: None,
             is_help,
-        };
-        window.key_map_reset();
-        window
-    }
-
-    fn key_map_reset(&mut self) {
-        self.key_map = KeyMap::new();
-        self.key_actions = HashMap::new();
-        for action in SweepAction::all() {
-            let desc = action.description();
-            self.key_actions.insert(desc.name, action.clone());
-            for chord in desc.chords {
-                self.key_map.register(chord, action.clone());
-            }
         }
     }
 
@@ -1331,7 +1326,6 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 HaystackClear => {
                     self.ranker.haystack_clear();
                     self.haystack.clear();
-                    self.key_map_reset();
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 Terminate => return Ok(WindowAction::Quit),
