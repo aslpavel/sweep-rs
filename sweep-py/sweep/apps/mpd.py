@@ -37,6 +37,7 @@ from .. import (
     Sweep,
     SweepBind,
     SweepSelect,
+    SweepWindow,
     Text,
     View,
     ViewRef,
@@ -759,16 +760,10 @@ class MPDSweep:
             handler=handler(self.view_switch),
         )
         await self._sweep.bind(
-            key="alt+g r",
-            tag="mpd.goto.artist",
-            desc="Go to artist",
-            handler=handler(self._goto_artist),
-        )
-        await self._sweep.bind(
-            key="alt+g a",
-            tag="mpd.goto.album",
-            desc="Go to album",
-            handler=handler(self._goto_album),
+            key="alt+g",
+            tag="mpd.goto",
+            desc="Goto different view",
+            handler=self._goto,
         )
         await self._sweep.bind(
             key="alt+d",
@@ -812,13 +807,21 @@ class MPDSweep:
         await self.view_playlist()
         try:
             async for event in self._sweep:
-                if isinstance(event, SweepSelect):
-                    await self._on_select(event.items)
-                elif isinstance(event, SweepBind):
-                    if event.tag == REPAT_TOGGLE_TAG:
+                match event:
+                    case SweepSelect(items=items):
+                        await self._on_select(items)
+                    case SweepBind(tag=tag) if tag == REPAT_TOGGLE_TAG:
                         await self._mpd.repeat()
-                    elif event.tag == RANDOM_TOGGLE_TAG:
+                    case SweepBind(tag=tag) if tag == RANDOM_TOGGLE_TAG:
                         await self._mpd.random()
+                    case SweepWindow(uid_to=uid_to):
+                        self._view = (
+                            MPDSweepView.SONGS
+                            if uid_to == "songs"
+                            else MPDSweepView.PLAYLIST
+                        )
+                    case _:
+                        pass
         finally:
             update_footer_task.cancel()
             update_task.cancel()
@@ -856,6 +859,7 @@ class MPDSweep:
         if songs is None:
             songs = await self._mpd.listallinfo()
         self._view = MPDSweepView.SONGS
+        await self._sweep.stack_push("songs")
         async with self._sweep.render_suppress():
             await self._sweep.prompt_set(prompt or "Songs", icon=DATABASE_ICON)
             await self._sweep.items_clear()
@@ -969,22 +973,41 @@ class MPDSweep:
             return
         await self._mpd.move(song, 1)
 
-    async def _goto_artist(self) -> None:
+    async def _goto(self, sweep: Sweep[Song], tag: str) -> None:
         song = await self._sweep.items_current()
         if song is None:
-            return
-        db = await self._mpd.database()
-        await self.view_songs(db.songs(artist=song.artist or ""), song.artist)
-
-    async def _goto_album(self) -> None:
-        song = await self._sweep.items_current()
-        if song is None:
-            return
-        db = await self._mpd.database()
-        await self.view_songs(
-            db.songs(artist=song.artist or "", album=song.album or ""),
-            song.album,
+            return None
+        selected = await sweep.quick_select(
+            [
+                Candidate()
+                .target_push("Goto ")
+                .target_push("a", face="underline,bold")
+                .target_push(f"lbum : {song.album}")
+                .hotkey_set("a")
+                .wrap("album"),
+                Candidate()
+                .target_push("Goto a")
+                .target_push("r", face="underline,bold")
+                .target_push(f"tist: {song.artist}")
+                .hotkey_set("r")
+                .wrap("artist"),
+            ],
+            prompt="GOTO",
+            window_uid="goto",
         )
+        if not selected:
+            return None
+        db = await self._mpd.database()
+        match selected[0].value:
+            case "album":
+                await self.view_songs(
+                    db.songs(artist=song.artist or "", album=song.album or ""),
+                    song.album,
+                )
+            case "artist":
+                await self.view_songs(db.songs(artist=song.artist or ""), song.artist)
+            case _:
+                pass
 
 
 async def main(args: list[str] | None = None) -> None:
@@ -1007,16 +1030,14 @@ async def main(args: list[str] | None = None) -> None:
     )
     opts = parser.parse_args(args)
 
-    sweep_args: dict[str, Any] = {}
+    sweep_args: dict[str, Any] = {"layout": "full"}
     sweep_cmd: list[str] = []
     if opts.term != "none" and opts.tty is None:
-        sweep_args.update(tmp_socket=True, layout="full")
+        sweep_args.update(tmp_socket=True)
         if opts.term == "kitty":
             sweep_cmd.extend(["kitty", "--class", "org.aslpavel.sweep.mpd"])
         elif opts.term == "foot":
             sweep_cmd.extend(["foot", "--app-id", "org.aslpavel.sweep.mpd"])
-    else:
-        sweep_args["height"] = 18
     sweep_cmd.extend(shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd())
 
     async with MPD() as mpd:
@@ -1027,6 +1048,7 @@ async def main(args: list[str] | None = None) -> None:
             theme=opts.theme,
             log=opts.log,
             title="MPD Client",
+            window_uid="playlist",
             keep_order=True,
             **sweep_args,
         ) as sweep:

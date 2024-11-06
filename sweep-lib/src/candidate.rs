@@ -70,6 +70,7 @@ impl Candidate {
     ///  - `right_face`: Default face for right fields
     ///  - `preview`: Fields to be shown on preview [Haystack::preview]
     ///  - `preview_flex`: Preview view flex value
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         target: Vec<Field<'static>>,
         extra: Option<HashMap<String, Value>>,

@@ -64,6 +64,7 @@ __all__ = [
     "SweepEvent",
     "SweepSelect",
     "SweepSize",
+    "SweepWindow",
     "Text",
     "View",
     "ViewRef",
@@ -139,6 +140,21 @@ class SweepSelect[I]:
 
     def __init__(self, items: list[I]):
         self.items = items
+
+
+@dataclass
+class SweepWindow:
+    """Fired on window transition"""
+
+    uid_from: Any
+    uid_to: Any
+
+    @staticmethod
+    def from_json(obj: Any) -> SweepWindow:
+        if not isinstance(obj, dict):
+            raise ValueError(f"Invalid SweepWindow: {obj}")
+        obj = cast(dict[str, Any], obj)
+        return SweepWindow(uid_from=obj.get("from"), uid_to=obj.get("to"))
 
 
 @dataclass
@@ -384,7 +400,7 @@ class CandidateWrapped[V]:
         return self.candidate
 
 
-type SweepEvent[I] = SweepBind | SweepSize | SweepSelect[I]
+type SweepEvent[I] = SweepBind | SweepSize | SweepSelect[I] | SweepWindow
 type BindHandler[I] = Callable[[Sweep[I], str], Awaitable[I | None]]
 type FiledResolver = Callable[[int], Awaitable[Field | None]]
 type ViewResolver = Callable[[int], Awaitable[View | None]]
@@ -435,6 +451,7 @@ class SweepArgs(TypedDict, total=False):
     tmp_socket: bool
     field_resolver: FiledResolver | None
     view_resolver: ViewResolver | None
+    window_uid: Any | None
 
 
 async def sweep[I](
@@ -534,6 +551,7 @@ class Sweep[I]:
         tmp_socket: bool = False,
         field_resolver: FiledResolver | None = None,
         view_resolver: ViewResolver | None = None,
+        window_uid: Any | None = None,
     ) -> None:
         args: list[str] = []
         args.extend(["--prompt", prompt])
@@ -561,6 +579,8 @@ class Sweep[I]:
             args.extend(["--layout", layout])
         if preview:
             args.extend(["--preview", preview])
+        if window_uid:
+            args.extend(["--window-uid", json.dumps(window_uid)])
         sweep = sweep or ["sweep"]
         self._args: list[str] = [*sweep, "--rpc", *args]
         self._proc: Process | None = None
@@ -657,6 +677,8 @@ class Sweep[I]:
                     size = SweepSize.from_json(event.params)
                     self._size = size
                     yield size
+                elif event.method == "window":
+                    yield SweepWindow.from_json(event.params)
                 elif event.method == "field_missing":
                     ref = event.params.get("ref")
                     if (
@@ -763,7 +785,6 @@ class Sweep[I]:
 
     async def items_clear(self) -> None:
         """Clear list of searchable items"""
-        self._items.clear()
         await self._peer.items_clear()
 
     async def items_current(self) -> I | None:
@@ -838,9 +859,9 @@ class Sweep[I]:
             self._binds.pop(tag, None)
         await self._peer.bind(key=key, tag=tag, desc=desc)
 
-    async def stack_push(self) -> None:
+    async def stack_push(self, uid: Any) -> None:
         """Push new empty state"""
-        await self._peer.stack_push()
+        await self._peer.stack_push(uid=uid)
 
     async def stack_pop(self) -> None:
         """Pop previous state from the stack"""
@@ -854,6 +875,7 @@ class Sweep[I]:
         keep_order: bool | None = None,
         theme: str | None = None,
         scorer: str | None = None,
+        window_uid: Any = None,
     ) -> list[H]:
         """Create sub-sweep view to select from the list of items"""
         haystack: list[H | dict[str, Any]] = []
@@ -874,6 +896,7 @@ class Sweep[I]:
             keep_order=keep_order,
             theme=theme,
             scorer=scorer,
+            uid=window_uid,
         )
         result: list[H] = []
         for item in selected:

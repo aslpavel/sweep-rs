@@ -111,8 +111,9 @@ async fn main() -> Result<(), Error> {
             prompt_icon: Some(args.prompt_icon),
             theme,
             keep_order: args.keep_order,
-            tty_path: args.tty_path.clone(),
-            title: args.title.clone(),
+            tty_path: args.tty_path,
+            title: args.title,
+            window_uid: args.window_uid,
             scorers: VecDeque::new(),
             layout: args.layout.unwrap_or_else(|| {
                 if args.preview_builder.is_some() {
@@ -273,6 +274,10 @@ pub struct Args {
     #[argh(option, default = "\"sweep\".to_string()")]
     pub title: String,
 
+    /// internal windows stack window identifier
+    #[argh(option, from_str_fn(parse_value), default = "\"default\".into()")]
+    pub window_uid: serde_json::Value,
+
     /// candidates in JSON pre line format (same encoding as RPC)
     #[argh(switch)]
     pub json: bool,
@@ -300,6 +305,10 @@ pub struct Args {
     /// show sweep version and quit
     #[argh(switch)]
     pub version: bool,
+}
+
+fn parse_value(value: &str) -> Result<serde_json::Value, String> {
+    serde_json::from_str(value).map_err(|error| error.to_string())
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

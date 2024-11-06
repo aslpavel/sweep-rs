@@ -277,6 +277,7 @@ impl Navigator {
                         mode.enter(self).await?;
                     }
                 }
+                SweepEvent::Window { .. } => {}
             }
         }
         Ok(Vec::new())

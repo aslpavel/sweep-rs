@@ -24,7 +24,6 @@ from .. import (
     SweepBind,
     SweepEvent,
     SweepSelect,
-    SweepSize,
     Text,
 )
 from . import sweep_default_cmd
@@ -102,6 +101,29 @@ ICON_FOOT = Icon(
     size=(1, 3),
     path="M81.51 20.43L81.51 20.43Q84.19 20.43 86.45 21.88Q88.72 23.32 89.75 25.79Q90.78 28.26 90.26 30.84Q89.75 33.41 87.79 35.37Q85.83 37.32 83.26 37.84Q80.68 38.35 78.21 37.32Q75.74 36.29 74.30 34.03Q72.86 31.76 72.86 29.09L72.86 29.09Q72.86 25.58 75.43 23.01Q78.01 20.43 81.51 20.43ZM64.21 24.76L64.21 24.76Q66.88 24.76 68.84 26.72Q70.80 28.67 70.80 31.35Q70.80 34.03 68.84 35.99Q66.88 37.94 64.21 37.94Q61.53 37.94 59.57 35.99Q57.61 34.03 57.61 31.35Q57.61 28.67 59.57 26.72Q61.53 24.76 64.21 24.76ZM51.23 31.35L51.23 31.35Q53.08 31.35 54.32 32.59Q55.55 33.82 55.55 35.68Q55.55 37.53 54.32 38.87Q53.08 40.21 51.23 40.21Q49.37 40.21 48.14 38.87Q46.90 37.53 46.90 35.68Q46.90 33.82 48.14 32.59Q49.37 31.35 51.23 31.35ZM42.17 37.94L42.17 37.94Q44.02 37.94 45.36 39.18Q46.70 40.41 46.70 42.27Q46.70 44.12 45.36 45.46Q44.02 46.80 42.17 46.80Q40.31 46.80 39.08 45.46Q37.84 44.12 37.84 42.27Q37.84 40.41 39.08 39.18Q40.31 37.94 42.17 37.94ZM75.12 64.31L75.12 64.31Q80.07 64.31 83.26 60.70Q86.45 57.10 86.04 52.16L86.04 52.16Q85.42 47.83 82.13 45.05Q78.83 42.27 74.51 42.27L74.51 42.27L63.59 42.27Q54.73 42.27 47.62 47.73Q40.52 53.19 38.25 61.63L38.25 61.63Q37.22 64.93 38.66 67.81L38.66 67.81Q41.55 73.99 41.44 80.68Q41.34 87.38 38.66 93.15L38.66 93.15Q36.81 97.06 38.87 100.77L38.87 100.77Q41.75 105.09 46.39 107.05Q51.02 109.01 55.97 107.77L55.97 107.77Q59.67 106.95 62.56 104.58Q65.44 102.21 66.88 98.71Q68.33 95.21 67.91 91.50Q67.50 87.79 65.44 84.60Q63.38 81.41 63.59 77.49L63.59 77.49L63.59 77.49Q63.38 74.20 64.62 70.90L64.62 70.90Q67.30 64.31 75.12 64.31Z",
 )
+
+
+async def yes_or_no(sweep: Sweep[Any]) -> bool | None:
+    yes_or_no = await sweep.quick_select(
+        [
+            Candidate()
+            .target_push("Y", face="bg=gruv-red-2/.5,bold")
+            .target_push("es")
+            .hotkey_set("y")
+            .wrap(True),
+            Candidate()
+            .target_push("N", face="bg=gruv-green-2/.5,bold")
+            .target_push("o")
+            .hotkey_set("n")
+            .wrap(False),
+        ],
+        prompt="Yes/No",
+        prompt_icon=ICON_BACKPACK,
+        theme="accent=gruv-red-2",
+    )
+    if len(yes_or_no) != 1:
+        return None
+    return yes_or_no[0].value
 
 
 async def main(args: list[str] | None = None) -> None:
@@ -227,6 +249,7 @@ async def main(args: list[str] | None = None) -> None:
         tty=opts.tty,
         theme=opts.theme,
         log=opts.log,
+        window_uid="demo",
     ) as sweep:
         foot_ref = ViewRef(
             await sweep.view_register(Text(glyph=ICON_FOOT, face="fg=bg"))
@@ -243,40 +266,26 @@ async def main(args: list[str] | None = None) -> None:
         await sweep.items_extend(candidates)
 
         async for event in sweep:
-            if isinstance(event, SweepSize):
-                continue
-            elif isinstance(event, SweepSelect) and len(event.items) == 1:
-                item = event.items[0]
-                if isinstance(item, Candidate) and item.extra:
-                    match item.extra:
-                        case {"clicked": clicked}:
-                            await sweep.item_update(0, candidate_clicked(clicked + 1))
-                            continue
-                        case {"confirm": True}:
-                            confirm = await sweep.quick_select(
-                                [
-                                    Candidate()
-                                    .target_push("Y", face="bg=gruv-red-2/.5,bold")
-                                    .target_push("es")
-                                    .hotkey_set("y")
-                                    .wrap(True),
-                                    Candidate()
-                                    .target_push("N", face="bg=gruv-green-2/.5,bold")
-                                    .target_push("o")
-                                    .hotkey_set("n")
-                                    .wrap(False),
-                                ],
-                                prompt="Yes/No",
-                                prompt_icon=ICON_BACKPACK,
-                                theme="accent=gruv-red-2",
-                            )
-                            if len(confirm) == 0 or not confirm[0].value:
+            match event:
+                case SweepSelect(items) if len(items) == 1:
+                    item = items[0]
+                    if isinstance(item, Candidate) and item.extra:
+                        match item.extra:
+                            case {"clicked": clicked}:
+                                await sweep.item_update(
+                                    0, candidate_clicked(clicked + 1)
+                                )
                                 continue
-                        case _:
-                            pass
-            elif isinstance(event, SweepBind) and event.tag == "clicked":
-                await sweep.item_update(0, candidate_clicked(0))
-                continue
+                            case {"confirm": True}:
+                                if not await yes_or_no(sweep):
+                                    continue
+                            case _:
+                                pass
+                case SweepBind(tag="clicked"):
+                    await sweep.item_update(0, candidate_clicked(0))
+                    continue
+                case _:
+                    continue
             result = event
             break
 
