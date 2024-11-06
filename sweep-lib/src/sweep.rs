@@ -167,11 +167,11 @@ enum SweepRequest<H> {
     },
     HaystackClear,
     RankerKeepOrder(Option<bool>),
-    StackPush {
+    WindowSwitch {
         window: Option<Box<dyn Window>>,
         uid: Value,
     },
-    StackPop,
+    WindowPop,
     RenderSuppress(bool),
 }
 
@@ -222,13 +222,13 @@ where
     }
 
     /// Create new state and put on the top of the stack of active states
-    pub fn stack_push(&self, uid: Value) {
-        self.send_request(SweepRequest::StackPush { window: None, uid })
+    pub fn window_switch(&self, uid: Value) {
+        self.send_request(SweepRequest::WindowSwitch { window: None, uid })
     }
 
     /// Remove state at the top of the stack and active one below it
-    pub fn stack_pop(&self) {
-        self.send_request(SweepRequest::StackPop)
+    pub fn window_pop(&self) {
+        self.send_request(SweepRequest::WindowPop)
     }
 
     /// Toggle preview associated with the current item
@@ -369,27 +369,28 @@ where
         I: IntoIterator,
         I::Item: Haystack,
     {
-        let options = options.unwrap_or_else(|| &self.options);
         let (send, recv) = oneshot::channel();
-        let send = std::sync::Mutex::new(Some(send)); // one shot is moved on send
         let mut window = SweepWindow::new_from_options(
-            options,
+            options.unwrap_or_else(|| &self.options),
             items_context,
             self.term_waker.clone(),
             None,
-            Arc::new(move |event| {
-                if let SweepEvent::Select(selected) = event {
-                    if let Some(send) = send.with_mut(|send| send.take()) {
-                        _ = send.send(selected);
+            Arc::new({
+                let send = std::sync::Mutex::new(Some(send)); // one shot is moved on send
+                move |event| {
+                    if let SweepEvent::Select(selected) = event {
+                        if let Some(send) = send.with_mut(|send| send.take()) {
+                            _ = send.send(selected);
+                        }
+                        Ok(WindowAction::Pop(Value::Null))
+                    } else {
+                        Ok(WindowAction::Nothing)
                     }
-                    Ok(WindowAction::Pop(Value::Null))
-                } else {
-                    Ok(WindowAction::Nothing)
                 }
             }),
         );
         window.haystack_extend(items.into_iter().collect());
-        self.send_request(SweepRequest::StackPush {
+        self.send_request(SweepRequest::WindowSwitch {
             window: Some(Box::new(window)),
             uid,
         });
@@ -683,23 +684,23 @@ where
         });
 
         // window stack push
-        peer.register("stack_push", {
+        peer.register("window_switch", {
             let sweep = self.clone();
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
                     let uid = params.take_opt(0, "uid")?;
-                    sweep.stack_push(uid.unwrap_or(Value::Null));
+                    sweep.window_switch(uid.unwrap_or(Value::Null));
                     Ok(Value::Null)
                 }
             }
         });
 
         // window stack push
-        peer.register("stack_pop", {
+        peer.register("window_pop", {
             let sweep = self.clone();
             move |_params: Value| {
-                sweep.stack_pop();
+                sweep.window_pop();
                 future::ok(Value::Null)
             }
         });
@@ -1449,11 +1450,11 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 Terminate => return Ok(WindowAction::Quit),
-                StackPush { window, uid } => {
+                WindowSwitch { window, uid } => {
                     let window = window.unwrap_or_else(|| Box::new(self.window_clone()));
                     return Ok(WindowAction::Push { window, uid });
                 }
-                StackPop => return Ok(WindowAction::Pop(Value::Null)),
+                WindowPop => return Ok(WindowAction::Pop(Value::Null)),
                 RenderSuppress(suppress) => {
                     self.render_suppress_sync = if suppress {
                         Some(Arc::new(AtomicBool::new(false)))
@@ -1728,6 +1729,13 @@ impl WindowStack {
         Self::default()
     }
 
+    /// Find window position by its uid
+    pub fn position(&self, uid: &Value) -> Option<usize> {
+        self.windows
+            .iter()
+            .position(|(uid_win, _win)| uid_win == uid)
+    }
+
     /// Switch to a different window
     ///
     /// window    - if provided switch to this window, registering it with uid
@@ -1736,9 +1744,12 @@ impl WindowStack {
     pub fn switch(
         &mut self,
         uid: Option<Value>,
-        window: Option<Box<dyn Window>>,
+        mut window: Option<Box<dyn Window>>,
         args: Value,
     ) -> Result<WindowAction, Error> {
+        if uid.as_ref().and_then(|uid| self.position(uid)).is_some() {
+            window.take();
+        }
         let (from, to) = match (window, uid) {
             (Some(window), uid) => {
                 // new window
@@ -1758,11 +1769,7 @@ impl WindowStack {
                 let Some(uid_from) = self.windows.last().map(|(uid, _win)| uid.clone()) else {
                     return Ok(WindowAction::Quit);
                 };
-                let Some(index_to) = self
-                    .windows
-                    .iter()
-                    .position(|(uid_win, _win)| uid_win == &uid)
-                else {
+                let Some(index_to) = self.position(&uid) else {
                     return Ok(WindowAction::Nothing);
                 };
                 let index_from = self.windows.len() - 1;

@@ -859,7 +859,7 @@ class MPDSweep:
         if songs is None:
             songs = await self._mpd.listallinfo()
         self._view = MPDSweepView.SONGS
-        await self._sweep.stack_push("songs")
+        await self._sweep.window_switch("songs")
         async with self._sweep.render_suppress():
             await self._sweep.prompt_set(prompt or "Songs", icon=DATABASE_ICON)
             await self._sweep.items_clear()

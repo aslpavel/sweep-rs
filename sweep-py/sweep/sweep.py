@@ -859,13 +859,13 @@ class Sweep[I]:
             self._binds.pop(tag, None)
         await self._peer.bind(key=key, tag=tag, desc=desc)
 
-    async def stack_push(self, uid: Any) -> None:
+    async def window_switch(self, uid: Any) -> None:
         """Push new empty state"""
-        await self._peer.stack_push(uid=uid)
+        await self._peer.window_switch(uid=uid)
 
-    async def stack_pop(self) -> None:
+    async def window_pop(self) -> None:
         """Pop previous state from the stack"""
-        await self._peer.stack_pop()
+        await self._peer.window_pop()
 
     async def quick_select[H](
         self,
