@@ -163,8 +163,10 @@ async def main(args: list[str] | None = None) -> None:
     candidates = [
         # counter
         candidate_clicked(0).hotkey_set("1"),
-        # simple fields
-        "Simple string entry",
+        Candidate()
+        .target_push("Confirm select")
+        .extra_update(confirm=True)
+        .hotkey_set("2"),
         Candidate()
         .target_push("Disabled text: ", active=False)
         .target_push("Enabled text")
@@ -245,13 +247,33 @@ async def main(args: list[str] | None = None) -> None:
                 continue
             elif isinstance(event, SweepSelect) and len(event.items) == 1:
                 item = event.items[0]
-                if (
-                    isinstance(item, Candidate)
-                    and item.extra
-                    and (clicked := item.extra.get("clicked")) is not None
-                ):
-                    await sweep.item_update(0, candidate_clicked(clicked + 1))
-                    continue
+                if isinstance(item, Candidate) and item.extra:
+                    match item.extra:
+                        case {"clicked": clicked}:
+                            await sweep.item_update(0, candidate_clicked(clicked + 1))
+                            continue
+                        case {"confirm": True}:
+                            confirm = await sweep.quick_select(
+                                [
+                                    Candidate()
+                                    .target_push("Y", face="bg=gruv-red-2/.5,bold")
+                                    .target_push("es")
+                                    .hotkey_set("y")
+                                    .wrap(True),
+                                    Candidate()
+                                    .target_push("N", face="bg=gruv-green-2/.5,bold")
+                                    .target_push("o")
+                                    .hotkey_set("n")
+                                    .wrap(False),
+                                ],
+                                prompt="Yes/No",
+                                prompt_icon=ICON_BACKPACK,
+                                theme="accent=gruv-red-2",
+                            )
+                            if len(confirm) == 0 or not confirm[0].value:
+                                continue
+                        case _:
+                            pass
             elif isinstance(event, SweepBind) and event.tag == "clicked":
                 await sweep.item_update(0, candidate_clicked(0))
                 continue

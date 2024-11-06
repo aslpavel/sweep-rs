@@ -257,6 +257,7 @@ pub enum RpcErrorKind {
     SerdeError,
     IOError,
     ServeError,
+    SurfNTerm,
     Other { code: i32, message: String },
 }
 
@@ -273,6 +274,7 @@ impl RpcErrorKind {
             1000 => PeerDisconnected,
             1001 => SerdeError,
             1002 => IOError,
+            1003 => SurfNTerm,
             _ => Other { code, message },
         }
     }
@@ -289,6 +291,7 @@ impl RpcErrorKind {
             PeerDisconnected => 1000,
             SerdeError => 1001,
             IOError => 1002,
+            SurfNTerm => 1003,
             Other { code, .. } => *code,
         }
     }
@@ -303,8 +306,9 @@ impl RpcErrorKind {
             InternalError => "Internal error",
             PeerDisconnected => "Peer disconnected",
             SerdeError => "Faield to (de)serialize",
-            IOError => "Imput/Output Error",
-            ServeError => "RpcPeer::serve called second time",
+            IOError => "Imput/Output error",
+            ServeError => "Serve error",
+            SurfNTerm => "surf-n-term error",
             Other { message, .. } => message.as_ref(),
         }
     }
@@ -374,6 +378,15 @@ impl From<anyhow::Error> for RpcError {
     fn from(error: anyhow::Error) -> Self {
         Self {
             kind: RpcErrorKind::InternalError,
+            data: error.to_string(),
+        }
+    }
+}
+
+impl From<surf_n_term::Error> for RpcError {
+    fn from(error: surf_n_term::Error) -> Self {
+        Self {
+            kind: RpcErrorKind::SurfNTerm,
             data: error.to_string(),
         }
     }

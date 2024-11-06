@@ -15,7 +15,9 @@ use serde::{
 };
 use serde_json::{json, Value};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
+    fmt,
     future::Future,
     marker::PhantomData,
     mem,
@@ -55,10 +57,11 @@ lazy_static::lazy_static! {
 }
 const SWEEP_SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
+#[derive(Clone)]
 pub struct SweepOptions {
-    pub keep_order: bool,
     pub prompt: String,
     pub prompt_icon: Option<Glyph>,
+    pub keep_order: bool,
     pub scorers: VecDeque<ScorerBuilder>,
     pub theme: Theme,
     pub title: String,
@@ -84,11 +87,31 @@ impl Default for SweepOptions {
     }
 }
 
+impl fmt::Debug for SweepOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let scorers: Vec<_> = self
+            .scorers
+            .iter()
+            .map(|builder| builder("").name().to_owned())
+            .collect();
+        f.debug_struct("SweepOptions")
+            .field("prompt", &self.prompt)
+            .field("prompt_icon", &self.prompt_icon)
+            .field("keep_order", &self.keep_order)
+            .field("scorers", &scorers)
+            .field("theme", &self.theme)
+            .field("title", &self.title)
+            .field("tty_path", &self.tty_path)
+            .field("layout", &self.layout)
+            .finish()
+    }
+}
+
 /// Simple sweep function when you just need to select single entry from the stream of items
 pub async fn sweep<IS, I, E>(
-    items: IS,
-    items_context: I::Context,
     options: SweepOptions,
+    items_context: I::Context,
+    items: IS,
 ) -> Result<Vec<I>, Error>
 where
     IS: Stream<Item = Result<I, E>>,
@@ -142,8 +165,8 @@ enum SweepRequest<H> {
     },
     HaystackClear,
     RankerKeepOrder(Option<bool>),
-    StatePush,
-    StatePop,
+    StackPush(Option<Box<dyn Window>>),
+    StackPop,
     RenderSuppress(bool),
 }
 
@@ -184,22 +207,22 @@ where
         self.requests
             .send(request)
             .expect("failed to send request to sweep_worker");
-        self.waker.wake().expect("failed to wake terminal");
+        self.term_waker.wake().expect("failed to wake terminal");
     }
 
     /// Get terminal waker
     pub fn waker(&self) -> TerminalWaker {
-        self.waker.clone()
+        self.term_waker.clone()
     }
 
     /// Create new state and put on the top of the stack of active states
-    pub fn state_push(&self) {
-        self.send_request(SweepRequest::StatePush)
+    pub fn stack_push(&self) {
+        self.send_request(SweepRequest::StackPush(None))
     }
 
     /// Remove state at the top of the stack and active one below it
-    pub fn state_pop(&self) {
-        self.send_request(SweepRequest::StatePop)
+    pub fn stack_pop(&self) {
+        self.send_request(SweepRequest::StackPop)
     }
 
     /// Toggle preview associated with the current item
@@ -325,6 +348,44 @@ where
         self.send_request(SweepRequest::RenderSuppress(suppress))
     }
 
+    /// Select from the list of items
+    ///
+    /// Useful when you only need to select from few items (i.e Y/N) and type
+    /// of items is not necessarily equal to the type of the [Sweep] instance items
+    pub async fn quick_select<I>(
+        &self,
+        options: Option<&SweepOptions>,
+        items_context: <I::Item as Haystack>::Context,
+        items: I,
+    ) -> Result<Vec<I::Item>, Error>
+    where
+        I: IntoIterator,
+        I::Item: Haystack,
+    {
+        let options = options.unwrap_or_else(|| &self.options);
+        let (send, recv) = oneshot::channel();
+        let send = std::sync::Mutex::new(Some(send)); // one shot is moved on send
+        let mut window = SweepWindow::new_from_options(
+            options,
+            items_context,
+            self.term_waker.clone(),
+            None,
+            Arc::new(move |event| {
+                if let SweepEvent::Select(selected) = event {
+                    if let Some(send) = send.with_mut(|send| send.take()) {
+                        _ = send.send(selected);
+                    }
+                    Ok(WindowAction::Pop(Value::Null))
+                } else {
+                    Ok(WindowAction::Nothing)
+                }
+            }),
+        );
+        window.haystack_extend(items.into_iter().collect());
+        self.send_request(SweepRequest::StackPush(Some(Box::new(window))));
+        Ok(recv.await.unwrap_or(Vec::new()))
+    }
+
     /// Wait for single event in the asynchronous context
     pub async fn next_event(&self) -> Option<SweepEvent<H>> {
         let mut receiver = self.events.lock().await;
@@ -334,7 +395,7 @@ where
     /// Wait for sweep to correctly terminate and cleanup terminal
     pub async fn terminate(&self) {
         let _ = self.requests.send(SweepRequest::Terminate);
-        let _ = self.waker.wake();
+        let _ = self.term_waker.wake();
         if let Some(terminated) = self.terminated.with_mut(|t| t.take()) {
             let _ = terminated.await;
         }
@@ -342,7 +403,9 @@ where
 }
 
 pub struct SweepInner<H: Haystack> {
-    waker: TerminalWaker,
+    options: SweepOptions,
+    haystack_context: H::Context,
+    term_waker: TerminalWaker,
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
     requests: Sender<SweepRequest<H>>,
     events: Mutex<mpsc::UnboundedReceiver<SweepEvent<H>>>,
@@ -362,6 +425,8 @@ impl<H: Haystack> SweepInner<H> {
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
         let waker = term.waker();
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
+            let options = options.clone();
+            let haystack_context = haystack_context.clone();
             move || {
                 sweep_ui_worker(options, term, requests_recv, events_send, haystack_context)
                     .inspect(|_result| {
@@ -370,7 +435,9 @@ impl<H: Haystack> SweepInner<H> {
             }
         })?;
         Ok(SweepInner {
-            waker,
+            options,
+            haystack_context,
+            term_waker: waker,
             ui_worker: Some(worker),
             requests: requests_send,
             events: Mutex::new(events_recv),
@@ -385,7 +452,7 @@ where
 {
     fn drop(&mut self) {
         let _ = self.requests.send(SweepRequest::Terminate);
-        self.waker.wake().unwrap_or(());
+        self.term_waker.wake().unwrap_or(());
         if let Some(handle) = self.ui_worker.take() {
             if let Err(error) = handle.join() {
                 tracing::error!("[SweepInner.drop] ui worker thread failed: {:?}", error);
@@ -605,21 +672,55 @@ where
             }
         });
 
-        // state_push
-        peer.register("state_push", {
+        // window stack push
+        peer.register("stack_push", {
             let sweep = self.clone();
             move |_params: Value| {
-                sweep.state_push();
+                sweep.stack_push();
                 future::ok(Value::Null)
             }
         });
 
-        // state_push
-        peer.register("state_pop", {
+        // window stack push
+        peer.register("stack_pop", {
             let sweep = self.clone();
             move |_params: Value| {
-                sweep.state_pop();
+                sweep.stack_pop();
                 future::ok(Value::Null)
+            }
+        });
+
+        // show quick select
+        peer.register("quick_select", {
+            let sweep = self.clone();
+            let seed = seed.clone();
+            move |mut params: RpcParams| {
+                let sweep = sweep.clone();
+                let seed = seed.clone();
+                async move {
+                    let items = params.take_seed(VecDeserializeSeed(seed), 0, "items")?;
+                    let mut options = sweep.options.clone();
+                    if let Some(prompt) = params.take_opt(1, "prompt")? {
+                        options.prompt = prompt;
+                    }
+                    if let Some(prompt_icon) = params.take_opt(2, "prompt_icon")? {
+                        options.prompt_icon = prompt_icon;
+                    }
+                    if let Some(keep_order) = params.take_opt(3, "keep_order")? {
+                        options.keep_order = keep_order;
+                    }
+                    if let Some(theme) = params.take_opt::<String>(4, "theme")? {
+                        options.theme = theme.parse()?;
+                    }
+                    if let Some(scorer) = params.take_opt::<Cow<'_, str>>(5, "scorer")? {
+                        scorer_by_name(&mut options.scorers, Some(scorer.as_ref()));
+                    }
+                    let result = sweep
+                        .quick_select(Some(&options), sweep.haystack_context.clone(), items)
+                        .await?;
+                    let result_value = serde_json::to_value(result)?;
+                    Ok(result_value)
+                }
             }
         });
 
@@ -836,7 +937,7 @@ impl SweepAction {
     }
 }
 
-type SweepEventHandler<H> = Arc<dyn Fn(SweepEvent<H>) -> Result<WindowAction, Error>>;
+type SweepEventHandler<H> = Arc<dyn Fn(SweepEvent<H>) -> Result<WindowAction, Error> + Send + Sync>;
 
 /// Object representing current state of the sweep worker
 struct SweepWindow<H: Haystack> {
@@ -1025,35 +1126,6 @@ where
         self.theme = theme;
     }
 
-    // peek scorer by name, or next
-    fn scorer_by_name(&mut self, name: Option<String>) -> bool {
-        match name {
-            None => {
-                self.scorers.rotate_left(1);
-                self.ranker.scorer_set(self.scorers[0].clone());
-                true
-            }
-            Some(name) => {
-                // find index of the scorer by its name
-                let index = self.scorers.iter().enumerate().find_map(|(i, s)| {
-                    if s("").name() == name {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                });
-                match index {
-                    None => false,
-                    Some(index) => {
-                        self.scorers.swap(0, index);
-                        self.ranker.scorer_set(self.scorers[0].clone());
-                        true
-                    }
-                }
-            }
-        }
-    }
-
     /// Trigger ranker, should be called whenever needle might have changed
     fn ranker_trigger(&self) {
         // ranker only runs if needle has actually been updated, so it is safe
@@ -1101,13 +1173,7 @@ where
                     });
                 }
             }
-            SweepAction::Quit => {
-                return Ok(if self.is_help {
-                    WindowAction::Pop(Value::Null)
-                } else {
-                    WindowAction::Quit
-                })
-            }
+            SweepAction::Quit => return Ok(WindowAction::Pop(Value::Null)),
             SweepAction::Select => {
                 let selected: Vec<H> = if self.marked.with(|marked| !marked.is_empty()) {
                     self.marked.with_mut(|marked| marked.take()).collect()
@@ -1163,7 +1229,7 @@ where
                 }
             }
             SweepAction::ScorerNext => {
-                self.scorer_by_name(None);
+                scorer_by_name(&mut self.scorers, None);
             }
             SweepAction::PreviewToggle => self.theme_set(
                 self.theme
@@ -1304,7 +1370,8 @@ impl<H: Haystack> Window for SweepWindow<H> {
                     self.list.cursor_set(position);
                 }
                 ScorerByName(name, resolve) => {
-                    let _ = resolve.send(self.scorer_by_name(name));
+                    let _ =
+                        resolve.send(scorer_by_name(&mut self.scorers, name.as_deref()).is_some());
                 }
                 PreviewSet(value) => {
                     let show_preview = match value {
@@ -1329,25 +1396,28 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 Terminate => return Ok(WindowAction::Quit),
-                StatePush => {
-                    let sweep = SweepWindow::new(
-                        self.prompt.clone(),
-                        self.prompt_icon.clone(),
-                        Ranker::new({
-                            let term_waker = self.term_waker.clone();
-                            move |_| term_waker.wake().is_ok()
-                        }),
-                        self.theme.clone(),
-                        self.scorers.clone(),
-                        self.haystack_context.clone(),
-                        self.term_waker.clone(),
-                        self.requests.clone(),
-                        self.event_handler.clone(),
-                        false,
-                    );
-                    return Ok(WindowAction::Push(Box::new(sweep)));
+                StackPush(window) => {
+                    let window = window.unwrap_or_else(|| {
+                        let window = SweepWindow::new(
+                            self.prompt.clone(),
+                            self.prompt_icon.clone(),
+                            Ranker::new({
+                                let term_waker = self.term_waker.clone();
+                                move |_| term_waker.wake().is_ok()
+                            }),
+                            self.theme.clone(),
+                            self.scorers.clone(),
+                            self.haystack_context.clone(),
+                            self.term_waker.clone(),
+                            self.requests.clone(),
+                            self.event_handler.clone(),
+                            false,
+                        );
+                        Box::new(window)
+                    });
+                    return Ok(WindowAction::Push(window));
                 }
-                StatePop => return Ok(WindowAction::Pop(Value::Null)),
+                StackPop => return Ok(WindowAction::Pop(Value::Null)),
                 RenderSuppress(suppress) => {
                     self.render_suppress_sync = if suppress {
                         Some(Arc::new(AtomicBool::new(false)))
@@ -1559,7 +1629,7 @@ enum WindowAction {
     Nothing,
 }
 
-trait Window {
+trait Window: Send + Sync {
     /// Process pending on every loop
     fn process(&mut self) -> Result<WindowAction, Error>;
 
@@ -1703,7 +1773,7 @@ where
     events.send(SweepEvent::Resize(term_size))?;
 
     let mut window_stack = WindowStack::new();
-    window_stack.push(Box::new(SweepWindow::<H>::new_from_options(
+    window_stack.push(Box::new(SweepWindow::new_from_options(
         &options,
         haystack_context.clone(),
         term.waker(),
@@ -2222,6 +2292,29 @@ where
             .add_flex_child(1.0, preview)
             .add_child(scrollbar);
         view
+    }
+}
+
+fn scorer_by_name(
+    scorers: &mut VecDeque<ScorerBuilder>,
+    name: Option<&str>,
+) -> Option<ScorerBuilder> {
+    match name {
+        None => {
+            scorers.rotate_left(1);
+            Some(scorers[0].clone())
+        }
+        Some(name) => scorers
+            .iter()
+            .enumerate()
+            .find_map(|(index, scorer)| {
+                let index = (scorer("").name() == name).then_some(index)?;
+                Some((index, scorer.clone()))
+            })
+            .map(|(index, scorer)| {
+                scorers.swap(0, index);
+                scorer
+            }),
     }
 }
 

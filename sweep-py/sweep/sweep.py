@@ -294,6 +294,9 @@ class Candidate:
         self.hotkey = hotkey
         return self
 
+    def wrap[V](self, value: V) -> CandidateWrapped[V]:
+        return CandidateWrapped(value, self)
+
     def __repr__(self) -> str:
         attrs: list[str] = []
         if self.target is not None:
@@ -370,6 +373,15 @@ class Candidate:
             preview_flex=preview_flex,
             hotkey=hotkey,
         )
+
+
+@dataclass
+class CandidateWrapped[V]:
+    value: V
+    candidate: Candidate
+
+    def to_candidate(self) -> Candidate:
+        return self.candidate
 
 
 type SweepEvent[I] = SweepBind | SweepSize | SweepSelect[I]
@@ -826,13 +838,53 @@ class Sweep[I]:
             self._binds.pop(tag, None)
         await self._peer.bind(key=key, tag=tag, desc=desc)
 
-    async def state_push(self) -> None:
+    async def stack_push(self) -> None:
         """Push new empty state"""
-        await self._peer.state_push()
+        await self._peer.stack_push()
 
-    async def state_pop(self) -> None:
+    async def stack_pop(self) -> None:
         """Pop previous state from the stack"""
-        await self._peer.state_pop()
+        await self._peer.stack_pop()
+
+    async def quick_select[H](
+        self,
+        items: Iterable[H],
+        prompt: str | None = None,
+        prompt_icon: Icon | None = None,
+        keep_order: bool | None = None,
+        theme: str | None = None,
+        scorer: str | None = None,
+    ) -> list[H]:
+        """Create sub-sweep view to select from the list of items"""
+        haystack: list[H | dict[str, Any]] = []
+        haystack_index: dict[int, H] = {}
+        for item in items:
+            if isinstance(item, ToCandidate):
+                index = len(haystack_index)
+                haystack_index[index] = item
+                candidate = item.to_candidate()
+                candidate.extra_update(__sweep_item_index=index)
+                haystack.append(candidate.to_json())
+            else:
+                haystack.append(item)
+        selected = await self._peer.quick_select(
+            items=haystack,
+            prompt=prompt,
+            prompt_icon=None if prompt_icon is None else prompt_icon.to_json(),
+            keep_order=keep_order,
+            theme=theme,
+            scorer=scorer,
+        )
+        result: list[H] = []
+        for item in selected:
+            if isinstance(item, dict):
+                item = cast(dict[str, Any], item)
+                item_index = item.get("__sweep_item_index")
+                if item_index is not None and (item := haystack_index.get(item_index)):
+                    result.append(item)
+            else:
+                result.append(item)
+        return result
 
     @asynccontextmanager
     async def render_suppress(self) -> AsyncIterator[None]:

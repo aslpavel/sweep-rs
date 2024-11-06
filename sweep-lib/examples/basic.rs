@@ -9,7 +9,7 @@ async fn main() -> Result<(), Error> {
     let items = ["One", "Two", "Three", "Four", "Five"]
         .into_iter()
         .map(|e| Ok::<_, Infallible>(e.to_owned()));
-    let result = sweep(stream::iter(items), (), Default::default()).await?;
+    let result = sweep(Default::default(), (), stream::iter(items)).await?;
     println!("{:?}", result);
     Ok(())
 }
