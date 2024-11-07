@@ -130,140 +130,185 @@ enum RankerCmd {
     Sync(Arc<AtomicBool>),
 }
 
-fn ranker_worker<N>(receiver: Receiver<RankerCmd>, result: Arc<Mutex<Arc<RankedItems>>>, notify: N)
-where
-    N: Fn(Arc<RankedItems>) -> bool,
-{
-    let mut haystack_gen = 0usize;
-    let mut haystack: StringViewArray = byte_view_concat([]);
-    let mut haystack_appends: Vec<StringViewArray> = Vec::new();
+#[derive(Clone, Copy)]
+enum RankAction {
+    DoNothing,     // ignore
+    Notify,        // only notify
+    Offset(usize), // rank items starting from offset
+    CurrentMatch,  // rank only current match
+    All,           // rank everything
+}
 
-    let mut needle = String::new();
+struct RankerState {
+    haystack_gen: usize,
+    haystack: StringViewArray,
+    haystack_appends: Vec<StringViewArray>,
+    needle: String,
+    keep_order: bool,
+    scorer_builder: ScorerBuilder,
+    scorer: Arc<dyn Scorer>,
+    score: ScoreArray,
+    rank_gen: usize,
+    synced: Vec<Arc<AtomicBool>>,
+    action: RankAction,
+}
 
-    let mut keep_order = false;
-
-    let mut scorer_builder = fuzzy_scorer();
-    let mut scorer = scorer_builder("");
-    let mut score = scorer.score(&haystack, Ok(0), !keep_order);
-
-    let mut rank_gen = 0usize;
-    let mut synced: Vec<Arc<AtomicBool>> = Vec::new();
-
-    loop {
-        #[derive(Clone, Copy)]
-        enum RankAction {
-            DoNothing,     // ignore
-            Notify,        // only notify
-            Offset(usize), // rank items starting from offset
-            CurrentMatch,  // rank only current match
-            All,           // rank everything
-        }
+impl RankerState {
+    // process ranker cmd
+    fn process(&mut self, cmd: RankerCmd) {
         use RankAction::*;
-        let mut action = DoNothing;
+        use RankerCmd::*;
 
-        // block on first event and process all pending requests in one go
-        let cmd = match receiver.recv() {
-            Ok(cmd) => cmd,
-            Err(_) => return,
-        };
-        for cmd in iter::once(cmd).chain(receiver.try_iter()) {
-            use RankerCmd::*;
-            match cmd {
-                Needle(needle_new) => {
-                    action = match action {
-                        DoNothing if needle_new == needle => continue,
-                        DoNothing | CurrentMatch if needle_new.starts_with(&needle) => CurrentMatch,
-                        _ => All,
-                    };
-                    needle = needle_new;
-                    scorer = scorer_builder(&needle);
-                }
-                Scorer(scorer_builder_new) => {
-                    action = All;
-                    scorer_builder = scorer_builder_new;
-                    scorer = scorer_builder(&needle);
-                }
-                HaystackAppend(haystack_append) => {
-                    action = match action {
-                        DoNothing => Offset(haystack.len()),
-                        Offset(offset) => Offset(offset),
-                        _ => All,
-                    };
-                    haystack_appends.push(haystack_append);
-                }
-                HaystackClear => {
-                    action = All;
-                    haystack_gen = haystack_gen.wrapping_add(1);
-                    haystack_appends.clear();
-                    haystack = byte_view_concat([]);
-                }
-                KeepOrder(toggle) => {
-                    action = All;
-                    match toggle {
-                        None => keep_order = !keep_order,
-                        Some(value) => keep_order = value,
+        match cmd {
+            Needle(needle_new) => {
+                self.action = match self.action {
+                    DoNothing if needle_new == self.needle => return,
+                    DoNothing | CurrentMatch if needle_new.starts_with(&self.needle) => {
+                        CurrentMatch
                     }
-                }
-                Sync(sync) => {
-                    action = match action {
-                        DoNothing => Notify,
-                        _ => action,
-                    };
-                    synced.push(sync);
+                    _ => All,
+                };
+                self.needle = needle_new;
+                self.scorer = (self.scorer_builder)(&self.needle);
+            }
+            Scorer(scorer_builder_new) => {
+                self.action = All;
+                self.scorer_builder = scorer_builder_new;
+                self.scorer = (self.scorer_builder)(&self.needle);
+            }
+            HaystackAppend(haystack_append) => {
+                self.action = match self.action {
+                    DoNothing => Offset(self.haystack.len()),
+                    Offset(offset) => Offset(offset),
+                    _ => All,
+                };
+                self.haystack_appends.push(haystack_append);
+            }
+            HaystackClear => {
+                self.action = All;
+                self.haystack_gen = self.haystack_gen.wrapping_add(1);
+                self.haystack_appends.clear();
+                self.haystack = byte_view_concat([]);
+            }
+            KeepOrder(toggle) => {
+                self.action = All;
+                match toggle {
+                    None => self.keep_order = !self.keep_order,
+                    Some(value) => self.keep_order = value,
                 }
             }
+            Sync(sync) => {
+                self.action = match self.action {
+                    DoNothing => Notify,
+                    _ => self.action,
+                };
+                self.synced.push(sync);
+            }
         }
-        if !haystack_appends.is_empty() {
-            haystack = byte_view_concat(iter::once(&haystack).chain(&haystack_appends));
-            haystack_appends.clear();
+    }
+
+    // do actual ranking
+    fn rank(&mut self, result: Arc<Mutex<Arc<RankedItems>>>) {
+        use RankAction::*;
+
+        // collect haystack
+        if !self.haystack_appends.is_empty() {
+            self.haystack =
+                byte_view_concat(iter::once(&self.haystack).chain(&self.haystack_appends));
+            self.haystack_appends.clear();
         }
 
         // rank
         let rank_instant = Instant::now();
-        score = match action {
+        self.score = match self.action {
             DoNothing => {
-                continue;
+                return;
             }
-            Notify => score,
+            Notify => self.score.clone(),
             Offset(offset) => {
                 // score new data
-                score.merge(
-                    scorer.score_par(
-                        &haystack.slice(offset, haystack.len() - offset),
+                self.score.merge(
+                    self.scorer.score_par(
+                        &self.haystack.slice(offset, self.haystack.len() - offset),
                         Ok(offset as u32),
                         false,
                         SCORE_CHUNK_SIZE,
                     ),
-                    !keep_order,
+                    !self.keep_order,
                 )
             }
             CurrentMatch => {
                 // score current matches
-                score.score_par(&scorer, !keep_order, SCORE_CHUNK_SIZE)
+                self.score
+                    .score_par(&self.scorer, !self.keep_order, SCORE_CHUNK_SIZE)
             }
             All => {
                 // score all haystack elements
-                scorer.score_par(&haystack, Ok(0), !keep_order, SCORE_CHUNK_SIZE)
+                self.scorer
+                    .score_par(&self.haystack, Ok(0), !self.keep_order, SCORE_CHUNK_SIZE)
             }
         };
         let rank_elapsed = rank_instant.elapsed();
 
         // update result
-        // TODO: ArcSwap?
-        rank_gen = rank_gen.wrapping_add(1);
+        self.rank_gen = self.rank_gen.wrapping_add(1);
         result.with_mut(|result| {
             *result = Arc::new(RankedItems {
-                haystack_gen,
-                score: score.clone(),
-                scorer: scorer.clone(),
+                score: self.score.clone(),
+                scorer: self.scorer.clone(),
                 duration: rank_elapsed,
-                rank_gen,
+                haystack_gen: self.haystack_gen,
+                rank_gen: self.rank_gen,
             });
         });
-
-        for sync in synced.drain(..) {
+        for sync in self.synced.drain(..) {
             sync.store(true, Ordering::Release);
         }
+    }
+}
+
+impl Default for RankerState {
+    fn default() -> Self {
+        let haystack = byte_view_concat([]);
+        let keep_order = false;
+        let scorer_builder = fuzzy_scorer();
+        let scorer = scorer_builder("");
+        let score = scorer.score(&haystack, Ok(0), !keep_order);
+        Self {
+            haystack_gen: 0,
+            haystack: byte_view_concat([]),
+            haystack_appends: Default::default(),
+            needle: String::new(),
+            keep_order,
+            scorer_builder,
+            scorer,
+            score,
+            rank_gen: 0,
+            synced: Default::default(),
+            action: RankAction::DoNothing,
+        }
+    }
+}
+
+fn ranker_worker<N>(receiver: Receiver<RankerCmd>, result: Arc<Mutex<Arc<RankedItems>>>, notify: N)
+where
+    N: Fn(Arc<RankedItems>) -> bool,
+{
+    let mut state = RankerState::default();
+    loop {
+        // process all pending commands
+        let cmd = match receiver.recv() {
+            Ok(cmd) => cmd,
+            Err(_) => return,
+        };
+        for cmd in iter::once(cmd).chain(receiver.try_iter()) {
+            state.process(cmd);
+        }
+
+        // rank
+        state.rank(result.clone());
+
+        // notify
         if !notify(result.with(|r| r.clone())) {
             return;
         }

@@ -1283,7 +1283,9 @@ where
                 }
             }
             SweepAction::ScorerNext => {
-                scorer_by_name(&mut self.scorers, None);
+                if let Some(scorer) = scorer_by_name(&mut self.scorers, None) {
+                    self.ranker.scorer_set(scorer);
+                }
             }
             SweepAction::PreviewToggle => self.theme_set(
                 self.theme
@@ -1424,8 +1426,13 @@ impl<H: Haystack> Window for SweepWindow<H> {
                     self.list.cursor_set(position);
                 }
                 ScorerByName(name, resolve) => {
-                    let _ =
-                        resolve.send(scorer_by_name(&mut self.scorers, name.as_deref()).is_some());
+                    let _ = match scorer_by_name(&mut self.scorers, name.as_deref()) {
+                        None => resolve.send(false),
+                        Some(scorer) => {
+                            self.ranker.scorer_set(scorer);
+                            resolve.send(true)
+                        }
+                    };
                 }
                 PreviewSet(value) => {
                     let show_preview = match value {
@@ -2414,10 +2421,13 @@ fn scorer_by_name(
     scorers: &mut VecDeque<ScorerBuilder>,
     name: Option<&str>,
 ) -> Option<ScorerBuilder> {
+    if scorers.is_empty() {
+        return None;
+    }
     match name {
         None => {
             scorers.rotate_left(1);
-            Some(scorers[0].clone())
+            scorers.iter().next().cloned()
         }
         Some(name) => scorers
             .iter()
