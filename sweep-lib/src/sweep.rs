@@ -1912,7 +1912,7 @@ where
 
         // swap with last
         let last_index = self.windows.len() - 1;
-        self.windows.swap(index_from, last_index);
+        self.windows.swap(index_to, last_index);
 
         // resume
         if let Some(window) = self.window_current() {
