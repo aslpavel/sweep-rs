@@ -562,7 +562,7 @@ class Sweep[I]:
         tmp_socket: bool = False,
         field_resolver: FiledResolver | None = None,
         view_resolver: ViewResolver | None = None,
-        window_uid: Any | None = None,
+        window_uid: WindowId | None = None,
     ) -> None:
         args: list[str] = []
         args.extend(["--prompt", prompt])
@@ -591,7 +591,7 @@ class Sweep[I]:
         if preview:
             args.extend(["--preview", preview])
         if window_uid:
-            args.extend(["--window-uid", json.dumps(window_uid)])
+            args.extend(["--window-uid", str(window_uid)])
         sweep = sweep or ["sweep"]
         self.__args: list[str] = [*sweep, "--rpc", *args]
         self.__proc: Process | None = None
