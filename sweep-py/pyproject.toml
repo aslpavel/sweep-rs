@@ -9,7 +9,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.pyright]
 typeCheckingMode = "strict"
-extraPaths = ["scripts"]
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+reportAny = false
 
 [tool.ruff]
 target-version = "py312"

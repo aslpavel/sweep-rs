@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 authors = ["Pavel Aslanov <asl.pavel@gmail.com>"]
 edition = "2021"
-version = "0.23.0"
+version = "0.24.0"
 repository = "https://github.com/aslpavel/sweep-rs"
 
 [workspace.dependencies]

@@ -34,11 +34,13 @@ from enum import Enum
 from functools import partial
 from typing import (
     Any,
+    Literal,
     NamedTuple,
     Protocol,
     TypedDict,
     Unpack,
     cast,
+    final,
     override,
     runtime_checkable,
 )
@@ -106,6 +108,7 @@ class SweepBind(NamedTuple):
     tag: str
     key: str | None
 
+    @override
     def __repr__(self):
         return f"SweepBind(tag={self.tag}, key={self.key})"
 
@@ -146,15 +149,18 @@ class SweepSelect[I]:
 class SweepWindow:
     """Fired on window transition"""
 
-    uid_from: Any
-    uid_to: Any
+    type: Literal["closed", "opened", "switched"]
+    uid_from: WindowId | None
+    uid_to: WindowId
 
     @staticmethod
-    def from_json(obj: Any) -> SweepWindow:
+    def from_json(type: str, obj: Any) -> SweepWindow:
         if not isinstance(obj, dict):
             raise ValueError(f"Invalid SweepWindow: {obj}")
+        if type not in ("closed", "opened", "switched"):
+            raise ValueError(f"Invalid SweepWindow type: {type}")
         obj = cast(dict[str, Any], obj)
-        return SweepWindow(uid_from=obj.get("from"), uid_to=obj.get("to"))
+        return SweepWindow(type=type, uid_from=obj.get("from"), uid_to=obj.get("to"))
 
 
 @dataclass
@@ -168,6 +174,7 @@ class Field:
     face: str | None = None
     ref: int | None = None
 
+    @override
     def __repr__(self) -> str:
         attrs: list[str] = []
         if self.text:
@@ -313,6 +320,7 @@ class Candidate:
     def wrap[V](self, value: V) -> CandidateWrapped[V]:
         return CandidateWrapped(value, self)
 
+    @override
     def __repr__(self) -> str:
         attrs: list[str] = []
         if self.target is not None:
@@ -404,6 +412,7 @@ type SweepEvent[I] = SweepBind | SweepSize | SweepSelect[I] | SweepWindow
 type BindHandler[I] = Callable[[Sweep[I], str], Awaitable[I | None]]
 type FiledResolver = Callable[[int], Awaitable[Field | None]]
 type ViewResolver = Callable[[int], Awaitable[View | None]]
+type WindowId = str | int
 
 
 @dataclass
@@ -474,7 +483,7 @@ async def sweep[I](
 
         if views:
             for ref, view in views.items():
-                await sweep.view_register(view, ref)
+                _ = await sweep.view_register(view, ref)
 
         # setup binds
         for bind in binds or []:
@@ -503,6 +512,7 @@ async def sweep[I](
     return []
 
 
+@final
 class Sweep[I]:
     """RPC wrapper around sweep process
 
@@ -517,19 +527,20 @@ class Sweep[I]:
     """
 
     __slots__ = [
-        "_args",
-        "_proc",
-        "_io_sock",
-        "_peer",
-        "_peer_iter",
-        "_tmp_socket",
-        "_items",
-        "_binds",
-        "_field_resolver",
-        "_field_resolved",
-        "_view_resolver",
-        "_view_resolved",
-        "_size",
+        "__args",
+        "__proc",
+        "__io_sock",
+        "__peer",
+        "__peer_iter",
+        "__tmp_socket",
+        "__items",
+        "__binds",
+        "__field_resolver",
+        "__field_resolved",
+        "__view_resolver",
+        "__view_resolved",
+        "__size",
+        "__window_uid_count",
     ]
 
     def __init__(
@@ -582,38 +593,39 @@ class Sweep[I]:
         if window_uid:
             args.extend(["--window-uid", json.dumps(window_uid)])
         sweep = sweep or ["sweep"]
-        self._args: list[str] = [*sweep, "--rpc", *args]
-        self._proc: Process | None = None
-        self._io_sock: socket.socket | None = None
-        self._tmp_socket: bool = tmp_socket  # use tmp socket instead of socket pair
-        self._peer: RpcPeer = RpcPeer()
-        self._peer_iter: AsyncIterator[RpcRequest] = aiter(self._peer)
-        self._size: SweepSize | None = None
-        self._items: list[I] = []
-        self._binds: dict[str, BindHandler[I]] = {}
-        self._field_resolver: FiledResolver | None = field_resolver
-        self._field_resolved: set[int] = set()
-        self._view_resolver: ViewResolver | None = view_resolver
-        self._view_resolved: set[int] = set()
+        self.__args: list[str] = [*sweep, "--rpc", *args]
+        self.__proc: Process | None = None
+        self.__io_sock: socket.socket | None = None
+        self.__tmp_socket: bool = tmp_socket  # use tmp socket instead of socket pair
+        self.__peer: RpcPeer = RpcPeer()
+        self.__peer_iter: AsyncIterator[RpcRequest] = aiter(self.__peer)
+        self.__size: SweepSize | None = None
+        self.__items: list[I] = []
+        self.__binds: dict[str, BindHandler[I]] = {}
+        self.__field_resolver: FiledResolver | None = field_resolver
+        self.__field_resolved: set[int] = set()
+        self.__view_resolver: ViewResolver | None = view_resolver
+        self.__view_resolved: set[int] = set()
+        self.__window_uid_count = 0
 
     async def __aenter__(self) -> Sweep[I]:
-        if self._proc is not None:
+        if self.__proc is not None:
             raise RuntimeError("sweep process is already running")
 
-        if self._tmp_socket:
-            self._io_sock = await self._proc_tmp_socket()
+        if self.__tmp_socket:
+            self.__io_sock = await self.__proc_tmp_socket()
         else:
-            self._io_sock = await self._proc_pair_socket()
-        reader, writer = await asyncio.open_unix_connection(sock=self._io_sock)
-        create_task(self._peer.serve(reader, writer), "sweep-rpc-peer")
+            self.__io_sock = await self.__proc_pair_socket()
+        reader, writer = await asyncio.open_unix_connection(sock=self.__io_sock)
+        create_task(self.__peer.serve(reader, writer), "sweep-rpc-peer")
 
         return self
 
-    async def _proc_pair_socket(self) -> socket.socket:
+    async def __proc_pair_socket(self) -> socket.socket:
         """Create sweep subprocess and connect via inherited socket pair"""
         remote, local = socket.socketpair()
-        prog, *args = self._args
-        self._proc = await asyncio.create_subprocess_exec(
+        prog, *args = self.__args
+        self.__proc = await asyncio.create_subprocess_exec(
             prog,
             *[*args, "--io-socket", str(remote.fileno())],
             pass_fds=[remote.fileno()],
@@ -621,7 +633,7 @@ class Sweep[I]:
         remote.close()
         return local
 
-    async def _proc_tmp_socket(self) -> socket.socket:
+    async def __proc_tmp_socket(self) -> socket.socket:
         """Create sweep subprocess and connect via on disk socket"""
         io_sock_path = os.path.join(
             tempfile.gettempdir(),
@@ -630,20 +642,20 @@ class Sweep[I]:
         if os.path.exists(io_sock_path):
             os.unlink(io_sock_path)
         io_sock_accept = unix_server_once(io_sock_path)
-        prog, *args = self._args
-        self._proc = await asyncio.create_subprocess_exec(
+        prog, *args = self.__args
+        self.__proc = await asyncio.create_subprocess_exec(
             prog,
             *[*args, "--io-socket", io_sock_path],
         )
         return await io_sock_accept
 
-    def _item_get(self, item: Any) -> I:
+    def __item_get(self, item: Any) -> I:
         """Return stored item if it was converted to Candidate"""
         if isinstance(item, dict):
             item_dict = cast(dict[str, Any], item)
             item_index: int | None = item_dict.get("_sweep_item_index")
-            if item_index is not None and item_index < len(self._items):
-                return self._items[item_index]  # type: ignore
+            if item_index is not None and item_index < len(self.__items):
+                return self.__items[item_index]  # type: ignore
         return cast(I, item)
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
@@ -654,16 +666,19 @@ class Sweep[I]:
 
     def __aiter__(self) -> AsyncIterator[SweepEvent[I]]:
         async def event_iter() -> AsyncGenerator[SweepEvent[I], None]:
-            async for event in self._peer_iter:
+            async for event in self.__peer_iter:
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
                     yield SweepSelect(
-                        [self._item_get(item) for item in event.params.get("items", [])]
+                        [
+                            self.__item_get(item)
+                            for item in event.params.get("items", [])
+                        ]
                     )
                 elif event.method == "bind":
                     tag = event.params.get("tag", "")
-                    handler = self._binds.get(tag)
+                    handler = self.__binds.get(tag)
                     if handler is None:
                         yield SweepBind(
                             event.params.get("tag", ""),
@@ -675,30 +690,36 @@ class Sweep[I]:
                             yield SweepSelect([item])
                 elif event.method == "resize":
                     size = SweepSize.from_json(event.params)
-                    self._size = size
+                    self.__size = size
                     yield size
-                elif event.method == "window":
-                    yield SweepWindow.from_json(event.params)
+                elif event.method in (
+                    "window_closed",
+                    "window_opened",
+                    "window_switched",
+                ):
+                    yield SweepWindow.from_json(
+                        event.method.removeprefix("window_"), event.params
+                    )
                 elif event.method == "field_missing":
                     ref = event.params.get("ref")
                     if (
                         ref is None
-                        or ref in self._field_resolved
-                        or self._field_resolver is None
+                        or ref in self.__field_resolved
+                        or self.__field_resolver is None
                     ):
                         continue
-                    field = await self._field_resolver(ref)
+                    field = await self.__field_resolver(ref)
                     if field is not None:
                         await self.field_register(field, ref)
                 elif event.method == "view_missing":
                     ref = event.params.get("ref")
                     if (
                         ref is None
-                        or ref in self._view_resolved
-                        or self._view_resolver is None
+                        or ref in self.__view_resolved
+                        or self.__view_resolver is None
                     ):
                         continue
-                    view = await self._view_resolver(ref)
+                    view = await self.__view_resolver(ref)
                     if view is not None:
                         await self.view_register(view, ref)
 
@@ -706,9 +727,9 @@ class Sweep[I]:
 
     async def terminate(self) -> None:
         """Terminate underlying sweep process"""
-        proc, self._proc = self._proc, None
-        io_sock, self._io_sock = self._io_sock, None
-        self._peer.terminate()
+        proc, self.__proc = self.__proc, None
+        io_sock, self.__io_sock = self.__io_sock, None
+        self.__peer.terminate()
         if io_sock is not None:
             io_sock.close()
         if proc is not None:
@@ -716,12 +737,12 @@ class Sweep[I]:
 
     async def field_register_many(self, fields: dict[int, Field]) -> None:
         for field_ref, field in fields.items():
-            await self.field_register(field, field_ref)
+            _ = await self.field_register(field, field_ref)
 
     async def field_register(self, field: Field, ref: int | None = None) -> int:
         """Register field that can later be reference by field with `ref` set"""
-        ref_val = await self._peer.field_register(field.to_json(), ref)
-        self._field_resolved.add(ref_val)
+        ref_val = await self.__peer.field_register(field.to_json(), ref)
+        self.__field_resolved.add(ref_val)
         return ref_val
 
     def field_resolver_set(
@@ -729,22 +750,22 @@ class Sweep[I]:
         field_resolver: FiledResolver | None,
     ) -> FiledResolver | None:
         """Set field resolver"""
-        field_resolver, self._field_resolver = self._field_resolver, field_resolver
+        field_resolver, self.__field_resolver = self.__field_resolver, field_resolver
         return field_resolver
 
     async def view_register(self, view: View, ref: int | ViewRef | None = None) -> int:
         """Register view that can be later referenced by `ViewRef`"""
-        ref_val = await self._peer.view_register(
+        ref_val = await self.__peer.view_register(
             view.to_json(), ref.ref if isinstance(ref, ViewRef) else ref
         )
-        self._view_resolved.add(ref_val)
+        self.__view_resolved.add(ref_val)
         return ref_val
 
     async def size(self) -> SweepSize:
         """Get size of the Sweep ui"""
-        while self._size is None:
-            await self._peer.events
-        return self._size
+        while self.__size is None:
+            await self.__peer.events
+        return self.__size
 
     async def items_extend(self, items: Iterable[I]) -> None:
         """Extend list of searchable items"""
@@ -754,59 +775,59 @@ class Sweep[I]:
         for item in items:
             if isinstance(item, ToCandidate):
                 candidate = item.to_candidate()
-                candidate.extra_update(_sweep_item_index=len(self._items))
+                candidate.extra_update(_sweep_item_index=len(self.__items))
                 batch.append(candidate.to_json())
-                self._items.append(item)
+                self.__items.append(item)
             else:
                 batch.append(item)
-                self._items.append(item)
+                self.__items.append(item)
 
             time_now = time.monotonic()
             if time_now - time_start >= time_limit:
                 time_start = time_now
                 time_limit *= 1.25
-                await self._peer.items_extend(items=batch)
+                await self.__peer.items_extend(items=batch)
                 batch.clear()
         if batch:
-            await self._peer.items_extend(items=batch)
+            await self.__peer.items_extend(items=batch)
 
     async def item_update(self, index: int, item: I) -> None:
         """Update item by its index"""
         assert index >= 0, "index must be non-negative"
-        if index >= len(self._items):
-            raise IndexError(f"index {index} >= {len(self._items)}")
-        self._items[index] = item
+        if index >= len(self.__items):
+            raise IndexError(f"index {index} >= {len(self.__items)}")
+        self.__items[index] = item
         if isinstance(item, ToCandidate):
             candidate = item.to_candidate()
             candidate.extra_update(_sweep_item_index=index)
-            await self._peer.item_update(index=index, item=candidate.to_json())
+            await self.__peer.item_update(index=index, item=candidate.to_json())
         else:
-            await self._peer.item_update(index=index, item=item)
+            await self.__peer.item_update(index=index, item=item)
 
     async def items_clear(self) -> None:
         """Clear list of searchable items"""
-        await self._peer.items_clear()
+        await self.__peer.items_clear()
 
     async def items_current(self) -> I | None:
         """Get currently selected item if any"""
-        return self._item_get(await self._peer.items_current())
+        return self.__item_get(await self.__peer.items_current())
 
     async def items_marked(self) -> list[I]:
         """Take currently marked items"""
-        items = await self._peer.items_marked()
-        return [self._item_get(item) for item in items]
+        items = await self.__peer.items_marked()
+        return [self.__item_get(item) for item in items]
 
     async def cursor_set(self, position: int) -> None:
         """Set cursor to specified position"""
-        await self._peer.cursor_set(position=position)
+        await self.__peer.cursor_set(position=position)
 
     async def query_set(self, query: str) -> None:
         """Set query string used to filter items"""
-        await self._peer.query_set(query=query)
+        await self.__peer.query_set(query=query)
 
     async def query_get(self) -> str:
         """Get query string used to filter items"""
-        query: str = await self._peer.query_get()
+        query: str = await self.__peer.query_get()
         return query
 
     async def prompt_set(
@@ -821,18 +842,18 @@ class Sweep[I]:
         if icon is not None:
             attrs["icon"] = icon.to_json()
         if attrs:
-            await self._peer.prompt_set(**attrs)
+            await self.__peer.prompt_set(**attrs)
 
     async def preview_set(self, value: bool | None) -> None:
         """Whether to show preview associated with the current item"""
-        await self._peer.preview_set(value=value)
+        await self.__peer.preview_set(value=value)
 
     async def footer_set(self, footer: View | None) -> None:
         """Set footer view"""
         if footer:
-            await self._peer.footer_set(footer=footer.to_json())
+            await self.__peer.footer_set(footer=footer.to_json())
         else:
-            await self._peer.footer_set()
+            await self.__peer.footer_set()
 
     async def bind_struct(self, bind: Bind[I]) -> None:
         await self.bind(bind.key, bind.tag, bind.desc, bind.handler)
@@ -854,18 +875,18 @@ class Sweep[I]:
                otherwise, it called on key press
         """
         if tag and handler:
-            self._binds[tag] = handler
+            self.__binds[tag] = handler
         else:
-            self._binds.pop(tag, None)
-        await self._peer.bind(key=key, tag=tag, desc=desc)
+            self.__binds.pop(tag, None)
+        await self.__peer.bind(key=key, tag=tag, desc=desc)
 
-    async def window_switch(self, uid: Any) -> None:
+    async def window_switch(self, uid: WindowId) -> None:
         """Push new empty state"""
-        await self._peer.window_switch(uid=uid)
+        await self.__peer.window_switch(uid=uid)
 
     async def window_pop(self) -> None:
         """Pop previous state from the stack"""
-        await self._peer.window_pop()
+        await self.__peer.window_pop()
 
     async def quick_select[H](
         self,
@@ -875,7 +896,7 @@ class Sweep[I]:
         keep_order: bool | None = None,
         theme: str | None = None,
         scorer: str | None = None,
-        window_uid: Any = None,
+        window_uid: WindowId | None = None,
     ) -> list[H]:
         """Create sub-sweep view to select from the list of items"""
         haystack: list[H | dict[str, Any]] = []
@@ -889,7 +910,10 @@ class Sweep[I]:
                 haystack.append(candidate.to_json())
             else:
                 haystack.append(item)
-        selected = await self._peer.quick_select(
+        if window_uid is None:
+            self.__window_uid_count += 1
+            window_uid = self.__window_uid_count
+        selected = await self.__peer.quick_select(
             items=haystack,
             prompt=prompt,
             prompt_icon=None if prompt_icon is None else prompt_icon.to_json(),
@@ -913,11 +937,11 @@ class Sweep[I]:
     async def render_suppress(self) -> AsyncIterator[None]:
         """Suppress rending to reduce flicker during batch updates"""
         try:
-            await self._peer.render_suppress(True)
+            await self.__peer.render_suppress(True)
             yield None
         finally:
-            if not self._peer.is_terminated:
-                await self._peer.render_suppress(False)
+            if not self.__peer.is_terminated:
+                await self.__peer.render_suppress(False)
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:
@@ -937,7 +961,7 @@ def unix_server_once(path: str) -> Awaitable[socket.socket]:
             client, _ = server.accept()
             return client
         finally:
-            loop.remove_reader(server.fileno())
+            _ = loop.remove_reader(server.fileno())
             os.unlink(path)
             server.close()
 
@@ -992,15 +1016,18 @@ class RpcResult(NamedTuple):
         return RpcResult(obj.get("result"), obj.get("id"))
 
 
+@final
 class RpcError(Exception):
     __slots__ = ["code", "message", "data", "id"]
 
     def __init__(self, code: int, message: str, data: str | None, id: RpcId) -> None:
+        super().__init__()
         self.code: int = code
         self.message: str = message
         self.data: str | None = data
         self.id: RpcId = id
 
+    @override
     def __str__(self) -> str:
         return f"{self.message}: {self.data}"
 
@@ -1070,49 +1097,50 @@ type RpcParams = list[Any] | dict[str, Any] | None
 type RpcHandler = Callable[..., Any]
 
 
+@final
 class RpcPeer:
     __slots__ = [
-        "_handlers",
-        "_requests",
-        "_requests_next_id",
-        "_write_queue",
-        "_write_notify",
-        "_is_terminated",
-        "_serve_task",
-        "_events",
+        "__handlers",
+        "__requests",
+        "__requests_next_id",
+        "__write_queue",
+        "__write_notify",
+        "__is_terminated",
+        "__serve_task",
+        "__events",
     ]
 
     def __init__(self) -> None:
-        self._handlers: dict[str, RpcHandler] = {}  # registered handlers
-        self._requests: dict[RpcId, Future[Any]] = {}  # unanswered requests
-        self._requests_next_id: int = 0  # index used for next request
-        self._write_queue: deque[RpcMessage] = deque()  # pending messages
-        self._write_notify: Event[None] = Event()  # wake up writer
-        self._is_terminated: bool = False  # whether peer has been terminated
-        self._serve_task: Future[Any] | None = None  # read/write task
-        self._events: Event[RpcRequest] = Event()  # received events (id = None)
+        self.__handlers: dict[str, RpcHandler] = {}  # registered handlers
+        self.__requests: dict[RpcId, Future[Any]] = {}  # unanswered requests
+        self.__requests_next_id: int = 0  # index used for next request
+        self.__write_queue: deque[RpcMessage] = deque()  # pending messages
+        self.__write_notify: Event[None] = Event()  # wake up writer
+        self.__is_terminated: bool = False  # whether peer has been terminated
+        self.__serve_task: Future[Any] | None = None  # read/write task
+        self.__events: Event[RpcRequest] = Event()  # received events (id = None)
 
     @property
     def events(self) -> Event[RpcRequest]:
         """Received events (requests with id = None)"""
-        if self._is_terminated:
+        if self.__is_terminated:
             raise StopAsyncIteration
-        return self._events
+        return self.__events
 
     @property
     def is_terminated(self) -> bool:
-        return self._is_terminated
+        return self.__is_terminated
 
     def register(self, method: str, handler: RpcHandler) -> RpcHandler:
         """Register handler for the provided method name"""
-        if self._is_terminated:
+        if self.__is_terminated:
             raise RuntimeError("peer has already been terminated")
-        self._handlers[method] = handler
+        self.__handlers[method] = handler
         return handler
 
     def notify(self, method: str, *args: Any, **kwargs: Any) -> None:
         """Send event to the other peer"""
-        if self._is_terminated:
+        if self.__is_terminated:
             raise RuntimeError("peer has already been terminated")
 
         params: RpcParams = None
@@ -1123,16 +1151,16 @@ class RpcPeer:
         elif kwargs:
             params = kwargs
 
-        self._submit_message(RpcRequest(method, params, None))
+        self.__submit_message(RpcRequest(method, params, None))
 
     async def call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Call remote method"""
-        if self._is_terminated:
+        if self.__is_terminated:
             raise RuntimeError("peer has already been terminated")
 
         future: Future[Any] = asyncio.get_running_loop().create_future()
-        id = self._requests_next_id
-        self._requests_next_id += 1
+        id = self.__requests_next_id
+        self.__requests_next_id += 1
 
         params: RpcParams = None
         if args and kwargs:
@@ -1142,8 +1170,8 @@ class RpcPeer:
         elif kwargs:
             params = kwargs
 
-        self._requests[id] = future
-        self._submit_message(RpcRequest(method, params, id))
+        self.__requests[id] = future
+        self.__submit_message(RpcRequest(method, params, id))
         return await future
 
     def __getattr__(self, method: str) -> Callable[..., Any]:
@@ -1151,32 +1179,32 @@ class RpcPeer:
         return partial(self.call, method)
 
     def terminate(self) -> None:
-        if self._is_terminated:
+        if self.__is_terminated:
             return
-        self._is_terminated = True
+        self.__is_terminated = True
         # cancel requests and events
-        requests = self._requests.copy()
-        self._requests.clear()
+        requests = self.__requests.copy()
+        self.__requests.clear()
         for request in requests.values():
             request.cancel()
-        self._events.cancel()
+        self.__events.cancel()
         # cancel serve future
-        if self._serve_task is not None:
-            self._serve_task.cancel()
+        if self.__serve_task is not None:
+            self.__serve_task.cancel()
 
     async def serve(self, reader: StreamReader, writer: StreamWriter) -> None:
         """Start serving rpc peer over provided streams"""
-        if self._is_terminated:
+        if self.__is_terminated:
             raise RuntimeError("peer has already been terminated")
-        if self._serve_task is not None:
+        if self.__serve_task is not None:
             raise RuntimeError("serve can only be called once")
 
         try:
-            self._serve_task = asyncio.gather(
-                self._reader(reader),
-                self._writer(writer),
+            self.__serve_task = asyncio.gather(
+                self.__reader(reader),
+                self.__writer(writer),
             )
-            await self._serve_task
+            await self.__serve_task
         except (CancelledError, ConnectionResetError):
             pass
         finally:
@@ -1187,33 +1215,33 @@ class RpcPeer:
         """Asynchronous iterator of events (requests with id = None)"""
         return RpcPeerIter(self)
 
-    def _submit_message(self, message: RpcMessage) -> None:
+    def __submit_message(self, message: RpcMessage) -> None:
         """Submit message for sending to the other peer"""
-        self._write_queue.append(message)
-        self._write_notify(None)
+        self.__write_queue.append(message)
+        self.__write_notify(None)
 
-    def _handle_message(self, message: RpcMessage) -> None:
+    def __handle_message(self, message: RpcMessage) -> None:
         """Handle incoming messages"""
         if isinstance(message, RpcRequest):
             # Events
             if message.id is None:
-                self._events(message)
+                self.__events(message)
 
             # Requests
-            handler = self._handlers.get(message.method)
+            handler = self.__handlers.get(message.method)
             if handler is not None:
                 create_task(
-                    self._handle_request(message, handler),
+                    self.__handle_request(message, handler),
                     f"rpc-handler-{message.method}",
                 )
             elif message.id is not None:
                 error = RpcError.method_not_found(
                     id=message.id, data=str(message.method)
                 )
-                self._submit_message(error)
+                self.__submit_message(error)
         else:
             # Responses
-            future = self._requests.pop(message.id, None)
+            future = self.__requests.pop(message.id, None)
             if isinstance(message, RpcError):
                 if message.id is None:
                     raise message
@@ -1222,7 +1250,7 @@ class RpcPeer:
             elif future is not None and not future.done():
                 future.set_result(message.result)
 
-    async def _handle_request(self, request: RpcRequest, handler: RpcHandler) -> None:
+    async def __handle_request(self, request: RpcRequest, handler: RpcHandler) -> None:
         """Coroutine handling incoming request"""
         # convert params to either args or kwargs
         args: list[Any] = []
@@ -1249,27 +1277,27 @@ class RpcPeer:
             response = RpcError.current(id=id, data=f"[{request.method}]")
 
         if request.id is not None:
-            self._submit_message(response)
+            self.__submit_message(response)
 
-    async def _writer(self, writer: StreamWriter) -> None:
+    async def __writer(self, writer: StreamWriter) -> None:
         """Write submitted messages to the output stream"""
-        while not self._is_terminated:
-            if not self._write_queue:
+        while not self.__is_terminated:
+            if not self.__write_queue:
                 # NOTE: we should never yield before waiting for notify
                 #       and checking queue for emptiness. Otherwise we might block
                 #       on non-empty write queue.
-                await self._write_notify
+                await self.__write_notify
                 continue
-            while self._write_queue:
-                data = self._write_queue.popleft().serialize()
+            while self.__write_queue:
+                data = self.__write_queue.popleft().serialize()
                 writer.write(data)
                 writer.write(b"\n")
             await writer.drain()
         raise CancelledError()
 
-    async def _reader(self, reader: StreamReader) -> None:
+    async def __reader(self, reader: StreamReader) -> None:
         """Read and handle incoming messages"""
-        while not self._is_terminated:
+        while not self.__is_terminated:
             # read json
             data = await reader.readline()
             if not data:
@@ -1287,22 +1315,23 @@ class RpcPeer:
                     id=obj.get("id"),
                     data=data.decode(),
                 )
-                self._submit_message(error)
+                self.__submit_message(error)
                 continue
             # handle message
-            self._handle_message(message)
+            self.__handle_message(message)
         raise CancelledError()
 
 
+@final
 class RpcPeerIter:
     __slots__ = ["peer", "events"]
 
     def __init__(self, peer: RpcPeer) -> None:
         self.peer: RpcPeer = peer
         self.events: deque[RpcRequest] = deque()
-        self.peer.events.on(self._handler)
+        self.peer.events.on(self.__handler)
 
-    def _handler(self, event: RpcRequest) -> bool:
+    def __handler(self, event: RpcRequest) -> bool:
         self.events.append(event)
         return True
 
@@ -1328,6 +1357,7 @@ def create_task[V](coro: Coroutine[Any, Any, V], name: str) -> Task[V]:
 # ------------------------------------------------------------------------------
 
 
+@final
 class Event[E]:
     __slots__ = ["_handlers", "_futures"]
 
@@ -1373,6 +1403,7 @@ class Event[E]:
         self._futures.add(future)
         return future.__await__()
 
+    @override
     def __repr__(self) -> str:
         return f"Events(handlers={len(self._handlers)}, futures={len(self._futures)})"
 
@@ -1381,8 +1412,6 @@ class Event[E]:
 # Views
 # ------------------------------------------------------------------------------
 class View(ABC):
-    __slots__ = []
-
     @abstractmethod
     def to_json(self) -> dict[str, Any]: ...
 
@@ -1395,6 +1424,7 @@ class View(ABC):
         return Tag(tag, self)
 
 
+@final
 class ViewRef(View):
     """Reference to a cached view"""
 
@@ -1449,14 +1479,15 @@ def _4float(
     return (a, b, c, d)
 
 
+@final
 class IconFrame:
     __slots__ = [
-        "_margin",
-        "_border_width",
-        "_border_radius",
-        "_border_color",
-        "_padding",
-        "_fill_color",
+        "__margin",
+        "__border_width",
+        "__border_radius",
+        "__border_color",
+        "__padding",
+        "__fill_color",
     ]
 
     def __init__(
@@ -1468,12 +1499,12 @@ class IconFrame:
         padding: _4Float | None = None,
         fill_color: str | None = None,
     ) -> None:
-        self._margin = margin
-        self._border_width = border_width
-        self._border_radius = border_radius
-        self._border_color = border_color
-        self._padding = padding
-        self._fill_color = fill_color
+        self.__margin = margin
+        self.__border_width = border_width
+        self.__border_radius = border_radius
+        self.__border_color = border_color
+        self.__padding = padding
+        self.__fill_color = fill_color
 
     def margin(
         self,
@@ -1483,7 +1514,7 @@ class IconFrame:
         left: float | None = None,
         /,
     ) -> IconFrame:
-        self._margin = _4float(top, right, bottom, left)
+        self.__margin = _4float(top, right, bottom, left)
         return self
 
     def border_width(
@@ -1494,7 +1525,7 @@ class IconFrame:
         left: float | None = None,
         /,
     ) -> IconFrame:
-        self._border_width = _4float(top, right, bottom, left)
+        self.__border_width = _4float(top, right, bottom, left)
         return self
 
     def border_radius(
@@ -1505,11 +1536,11 @@ class IconFrame:
         d: float | None = None,
         /,
     ) -> IconFrame:
-        self._border_radius = _4float(a, b, c, d)
+        self.__border_radius = _4float(a, b, c, d)
         return self
 
     def border_color(self, color: str | None) -> IconFrame:
-        self._border_color = color
+        self.__border_color = color
         return self
 
     def padding(
@@ -1520,36 +1551,44 @@ class IconFrame:
         d: float | None = None,
         /,
     ) -> IconFrame:
-        self._padding = _4float(a, b, c, d)
+        self.__padding = _4float(a, b, c, d)
         return self
 
     def fill_color(self, color: str | None) -> IconFrame:
-        self._fill_color = color
+        self.__fill_color = color
         return self
 
     def to_json(self) -> dict[str, Any]:
         obj = dict[str, Any]()
-        if self._margin:
-            obj["margin"] = self._margin
-        if self._border_width:
-            obj["border_width"] = self._border_width
-        if self._border_radius:
-            obj["border_radius"] = self._border_radius
-        if self._border_color:
-            obj["border_color"] = self._border_color
-        if self._padding:
-            obj["padding"] = self._padding
-        if self._fill_color:
-            obj["fill_color"] = self._fill_color
+        if self.__margin:
+            obj["margin"] = self.__margin
+        if self.__border_width:
+            obj["border_width"] = self.__border_width
+        if self.__border_radius:
+            obj["border_radius"] = self.__border_radius
+        if self.__border_color:
+            obj["border_color"] = self.__border_color
+        if self.__padding:
+            obj["padding"] = self.__padding
+        if self.__fill_color:
+            obj["fill_color"] = self.__fill_color
         return obj
 
 
+@final
 class Icon(View):
     """SVG icon"""
 
     # only these characters are allowed to be in the svg path
     PATH_CHARS = set("+-e0123456789.,MmZzLlHhVvCcSsQqTtAa\r\t\n ")
-    __slots__ = ["_path", "_view_box", "_fill_rule", "_size", "_fallback", "_frame"]
+    __slots__ = [
+        "__path",
+        "__view_box",
+        "__fill_rule",
+        "__size",
+        "__fallback",
+        "__frame",
+    ]
 
     def __init__(
         self,
@@ -1560,15 +1599,15 @@ class Icon(View):
         fallback: str | None = None,
         frame: IconFrame | None = None,
     ) -> None:
-        self._path = path
-        self._view_box = view_box
-        self._fill_rule = fill_rule
-        self._size = size
-        self._fallback = fallback
-        self._frame = frame
+        self.__path = path
+        self.__view_box = view_box
+        self.__fill_rule = fill_rule
+        self.__size = size
+        self.__fallback = fallback
+        self.__frame = frame
 
     def frame(self, frame: IconFrame) -> Icon:
-        self._frame = frame
+        self.__frame = frame
         return self
 
     @staticmethod
@@ -1606,22 +1645,24 @@ class Icon(View):
             return Icon(obj)
         return None
 
+    @override
     def to_json(self) -> dict[str, Any]:
         """Create JSON object out sweep icon struct"""
-        obj: dict[str, Any] = dict(path=self._path, type="glyph")
-        if self._view_box is not None:
-            obj["view_box"] = self._view_box
-        if self._fill_rule is not None:
-            obj["fill_rule"] = self._fill_rule
-        if self._size is not None:
-            obj["size"] = self._size
-        if self._fallback:
-            obj["fallback"] = self._fallback
-        if self._frame:
-            obj["frame"] = self._frame.to_json()
+        obj: dict[str, Any] = dict(path=self.__path, type="glyph")
+        if self.__view_box is not None:
+            obj["view_box"] = self.__view_box
+        if self.__fill_rule is not None:
+            obj["fill_rule"] = self.__fill_rule
+        if self.__size is not None:
+            obj["size"] = self.__size
+        if self.__fallback:
+            obj["fallback"] = self.__fallback
+        if self.__frame:
+            obj["frame"] = self.__frame.to_json()
         return obj
 
 
+@final
 class TraceLayout(View):
     __slots__ = ["_view", "_msg"]
 
@@ -1629,6 +1670,7 @@ class TraceLayout(View):
         self._view: View = view
         self._msg: str = msg
 
+    @override
     def to_json(self) -> dict[str, Any]:
         return {
             "type": "trace-layout",
@@ -1644,6 +1686,7 @@ class FlexChild(NamedTuple):
     align: Align
 
 
+@final
 class Flex(View):
     __slots__ = ["_children", "_justify", "_direction"]
 
@@ -1674,6 +1717,7 @@ class Flex(View):
         self._children.append(FlexChild(child, flex, face, align))
         return self
 
+    @override
     def to_json(self) -> dict[str, Any]:
         children_json: list[dict[str, Any]] = []
         for child in self._children:
@@ -1694,27 +1738,35 @@ class Flex(View):
         }
 
 
+@final
 class Container(View):
-    __slots__ = ["_child", "_face", "_vertical", "_horizontal", "_size", "_margins"]
+    __slots__ = [
+        "__child",
+        "__face",
+        "__vertical",
+        "__horizontal",
+        "__size",
+        "__margins",
+    ]
 
     def __init__(self, child: View) -> None:
-        self._child: View = child
-        self._face: str | None = None
-        self._vertical: Align = Align.START
-        self._horizontal: Align = Align.START
-        self._size: tuple[int, int] = (0, 0)
-        self._margins: tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.__child: View = child
+        self.__face: str | None = None
+        self.__vertical: Align = Align.START
+        self.__horizontal: Align = Align.START
+        self.__size: tuple[int, int] = (0, 0)
+        self.__margins: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     def face(self, face: str) -> Container:
-        self._face = face
+        self.__face = face
         return self
 
     def horizontal(self, align: Align) -> Container:
-        self._horizontal = align
+        self.__horizontal = align
         return self
 
     def vertical(self, align: Align) -> Container:
-        self._vertical = align
+        self.__vertical = align
         return self
 
     def margins(
@@ -1724,11 +1776,11 @@ class Container(View):
         top: int | None = None,
         bottom: int | None = None,
     ) -> Container:
-        left = left if left is not None else self._margins[0]
-        right = right if right is not None else self._margins[1]
-        top = top if top is not None else self._margins[2]
-        bottom = bottom if bottom is not None else self._margins[3]
-        self._margins = (left, right, top, bottom)
+        left = left if left is not None else self.__margins[0]
+        right = right if right is not None else self.__margins[1]
+        top = top if top is not None else self.__margins[2]
+        bottom = bottom if bottom is not None else self.__margins[3]
+        self.__margins = (left, right, top, bottom)
         return self
 
     def size(
@@ -1736,26 +1788,28 @@ class Container(View):
         height: int | None = None,
         width: int | None = None,
     ) -> Container:
-        height = height if height is not None else self._size[0]
-        width = width if width is not None else self._size[1]
-        self._size = (height, width)
+        height = height if height is not None else self.__size[0]
+        width = width if width is not None else self.__size[1]
+        self.__size = (height, width)
         return self
 
+    @override
     def to_json(self) -> dict[str, Any]:
-        obj: dict[str, Any] = dict(type="container", child=self._child.to_json())
-        if self._face is not None:
-            obj["face"] = self._face
-        if self._vertical != Align.START:
-            obj["vertical"] = self._vertical.value
-        if self._horizontal != Align.START:
-            obj["horizontal"] = self._horizontal.value
-        if self._size != (0, 0):
-            obj["size"] = self._size
-        if self._margins != (0, 0, 0, 0):
-            obj["margins"] = self._margins
+        obj: dict[str, Any] = dict(type="container", child=self.__child.to_json())
+        if self.__face is not None:
+            obj["face"] = self.__face
+        if self.__vertical != Align.START:
+            obj["vertical"] = self.__vertical.value
+        if self.__horizontal != Align.START:
+            obj["horizontal"] = self.__horizontal.value
+        if self.__size != (0, 0):
+            obj["size"] = self.__size
+        if self.__margins != (0, 0, 0, 0):
+            obj["margins"] = self.__margins
         return obj
 
 
+@final
 class Tag(View):
     __slots__ = ["_tag", "_view"]
 
@@ -1763,6 +1817,7 @@ class Tag(View):
         self._tag: str = tag
         self._view: View = view
 
+    @override
     def to_json(self) -> dict[str, Any]:
         return {
             "type": "tag",
@@ -1771,8 +1826,9 @@ class Tag(View):
         }
 
 
+@final
 class Text(View):
-    __slots__ = ["_chunks", "_face", "_glyph"]
+    __slots__ = ["__chunks", "__face", "__glyph"]
 
     def __init__(
         self,
@@ -1780,9 +1836,9 @@ class Text(View):
         glyph: Icon | None = None,
         face: str | None = None,
     ):
-        self._chunks: list[Text] | str = text
-        self._face: str | None = face
-        self._glyph: Icon | None = glyph
+        self.__chunks: list[Text] | str = text
+        self.__face: str | None = face
+        self.__glyph: Icon | None = glyph
 
     def push(
         self,
@@ -1791,27 +1847,28 @@ class Text(View):
         face: str | None = None,
     ) -> Text:
         chunk = Text(text, glyph, face)
-        if isinstance(self._chunks, list):
-            self._chunks.append(chunk)
+        if isinstance(self.__chunks, list):
+            self.__chunks.append(chunk)
         else:
-            self._chunks = [Text(self._chunks, self._glyph), chunk]
-            self._glyph = None
+            self.__chunks = [Text(self.__chunks, self.__glyph), chunk]
+            self.__glyph = None
         return self
 
+    @override
     def to_json(self) -> dict[str, Any]:
         def to_json_rec(text: Text) -> Any:
             chunks = (
-                [to_json_rec(chunk) for chunk in text._chunks]
-                if isinstance(text._chunks, list)
-                else text._chunks
+                [to_json_rec(chunk) for chunk in text.__chunks]
+                if isinstance(text.__chunks, list)
+                else text.__chunks
             )
-            if text._glyph is None and text._face is None:
+            if text.__glyph is None and text.__face is None:
                 return chunks
             obj: dict[str, Any] = dict(text=chunks)
-            if text._glyph is not None:
-                obj["glyph"] = text._glyph.to_json()
-            if text._face is not None:
-                obj["face"] = text._face
+            if text.__glyph is not None:
+                obj["glyph"] = text.__glyph.to_json()
+            if text.__face is not None:
+                obj["face"] = text.__face
             return obj
 
         return {
@@ -1820,8 +1877,9 @@ class Text(View):
         }
 
 
+@final
 class Image(View):
-    __slots__ = ["_size", "_channels", "_data"]
+    __slots__ = ["__size", "__channels", "__data"]
 
     def __init__(self, buff: Any):
         arr = getattr(buff, "__array_interface__")
@@ -1839,20 +1897,22 @@ class Image(View):
             raise ValueError("Invalid image shape: {}", mem.shape)
         if channels not in {4, 3, 1}:
             raise ValueError("Invalid channel size: {}", channels)
-        self._size: tuple[int, int] = (mem.shape[0], mem.shape[1])
-        self._channels: int = channels
-        self._data: str = base64.b64encode(mem).decode()
+        self.__size: tuple[int, int] = (mem.shape[0], mem.shape[1])
+        self.__channels: int = channels
+        self.__data: str = base64.b64encode(mem).decode()
 
+    @override
     def to_json(self) -> dict[str, Any]:
         return {
             "type": "image",
-            "size": self._size,
-            "channels": self._channels,
-            "data": self._data,
+            "size": self.__size,
+            "channels": self.__channels,
+            "data": self.__data,
         }
 
+    @override
     def __repr__(self) -> str:
-        return f"Image(size={self._size}, channels={self._channels}, data_size={len(self._data)})"
+        return f"Image(size={self.__size}, channels={self.__channels}, data_size={len(self.__data)})"
 
 
 # ------------------------------------------------------------------------------

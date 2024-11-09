@@ -8,10 +8,11 @@ use crate::{
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use either::Either;
 use futures::{channel::oneshot, future, stream::TryStreamExt, Stream};
 use serde::{
     de::{DeserializeOwned, DeserializeSeed},
-    Serialize,
+    Deserialize, Serialize,
 };
 use serde_json::{json, Value};
 use std::{
@@ -65,7 +66,7 @@ pub struct SweepOptions {
     pub scorers: VecDeque<ScorerBuilder>,
     pub theme: Theme,
     pub title: String,
-    pub window_uid: Value,
+    pub window_uid: WindowId,
     pub tty_path: String,
     pub layout: SweepLayout,
 }
@@ -82,7 +83,7 @@ impl Default for SweepOptions {
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
             title: "sweep".to_string(),
-            window_uid: "default".into(),
+            window_uid: WindowId::String("default".into()),
             scorers,
             layout: SweepLayout::default(),
         }
@@ -167,10 +168,7 @@ enum SweepRequest<H> {
     },
     HaystackClear,
     RankerKeepOrder(Option<bool>),
-    WindowSwitch {
-        window: Option<Box<dyn Window>>,
-        uid: Value,
-    },
+    WindowSwitch(Either<Box<dyn Window>, WindowId>),
     WindowPop,
     RenderSuppress(bool),
 }
@@ -180,7 +178,7 @@ enum SweepRequest<H> {
 pub enum SweepEvent<H> {
     Select(Vec<H>),
     Bind { tag: String, chord: KeyChord },
-    Window { from: Value, to: Value },
+    Window(WindowEvent),
     Resize(TerminalSize),
 }
 
@@ -222,8 +220,8 @@ where
     }
 
     /// Create new state and put on the top of the stack of active states
-    pub fn window_switch(&self, uid: Value) {
-        self.send_request(SweepRequest::WindowSwitch { window: None, uid })
+    pub fn window_switch(&self, uid: WindowId) {
+        self.send_request(SweepRequest::WindowSwitch(Either::Right(uid)))
     }
 
     /// Remove state at the top of the stack and active one below it
@@ -360,8 +358,8 @@ where
     /// of items is not necessarily equal to the type of the [Sweep] instance items
     pub async fn quick_select<I>(
         &self,
-        options: Option<&SweepOptions>,
-        uid: Value,
+        options: Option<SweepOptions>,
+        uid: WindowId,
         items_context: <I::Item as Haystack>::Context,
         items: I,
     ) -> Result<Vec<I::Item>, Error>
@@ -371,7 +369,10 @@ where
     {
         let (send, recv) = oneshot::channel();
         let mut window = SweepWindow::new_from_options(
-            options.unwrap_or_else(|| &self.options),
+            SweepOptions {
+                window_uid: uid.clone(),
+                ..options.unwrap_or_else(|| self.options.clone())
+            },
             items_context,
             self.term_waker.clone(),
             None,
@@ -382,7 +383,9 @@ where
                         if let Some(send) = send.with_mut(|send| send.take()) {
                             _ = send.send(selected);
                         }
-                        Ok(WindowAction::Pop(Value::Null))
+                        Ok(WindowAction::Close {
+                            uid: Some(uid.clone()),
+                        })
                     } else {
                         Ok(WindowAction::Nothing)
                     }
@@ -390,10 +393,7 @@ where
             }),
         );
         window.haystack_extend(items.into_iter().collect());
-        self.send_request(SweepRequest::WindowSwitch {
-            window: Some(Box::new(window)),
-            uid,
-        });
+        self.send_request(SweepRequest::WindowSwitch(Either::Left(Box::new(window))));
         Ok(recv.await.unwrap_or(Vec::new()))
     }
 
@@ -689,8 +689,8 @@ where
             move |mut params: RpcParams| {
                 let sweep = sweep.clone();
                 async move {
-                    let uid = params.take_opt(0, "uid")?;
-                    sweep.window_switch(uid.unwrap_or(Value::Null));
+                    let uid = params.take(0, "uid")?;
+                    sweep.window_switch(uid);
                     Ok(Value::Null)
                 }
             }
@@ -730,9 +730,9 @@ where
                     if let Some(scorer) = params.take_opt::<Cow<'_, str>>(5, "scorer")? {
                         scorer_by_name(&mut options.scorers, Some(scorer.as_ref()));
                     }
-                    let uid = params.take_opt(6, "uid")?.unwrap_or(Value::Null);
+                    let uid = params.take(6, "uid")?;
                     let result = sweep
-                        .quick_select(Some(&options), uid, sweep.haystack_context.clone(), items)
+                        .quick_select(Some(options), uid, sweep.haystack_context.clone(), items)
                         .await?;
                     let result_value = serde_json::to_value(result)?;
                     Ok(result_value)
@@ -783,8 +783,19 @@ where
                                 peer.notify_with_value("select", json!({"items": items}))?
                             }
                         }
-                        SweepEvent::Window { from, to } => {
-                            peer.notify_with_value("window", json!({"from": from, "to": to}))?
+                        SweepEvent::Window(window_event) => {
+                            let (method, args) = match window_event {
+                                WindowEvent::Closed(window_id) => {
+                                    ("window_closed", json!({"to": window_id}))
+                                }
+                                WindowEvent::Opened(window_id) => {
+                                    ("window_opened", json!({"to": window_id}))
+                                }
+                                WindowEvent::Switched { from, to } => {
+                                    ("window_switched", json!({"from": from, "to": to}))
+                                }
+                            };
+                            peer.notify_with_value(method, args)?
                         }
                         SweepEvent::Resize(size) => peer.notify_with_value(
                             "resize",
@@ -960,6 +971,8 @@ type SweepEventHandler<H> = Arc<dyn Fn(SweepEvent<H>) -> Result<WindowAction, Er
 
 /// Object representing current state of the sweep worker
 struct SweepWindow<H: Haystack> {
+    // window unique id
+    window_uid: WindowId,
     // waker
     term_waker: TerminalWaker,
     // request queue
@@ -1011,7 +1024,7 @@ where
     H: Haystack,
 {
     fn new_from_options(
-        options: &SweepOptions,
+        options: SweepOptions,
         haystack_context: H::Context,
         term_waker: TerminalWaker,
         requests: Option<Receiver<SweepRequest<H>>>,
@@ -1024,11 +1037,12 @@ where
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
         SweepWindow::new(
-            options.prompt.clone(),
-            options.prompt_icon.clone(),
+            options.window_uid,
+            options.prompt,
+            options.prompt_icon,
             ranker,
-            options.theme.clone(),
-            options.scorers.clone(),
+            options.theme,
+            options.scorers,
             haystack_context,
             term_waker,
             requests,
@@ -1039,6 +1053,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn new(
+        window_uid: WindowId,
         prompt: String,
         prompt_icon: Option<Glyph>,
         ranker: Ranker,
@@ -1060,6 +1075,7 @@ where
             }
         }
         Self {
+            window_uid,
             term_waker,
             requests,
             event_handler,
@@ -1087,8 +1103,9 @@ where
         }
     }
 
-    fn window_clone(&self) -> SweepWindow<H> {
+    fn window_clone(&self, window_uid: WindowId) -> SweepWindow<H> {
         Self {
+            window_uid,
             term_waker: self.term_waker.clone(),
             requests: self.requests.clone(),
             event_handler: self.event_handler.clone(),
@@ -1224,7 +1241,7 @@ where
                     });
                 }
             }
-            SweepAction::Quit => return Ok(WindowAction::Pop(Value::Null)),
+            SweepAction::Quit => return Ok(WindowAction::Close { uid: None }),
             SweepAction::Select => {
                 let selected: Vec<H> = if self.marked.with(|marked| !marked.is_empty()) {
                     self.marked.with_mut(|marked| marked.take()).collect()
@@ -1276,9 +1293,8 @@ where
             }
             SweepAction::Help => {
                 if !self.is_help {
-                    return Ok(WindowAction::Push {
+                    return Ok(WindowAction::Open {
                         window: self.help(),
-                        uid: Value::Null,
                     });
                 }
             }
@@ -1332,7 +1348,10 @@ where
         let mut entries: Vec<_> = descriptions.into_values().collect();
         entries.sort_by_key(|desc| self.key_actions.get(&desc.name));
 
+        let help_uid = self.uid().with_suffix("help");
+        let parent_uid = self.uid().clone();
         let mut window = SweepWindow::new(
+            help_uid.clone(),
             "HELP".to_owned(),
             Some(KEYBOARD_ICON.clone()),
             Ranker::new({
@@ -1344,13 +1363,17 @@ where
             (),
             self.term_waker.clone(),
             None,
-            Arc::new(|event| {
+            Arc::new(move |event| {
                 if let SweepEvent::Select(selected) = event {
                     let name = selected
                         .into_iter()
                         .next()
                         .map(|action: ActionDesc| action.name);
-                    Ok(WindowAction::Pop(name.into()))
+                    Ok(WindowAction::Switch {
+                        uid: parent_uid.clone(),
+                        args: name.into(),
+                        close: true,
+                    })
                 } else {
                     Ok(WindowAction::Nothing)
                 }
@@ -1364,6 +1387,10 @@ where
 }
 
 impl<H: Haystack> Window for SweepWindow<H> {
+    fn uid(&self) -> &WindowId {
+        &self.window_uid
+    }
+
     fn process(&mut self) -> Result<WindowAction, Error> {
         let Some(requests) = self.requests.clone() else {
             return Ok(WindowAction::Nothing);
@@ -1457,11 +1484,12 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 Terminate => return Ok(WindowAction::Quit),
-                WindowSwitch { window, uid } => {
-                    let window = window.unwrap_or_else(|| Box::new(self.window_clone()));
-                    return Ok(WindowAction::Push { window, uid });
+                WindowSwitch(Either::Left(window)) => return Ok(WindowAction::Open { window }),
+                WindowSwitch(Either::Right(uid)) => {
+                    let window = Box::new(self.window_clone(uid));
+                    return Ok(WindowAction::Open { window });
                 }
-                WindowPop => return Ok(WindowAction::Pop(Value::Null)),
+                WindowPop => return Ok(WindowAction::Close { uid: None }),
                 RenderSuppress(suppress) => {
                     self.render_suppress_sync = if suppress {
                         Some(Arc::new(AtomicBool::new(false)))
@@ -1474,14 +1502,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
         Ok(WindowAction::Nothing)
     }
 
-    fn resume(&mut self, transition: WindowTransition, args: Value) -> Result<WindowAction, Error> {
-        let action = (self.event_handler)(SweepEvent::Window {
-            from: transition.from,
-            to: transition.to,
-        })?;
-        if !matches!(action, WindowAction::Nothing) {
-            return Ok(action);
-        }
+    fn resume(&mut self, args: Value) -> Result<WindowAction, Error> {
         match args {
             Value::String(action_name) => {
                 // handle action picked by help window
@@ -1673,25 +1694,80 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepWindow<H> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum WindowId {
+    String(String),
+    Number(u64),
+}
+
+impl WindowId {
+    fn with_suffix(&self, suffix: &str) -> Self {
+        match self {
+            WindowId::String(name) => WindowId::String(format!("{name}/{suffix}")),
+            WindowId::Number(name) => WindowId::String(format!("{name}/{suffix}")),
+        }
+    }
+}
+
+impl From<String> for WindowId {
+    fn from(value: String) -> Self {
+        WindowId::String(value)
+    }
+}
+
+impl From<&str> for WindowId {
+    fn from(value: &str) -> Self {
+        WindowId::String(value.to_owned())
+    }
+}
+
+impl From<u64> for WindowId {
+    fn from(value: u64) -> Self {
+        WindowId::Number(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum WindowEvent {
+    Closed(WindowId),
+    Opened(WindowId),
+    Switched {
+        from: Option<WindowId>,
+        to: WindowId,
+    },
+}
+
+/// Action generated by the window
 enum WindowAction {
+    /// Quit sweep
     Quit,
-    Pop(Value),
-    Push { window: Box<dyn Window>, uid: Value },
+    /// Close window (active window if uid is not specified)
+    Close {
+        uid: Option<WindowId>,
+    },
+    /// Open new window
+    Open {
+        window: Box<dyn Window>,
+    },
+    /// To provided uid passing arguments to resume, close current window if close is set
+    Switch {
+        uid: WindowId,
+        args: Value,
+        close: bool,
+    },
     Nothing,
 }
 
-#[derive(Debug)]
-struct WindowTransition {
-    from: Value,
-    to: Value,
-}
-
 trait Window: Send + Sync {
+    /// Window unique identifier
+    fn uid(&self) -> &WindowId;
+
     /// Process pending on every loop
     fn process(&mut self) -> Result<WindowAction, Error>;
 
     /// Resume window with provided arguments
-    fn resume(&mut self, transition: WindowTransition, args: Value) -> Result<WindowAction, Error>;
+    fn resume(&mut self, args: Value) -> Result<WindowAction, Error>;
 
     /// Handle keyboard event
     fn handle_key(&mut self, key: Key) -> Result<WindowAction, Error>;
@@ -1704,12 +1780,16 @@ trait Window: Send + Sync {
 }
 
 impl<M: Window + ?Sized> Window for Box<M> {
+    fn uid(&self) -> &WindowId {
+        (**self).uid()
+    }
+
     fn process(&mut self) -> Result<WindowAction, Error> {
         (**self).process()
     }
 
-    fn resume(&mut self, transition: WindowTransition, args: Value) -> Result<WindowAction, Error> {
-        (**self).resume(transition, args)
+    fn resume(&mut self, args: Value) -> Result<WindowAction, Error> {
+        (**self).resume(args)
     }
 
     fn handle_key(&mut self, key: Key) -> Result<WindowAction, Error> {
@@ -1725,134 +1805,141 @@ impl<M: Window + ?Sized> Window for Box<M> {
     }
 }
 
-#[derive(Default)]
-struct WindowStack {
-    windows: Vec<(Value, Box<dyn Window>)>,
-    last_uid: usize,
+struct WindowStack<T> {
+    windows: Vec<Box<dyn Window>>,
+    transition_handler: T,
 }
 
-impl WindowStack {
-    fn new() -> Self {
-        Self::default()
+impl<T> WindowStack<T>
+where
+    T: FnMut(WindowEvent) -> Result<(), Error>,
+{
+    fn new(transition_handler: T) -> Self {
+        Self {
+            windows: Default::default(),
+            transition_handler,
+        }
     }
 
     /// Find window position by its uid
-    pub fn position(&self, uid: &Value) -> Option<usize> {
-        self.windows
-            .iter()
-            .position(|(uid_win, _win)| uid_win == uid)
+    fn window_position(&self, uid: &WindowId) -> Option<usize> {
+        self.windows.iter().position(|window| window.uid() == uid)
     }
 
-    /// Switch to a different window
-    ///
-    /// window    - if provided switch to this window, registering it with uid
-    /// uid       - if provided switch to window with this uid
-    /// otherwise - pop window from the stack
-    pub fn switch(
-        &mut self,
-        uid: Option<Value>,
-        mut window: Option<Box<dyn Window>>,
-        args: Value,
-    ) -> Result<WindowAction, Error> {
-        if uid.as_ref().and_then(|uid| self.position(uid)).is_some() {
-            window.take();
-        }
-        let (from, to) = match (window, uid) {
-            (Some(window), uid) => {
-                // new window
-                let uid = uid.unwrap_or_else(|| {
-                    self.last_uid += 1;
-                    self.last_uid.into()
-                });
-                let uid_from = self
-                    .windows
-                    .last()
-                    .map_or_else(|| Value::Null, |(uid, _win)| uid.clone());
-                self.windows.push((uid.clone(), window));
-                (uid_from, uid)
-            }
-            (None, Some(uid)) => {
-                // switch
-                let Some(uid_from) = self.windows.last().map(|(uid, _win)| uid.clone()) else {
-                    return Ok(WindowAction::Quit);
-                };
-                let Some(index_to) = self.position(&uid) else {
-                    return Ok(WindowAction::Nothing);
-                };
-                let index_from = self.windows.len() - 1;
-                self.windows.swap(index_to, index_from);
-                (uid_from.clone(), uid)
-            }
-            (None, None) => {
-                // pop window
-                let Some((uid_from, _window)) = self.windows.pop() else {
-                    return Ok(WindowAction::Quit);
-                };
-                let Some((uid_to, _window)) = self.windows.last() else {
-                    return Ok(WindowAction::Quit);
-                };
-                (uid_from, uid_to.clone())
-            }
-        };
-        let Some((_uid, window)) = self.windows.last_mut() else {
+    /// Currently active window
+    fn window_current(&mut self) -> Option<&mut Box<dyn Window>> {
+        self.windows.last_mut()
+    }
+
+    fn window_close(&mut self, uid: Option<WindowId>) -> Result<WindowAction, Error> {
+        let Some(uid) = uid.or_else(|| self.window_current().map(|win| win.uid().clone())) else {
             return Ok(WindowAction::Quit);
         };
-        let transition = WindowTransition { from, to };
-        tracing::debug!(from=?transition.from, to=?transition.to, "[WindowStack.handle_resume]");
-        window.resume(transition, args)
+        let Some(index) = self.window_position(&uid) else {
+            return Ok(WindowAction::Nothing);
+        };
+        let window_from = self.windows.remove(index);
+        (self.transition_handler)(WindowEvent::Closed(window_from.uid().clone()))?;
+
+        // closed window was active
+        if index == self.windows.len() {
+            if let Some(window_to) = self.window_current() {
+                let uid_to = window_to.uid().clone();
+                let action = window_to.resume(Value::Null)?;
+                (self.transition_handler)(WindowEvent::Switched {
+                    from: Some(window_from.uid().clone()),
+                    to: uid_to,
+                })?;
+                return Ok(action);
+            }
+        }
+
+        Ok(WindowAction::Nothing)
     }
 
-    fn push(&mut self, uid: Value, window: Box<dyn Window>) -> Result<(), Error> {
-        self.switch(Some(uid), Some(window), Value::Null)?;
-        Ok(())
+    fn window_open(&mut self, window_to: Box<dyn Window>) -> Result<WindowAction, Error> {
+        let uid_to = window_to.uid().clone();
+        // existing window
+        if self.window_position(&uid_to).is_some() {
+            return Ok(WindowAction::Switch {
+                uid: window_to.uid().clone(),
+                args: Value::Null,
+                close: false,
+            });
+        }
+
+        // new
+        let uid_from = self.window_current().map(|win| win.uid().clone());
+        self.windows.push(window_to);
+        (self.transition_handler)(WindowEvent::Opened(uid_to.clone()))?;
+
+        // resume
+        if let Some(window) = self.window_current() {
+            let action = window.resume(Value::Null)?;
+            (self.transition_handler)(WindowEvent::Switched {
+                from: uid_from,
+                to: uid_to,
+            })?;
+            return Ok(action);
+        }
+
+        Ok(WindowAction::Nothing)
     }
 
+    fn window_switch(
+        &mut self,
+        uid_to: WindowId,
+        args: Value,
+        close: bool,
+    ) -> Result<WindowAction, Error> {
+        let Some(index_to) = self.window_position(&uid_to) else {
+            // no such window
+            return Ok(WindowAction::Nothing);
+        };
+        let index_from = self.windows.len() - 1;
+        if index_from == index_to {
+            // window already active
+            return Ok(WindowAction::Nothing);
+        }
+        let uid_from = self.windows[index_from].uid().clone();
+
+        if close {
+            let Some(window) = self.windows.pop() else {
+                return Ok(WindowAction::Nothing);
+            };
+            (self.transition_handler)(WindowEvent::Closed(window.uid().clone()))?;
+        }
+
+        // swap with last
+        let last_index = self.windows.len() - 1;
+        self.windows.swap(index_from, last_index);
+
+        // resume
+        if let Some(window) = self.window_current() {
+            let action = window.resume(args)?;
+            (self.transition_handler)(WindowEvent::Switched {
+                from: Some(uid_from),
+                to: uid_to,
+            })?;
+            return Ok(action);
+        }
+
+        Ok(WindowAction::Nothing)
+    }
+
+    // Bool indicates if we want to continue running
     fn handle_action(&mut self, mut action: WindowAction) -> Result<bool, Error> {
         loop {
             action = match action {
                 WindowAction::Quit => return Ok(false),
-                WindowAction::Pop(args) => self.switch(None, None, args)?,
-                WindowAction::Push { uid, window } => {
-                    self.switch(Some(uid), Some(window), Value::Null)?
+                WindowAction::Nothing => return Ok(true),
+                WindowAction::Close { uid } => self.window_close(uid)?,
+                WindowAction::Open { window: window_to } => self.window_open(window_to)?,
+                WindowAction::Switch { uid, args, close } => {
+                    self.window_switch(uid, args, close)?
                 }
-                WindowAction::Nothing => break,
-            }
+            };
         }
-        Ok(true)
-    }
-}
-
-impl Window for WindowStack {
-    fn process(&mut self) -> Result<WindowAction, Error> {
-        let Some((_uid, window)) = self.windows.last_mut() else {
-            return Ok(WindowAction::Quit);
-        };
-        window.process()
-    }
-
-    fn resume(&mut self, transition: WindowTransition, args: Value) -> Result<WindowAction, Error> {
-        let Some((_uid, window)) = self.windows.last_mut() else {
-            return Ok(WindowAction::Quit);
-        };
-        window.resume(transition, args)
-    }
-
-    fn handle_key(&mut self, key: Key) -> Result<WindowAction, Error> {
-        let Some((_uid, window)) = self.windows.last_mut() else {
-            return Ok(WindowAction::Quit);
-        };
-        window.handle_key(key)
-    }
-
-    fn handle_mouse(&mut self, mouse: Mouse, tag: &Value) -> Result<WindowAction, Error> {
-        let Some((_uid, window)) = self.windows.last_mut() else {
-            return Ok(WindowAction::Quit);
-        };
-        window.handle_mouse(mouse, tag)
-    }
-
-    fn view(&mut self, term_position: Position, sweep_layout: SweepLayout) -> Option<BoxView<'_>> {
-        self.windows.last_mut()?.1.view(term_position, sweep_layout)
     }
 }
 
@@ -1893,8 +1980,12 @@ where
     // report size
     events.send(SweepEvent::Resize(term_size))?;
 
-    let window = SweepWindow::new_from_options(
-        &options,
+    let mut window_stack = WindowStack::new({
+        let events = events.clone();
+        move |event| Ok(events.send(SweepEvent::Window(event))?)
+    });
+    let window = Box::new(SweepWindow::new_from_options(
+        options.clone(),
         haystack_context.clone(),
         term.waker(),
         Some(requests.clone()),
@@ -1907,9 +1998,10 @@ where
                 Ok(WindowAction::Nothing)
             }
         }),
-    );
-    let mut window_stack = WindowStack::new();
-    window_stack.push(options.window_uid.clone(), Box::new(window))?;
+    ));
+    if !window_stack.handle_action(WindowAction::Open { window })? {
+        return Ok(());
+    };
 
     let mut layout_store = ViewLayoutStore::new();
     let mut layout_id: Option<TreeId> = None;
@@ -1918,9 +2010,11 @@ where
     term.waker().wake()?; // schedule one wake just in case if it was consumed by previous poll
     let result = term.run_render(|term, event, mut surf| {
         // process window state (pending sweep requests)
-        let window_event = window_stack.process()?;
-        if !window_stack.handle_action(window_event)? {
-            return Ok(TerminalAction::Quit(()));
+        if let Some(window) = window_stack.window_current() {
+            let window_event = window.process()?;
+            if !window_stack.handle_action(window_event)? {
+                return Ok(TerminalAction::Quit(()));
+            }
         }
 
         // handle events
@@ -1931,9 +2025,12 @@ where
                 events.send(SweepEvent::Resize(term_size))?;
             }
             Some(TerminalEvent::Key(key)) => {
-                let window_event = window_stack.handle_key(key)?;
-                if !window_stack.handle_action(window_event)? {
-                    return Ok(TerminalAction::Quit(()));
+                // process window key
+                if let Some(window) = window_stack.window_current() {
+                    let window_event = window.handle_key(key)?;
+                    if !window_stack.handle_action(window_event)? {
+                        return Ok(TerminalAction::Quit(()));
+                    }
                 }
             }
             Some(TerminalEvent::Mouse(mouse)) => {
@@ -1949,16 +2046,22 @@ where
                 } else {
                     &Value::Null
                 };
-                let window_event = window_stack.handle_mouse(mouse, tag)?;
-                if !window_stack.handle_action(window_event)? {
-                    return Ok(TerminalAction::Quit(()));
+                // process window mouse key
+                if let Some(window) = window_stack.window_current() {
+                    let window_event = window.handle_mouse(mouse, tag)?;
+                    if !window_stack.handle_action(window_event)? {
+                        return Ok(TerminalAction::Quit(()));
+                    }
                 }
             }
             _ => (),
         }
 
         // render
-        let Some(view) = window_stack.view(term_position, options.layout.clone()) else {
+        let Some(window) = window_stack.window_current() else {
+            return Ok(TerminalAction::Quit(()));
+        };
+        let Some(view) = window.view(term_position, options.layout.clone()) else {
             return Ok(TerminalAction::WaitNoFrame);
         };
         let ctx = ViewContext::new(term)?;

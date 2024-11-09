@@ -16,7 +16,7 @@ use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
     Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep, SweepEvent,
-    SweepLayout, SweepLayoutSize, SweepOptions, Theme,
+    SweepLayout, SweepLayoutSize, SweepOptions, Theme, WindowId,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -275,8 +275,8 @@ pub struct Args {
     pub title: String,
 
     /// internal windows stack window identifier
-    #[argh(option, from_str_fn(parse_value), default = "\"default\".into()")]
-    pub window_uid: serde_json::Value,
+    #[argh(option, from_str_fn(parse_window_id), default = "\"default\".into()")]
+    pub window_uid: WindowId,
 
     /// candidates in JSON pre line format (same encoding as RPC)
     #[argh(switch)]
@@ -307,8 +307,11 @@ pub struct Args {
     pub version: bool,
 }
 
-fn parse_value(value: &str) -> Result<serde_json::Value, String> {
-    serde_json::from_str(value).map_err(|error| error.to_string())
+fn parse_window_id(value: &str) -> Result<WindowId, String> {
+    match value.parse() {
+        Ok(num) => Ok(WindowId::Number(num)),
+        Err(_) => Ok(WindowId::String(value.to_owned())),
+    }
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {
