@@ -128,7 +128,7 @@ where
     loop {
         tokio::select! {
             event = sweep.next_event() => match event {
-                Some(SweepEvent::Select(entry)) => return Ok(entry),
+                Some(SweepEvent::Select { items, .. }) => return Ok(items),
                 None => return Ok(Vec::new()),
                 _ => continue,
             },
@@ -151,7 +151,6 @@ enum SweepRequest<H> {
         tag: String,
         desc: String,
     },
-    Terminate,
     Current(oneshot::Sender<Option<H>>),
     Marked(oneshot::Sender<Vec<H>>),
     CursorSet {
@@ -168,16 +167,25 @@ enum SweepRequest<H> {
     },
     HaystackClear,
     RankerKeepOrder(Option<bool>),
+    RenderSuppress(bool),
+
+    Terminate,
     WindowSwitch(Either<Box<dyn Window>, WindowId>),
     WindowPop,
-    RenderSuppress(bool),
 }
 
 /// Events returned to [Sweep] type
 #[derive(Clone, Debug)]
 pub enum SweepEvent<H> {
-    Select(Vec<H>),
-    Bind { tag: String, chord: KeyChord },
+    Select {
+        uid: WindowId,
+        items: Vec<H>,
+    },
+    Bind {
+        uid: WindowId,
+        tag: String,
+        chord: KeyChord,
+    },
     Window(WindowEvent),
     Resize(TerminalSize),
 }
@@ -379,9 +387,9 @@ where
             Arc::new({
                 let send = std::sync::Mutex::new(Some(send)); // one shot is moved on send
                 move |event| {
-                    if let SweepEvent::Select(selected) = event {
+                    if let SweepEvent::Select { items, .. } = event {
                         if let Some(send) = send.with_mut(|send| send.take()) {
-                            _ = send.send(selected);
+                            _ = send.send(items);
                         }
                         Ok(WindowAction::Close {
                             uid: Some(uid.clone()),
@@ -775,12 +783,16 @@ where
 
                 while let Some(event) = sweep.next_event().await {
                     match event {
-                        SweepEvent::Bind { tag, chord } => {
-                            peer.notify_with_value("bind", json!({"tag": tag, "key": chord}))?
-                        }
-                        SweepEvent::Select(items) => {
+                        SweepEvent::Bind { uid, tag, chord } => peer.notify_with_value(
+                            "bind",
+                            json!({"uid":  uid, "tag": tag, "key": chord}),
+                        )?,
+                        SweepEvent::Select { uid, items } => {
                             if !items.is_empty() {
-                                peer.notify_with_value("select", json!({"items": items}))?
+                                peer.notify_with_value(
+                                    "select",
+                                    json!({"uid": uid, "items": items}),
+                                )?
                             }
                         }
                         SweepEvent::Window(window_event) => {
@@ -1236,6 +1248,7 @@ where
             SweepAction::User { tag, chord, .. } => {
                 if !tag.is_empty() {
                     return (self.event_handler)(SweepEvent::Bind {
+                        uid: self.window_uid.clone(),
                         tag: tag.clone(),
                         chord: chord.clone(),
                     });
@@ -1251,11 +1264,17 @@ where
                         .into_iter()
                         .collect()
                 };
-                return (self.event_handler)(SweepEvent::Select(selected));
+                return (self.event_handler)(SweepEvent::Select {
+                    uid: self.window_uid.clone(),
+                    items: selected,
+                });
             }
             SweepAction::SelectByIndex(index) => {
                 if let Some(item) = self.haystack.get(*index) {
-                    return (self.event_handler)(SweepEvent::Select(vec![item.clone()]));
+                    return (self.event_handler)(SweepEvent::Select {
+                        uid: self.window_uid.clone(),
+                        items: vec![item.clone()],
+                    });
                 }
             }
             SweepAction::Mark => {
@@ -1364,7 +1383,10 @@ where
             self.term_waker.clone(),
             None,
             Arc::new(move |event| {
-                if let SweepEvent::Select(selected) = event {
+                if let SweepEvent::Select {
+                    items: selected, ..
+                } = event
+                {
                     let name = selected
                         .into_iter()
                         .next()
@@ -1525,6 +1547,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
             if is_first_key && key == backspace && self.input.get().count() == 0 {
                 if let Some(ref tag) = self.key_empty_backspace {
                     return (self.event_handler)(SweepEvent::Bind {
+                        uid: self.window_uid.clone(),
                         tag: tag.clone(),
                         chord: KeyChord::from_iter([backspace]),
                     });
@@ -1560,6 +1583,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
             _ => {
                 let key = Key::new(mouse.name, mouse.mode);
                 (self.event_handler)(SweepEvent::Bind {
+                    uid: self.window_uid.clone(),
                     tag: tag.to_owned(),
                     chord: KeyChord::from_iter([key]),
                 })

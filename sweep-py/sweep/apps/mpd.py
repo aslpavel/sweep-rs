@@ -17,7 +17,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, cast, final, override
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 
 from PIL import Image as PILImage
@@ -190,11 +190,13 @@ class Song:
         self.id = None
         self.current = None
 
+    @override
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Song):
             return False
         return self.file == other.file
 
+    @override
     def __hash__(self) -> int:
         return hash(self.file)
 
@@ -412,12 +414,14 @@ class MPDChunk(NamedTuple):
             return cast(bytes, self.data)
         return b""
 
+    @override
     def __repr__(self) -> str:
         if self.name == "binary":
             return f"binary={len(self.data)}"
         return f"{self.name}={self.data}"
 
 
+@final
 class MPD:
     """MPD Client implementation
 
@@ -725,10 +729,10 @@ class MPDSweepView(Enum):
 
 class MPDSweep:
     def __init__(self, mpd: MPD, sweep: Sweep[Song]) -> None:
-        self._mpd = mpd
-        self._sweep = sweep
-        self._view = MPDSweepView.MAX
-        self._events_queue = asyncio.Queue[MPDEvent]()
+        self._mpd: MPD = mpd
+        self._sweep: Sweep[Song] = sweep
+        self._view: MPDSweepView = MPDSweepView.MAX
+        self._events_queue: asyncio.Queue[MPDEvent] = asyncio.Queue()
 
     async def run(self) -> None:
         # fields
@@ -973,7 +977,7 @@ class MPDSweep:
             return
         await self._mpd.move(song, 1)
 
-    async def _goto(self, sweep: Sweep[Song], tag: str) -> None:
+    async def _goto(self, sweep: Sweep[Song], _tag: str) -> None:
         song = await self._sweep.items_current()
         if song is None:
             return None

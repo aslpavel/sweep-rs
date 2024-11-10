@@ -164,7 +164,7 @@ async fn main() -> Result<(), Error> {
             });
         };
         while let Some(event) = sweep.next_event().await {
-            if let SweepEvent::Select(items) = event {
+            if let SweepEvent::Select { items, .. } = event {
                 if items.is_empty() && !args.no_match_use_input {
                     continue;
                 }

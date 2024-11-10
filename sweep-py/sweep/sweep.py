@@ -102,9 +102,18 @@ class Size(NamedTuple):
         return Size(height, width)
 
 
+@dataclass
+class SweepSelect[I]:
+    """Event generated on item(s) select"""
+
+    uid: WindowId
+    items: list[I]
+
+
 class SweepBind(NamedTuple):
     """Event generated on bound key press"""
 
+    uid: WindowId
     tag: str
     key: str | None
 
@@ -133,16 +142,6 @@ class SweepSize(NamedTuple):
         pixels = Size.from_json(obj.get("pixels"))
         pixels_per_cell = Size.from_json(obj.get("pixels_per_cell"))
         return SweepSize(cells, pixels, pixels_per_cell)
-
-
-@dataclass
-class SweepSelect[I]:
-    """Event generated on item(s) select"""
-
-    items: list[I]
-
-    def __init__(self, items: list[I]):
-        self.items = items
 
 
 @dataclass
@@ -671,23 +670,26 @@ class Sweep[I]:
                     continue
                 if event.method == "select":
                     yield SweepSelect(
-                        [
+                        uid=event.params["uid"],
+                        items=[
                             self.__item_get(item)
                             for item in event.params.get("items", [])
-                        ]
+                        ],
                     )
                 elif event.method == "bind":
+                    uid = event.params["uid"]
                     tag = event.params.get("tag", "")
                     handler = self.__binds.get(tag)
                     if handler is None:
                         yield SweepBind(
-                            event.params.get("tag", ""),
-                            event.params.get("key", None),
+                            uid=uid,
+                            tag=tag,
+                            key=event.params.get("key", None),
                         )
                     else:
                         item = await handler(self, tag)
                         if item is not None:
-                            yield SweepSelect([item])
+                            yield SweepSelect(uid, items=[item])
                 elif event.method == "resize":
                     size = SweepSize.from_json(event.params)
                     self.__size = size
