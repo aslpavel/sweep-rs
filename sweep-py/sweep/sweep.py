@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from asyncio import CancelledError, Future, StreamReader, StreamWriter
 from asyncio.subprocess import Process
 from asyncio.tasks import Task
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -540,6 +540,7 @@ class Sweep[I]:
         "__view_resolved",
         "__size",
         "__window_uid_count",
+        "__window_uid_current",
     ]
 
     def __init__(
@@ -599,13 +600,16 @@ class Sweep[I]:
         self.__peer: RpcPeer = RpcPeer()
         self.__peer_iter: AsyncIterator[RpcRequest] = aiter(self.__peer)
         self.__size: SweepSize | None = None
-        self.__items: list[I] = []
+        self.__items: defaultdict[WindowId, list[I]] = defaultdict(list)
         self.__binds: dict[str, BindHandler[I]] = {}
         self.__field_resolver: FiledResolver | None = field_resolver
         self.__field_resolved: set[int] = set()
         self.__view_resolver: ViewResolver | None = view_resolver
         self.__view_resolved: set[int] = set()
         self.__window_uid_count = 0
+        self.__window_uid_current: WindowId = (
+            "default" if window_uid is None else window_uid
+        )
 
     async def __aenter__(self) -> Sweep[I]:
         if self.__proc is not None:
@@ -648,13 +652,14 @@ class Sweep[I]:
         )
         return await io_sock_accept
 
-    def __item_get(self, item: Any) -> I:
+    def __item_get(self, uid: WindowId | None, item: Any) -> I:
         """Return stored item if it was converted to Candidate"""
         if isinstance(item, dict):
+            items = self.__items[uid or self.__window_uid_current]
             item_dict = cast(dict[str, Any], item)
             item_index: int | None = item_dict.get("_sweep_item_index")
-            if item_index is not None and item_index < len(self.__items):
-                return self.__items[item_index]  # type: ignore
+            if item_index is not None and item_index < len(items):
+                return items[item_index]
         return cast(I, item)
 
     async def __aexit__(self, _et: Any, ev: Any, _tb: Any) -> bool:
@@ -669,10 +674,11 @@ class Sweep[I]:
                 if not isinstance(event.params, dict):
                     continue
                 if event.method == "select":
+                    uid = event.params["uid"]
                     yield SweepSelect(
-                        uid=event.params["uid"],
+                        uid=uid,
                         items=[
-                            self.__item_get(item)
+                            self.__item_get(uid, item)
                             for item in event.params.get("items", [])
                         ],
                     )
@@ -699,9 +705,14 @@ class Sweep[I]:
                     "window_opened",
                     "window_switched",
                 ):
-                    yield SweepWindow.from_json(
+                    window = SweepWindow.from_json(
                         event.method.removeprefix("window_"), event.params
                     )
+                    if window.type == "switched":
+                        self.__window_uid_current = window.uid_to
+                    elif window.type == "closed":
+                        self.__items.pop(window.uid_to, None)
+                    yield window
                 elif event.method == "field_missing":
                     ref = event.params.get("ref")
                     if (
@@ -769,73 +780,87 @@ class Sweep[I]:
             await self.__peer.events
         return self.__size
 
-    async def items_extend(self, items: Iterable[I]) -> None:
+    async def items_extend(
+        self,
+        items: Iterable[I],
+        uid: WindowId | None = None,
+    ) -> None:
         """Extend list of searchable items"""
         time_start = time.monotonic()
         time_limit = 0.05
         batch: list[I | dict[str, Any]] = []
+        items_cache = self.__items[uid or self.__window_uid_current]
         for item in items:
             if isinstance(item, ToCandidate):
                 candidate = item.to_candidate()
-                candidate.extra_update(_sweep_item_index=len(self.__items))
+                candidate.extra_update(_sweep_item_index=len(items_cache))
                 batch.append(candidate.to_json())
-                self.__items.append(item)
+                items_cache.append(item)
             else:
                 batch.append(item)
-                self.__items.append(item)
+                items_cache.append(item)
 
             time_now = time.monotonic()
             if time_now - time_start >= time_limit:
                 time_start = time_now
                 time_limit *= 1.25
-                await self.__peer.items_extend(items=batch)
+                await self.__peer.items_extend(uid=uid, items=batch)
                 batch.clear()
         if batch:
-            await self.__peer.items_extend(items=batch)
+            await self.__peer.items_extend(uid=uid, items=batch)
 
-    async def item_update(self, index: int, item: I) -> None:
+    async def item_update(
+        self,
+        index: int,
+        item: I,
+        uid: WindowId | None = None,
+    ) -> None:
         """Update item by its index"""
         assert index >= 0, "index must be non-negative"
-        if index >= len(self.__items):
-            raise IndexError(f"index {index} >= {len(self.__items)}")
-        self.__items[index] = item
+        items = self.__items[uid or self.__window_uid_current]
+        if index >= len(items):
+            raise IndexError(f"index {index} >= {len(items)}")
+        items[index] = item
         if isinstance(item, ToCandidate):
             candidate = item.to_candidate()
             candidate.extra_update(_sweep_item_index=index)
-            await self.__peer.item_update(index=index, item=candidate.to_json())
+            await self.__peer.item_update(
+                uid=uid, index=index, item=candidate.to_json()
+            )
         else:
-            await self.__peer.item_update(index=index, item=item)
+            await self.__peer.item_update(uid=uid, index=index, item=item)
 
-    async def items_clear(self) -> None:
+    async def items_clear(self, uid: WindowId | None = None) -> None:
         """Clear list of searchable items"""
-        await self.__peer.items_clear()
+        await self.__peer.items_clear(uid=uid)
 
-    async def items_current(self) -> I | None:
+    async def items_current(self, uid: WindowId | None = None) -> I | None:
         """Get currently selected item if any"""
-        return self.__item_get(await self.__peer.items_current())
+        return self.__item_get(uid, await self.__peer.items_current(uid=uid))
 
-    async def items_marked(self) -> list[I]:
+    async def items_marked(self, uid: WindowId | None = None) -> list[I]:
         """Take currently marked items"""
-        items = await self.__peer.items_marked()
-        return [self.__item_get(item) for item in items]
+        items = await self.__peer.items_marked(uid)
+        return [self.__item_get(uid, item) for item in items]
 
-    async def cursor_set(self, position: int) -> None:
+    async def cursor_set(self, position: int, uid: WindowId | None = None) -> None:
         """Set cursor to specified position"""
-        await self.__peer.cursor_set(position=position)
+        await self.__peer.cursor_set(uid=uid, position=position)
 
-    async def query_set(self, query: str) -> None:
+    async def query_set(self, query: str, uid: WindowId | None = None) -> None:
         """Set query string used to filter items"""
-        await self.__peer.query_set(query=query)
+        await self.__peer.query_set(uid=uid, query=query)
 
-    async def query_get(self) -> str:
+    async def query_get(self, uid: WindowId | None = None) -> str:
         """Get query string used to filter items"""
-        query: str = await self.__peer.query_get()
+        query: str = await self.__peer.query_get(uid=uid)
         return query
 
     async def prompt_set(
         self,
         prompt: str | None = None,
         icon: Icon | None = None,
+        uid: WindowId | None = None,
     ) -> None:
         """Set prompt label and icon"""
         attrs: dict[str, Any] = {}
@@ -844,21 +869,29 @@ class Sweep[I]:
         if icon is not None:
             attrs["icon"] = icon.to_json()
         if attrs:
-            await self.__peer.prompt_set(**attrs)
+            await self.__peer.prompt_set(uid=uid, **attrs)
 
-    async def preview_set(self, value: bool | None) -> None:
+    async def preview_set(
+        self,
+        value: bool | None,
+        uid: WindowId | None = None,
+    ) -> None:
         """Whether to show preview associated with the current item"""
-        await self.__peer.preview_set(value=value)
+        await self.__peer.preview_set(uid=uid, value=value)
 
-    async def footer_set(self, footer: View | None) -> None:
+    async def footer_set(
+        self,
+        footer: View | None,
+        uid: WindowId | None = None,
+    ) -> None:
         """Set footer view"""
         if footer:
-            await self.__peer.footer_set(footer=footer.to_json())
+            await self.__peer.footer_set(uid=uid, footer=footer.to_json())
         else:
-            await self.__peer.footer_set()
+            await self.__peer.footer_set(uid=uid)
 
-    async def bind_struct(self, bind: Bind[I]) -> None:
-        await self.bind(bind.key, bind.tag, bind.desc, bind.handler)
+    async def bind_struct(self, bind: Bind[I], uid: WindowId | None = None) -> None:
+        await self.bind(bind.key, bind.tag, bind.desc, bind.handler, uid)
 
     async def bind(
         self,
@@ -866,6 +899,7 @@ class Sweep[I]:
         tag: str,
         desc: str = "",
         handler: BindHandler[I] | None = None,
+        uid: WindowId | None = None,
     ) -> None:
         """Assign new key binding
 
@@ -880,7 +914,7 @@ class Sweep[I]:
             self.__binds[tag] = handler
         else:
             self.__binds.pop(tag, None)
-        await self.__peer.bind(key=key, tag=tag, desc=desc)
+        await self.__peer.bind(uid=uid, key=key, tag=tag, desc=desc)
 
     async def window_switch(self, uid: WindowId) -> None:
         """Push new empty state"""
@@ -936,14 +970,14 @@ class Sweep[I]:
         return result
 
     @asynccontextmanager
-    async def render_suppress(self) -> AsyncIterator[None]:
+    async def render_suppress(self, uid: WindowId | None = None) -> AsyncIterator[None]:
         """Suppress rending to reduce flicker during batch updates"""
         try:
-            await self.__peer.render_suppress(True)
+            await self.__peer.render_suppress(uid=uid, suppress=True)
             yield None
         finally:
             if not self.__peer.is_terminated:
-                await self.__peer.render_suppress(False)
+                await self.__peer.render_suppress(uid=uid, suppress=False)
 
 
 def unix_server_once(path: str) -> Awaitable[socket.socket]:

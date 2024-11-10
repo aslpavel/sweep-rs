@@ -174,23 +174,29 @@ impl Navigator {
             groups_cache: Default::default(),
         };
         let sweep = Sweep::new(ctx, options)?;
-        sweep.scorer_by_name(Some("substr".to_owned())).await?;
+        sweep
+            .scorer_by_name(None, Some("substr".to_owned()))
+            .await?;
         sweep.bind(
+            None,
             "tab".parse()?,
             TAG_COMPLETE.to_owned(),
             "Complete string or follow directory".to_owned(),
         );
         sweep.bind(
+            None,
             "ctrl+i".parse()?,
             TAG_COMPLETE.to_owned(),
             "Complete string or follow directory".to_owned(),
         );
         sweep.bind(
+            None,
             "ctrl+r".parse()?,
             TAG_COMMAND_HISTORY_MODE.to_owned(),
             "Switch to command history view".to_owned(),
         );
         sweep.bind(
+            None,
             "ctrl+f".parse()?,
             TAG_PATH_HISTORY_MODE.to_owned(),
             "Switch to path history view".to_owned(),
@@ -211,11 +217,11 @@ impl Navigator {
         if let Some(update_task) = self.update_task.take() {
             update_task.abort();
         }
-        self.sweep.items_clear();
+        self.sweep.items_clear(None);
         let sweep = self.sweep.clone();
         self.update_task = Some(
             tokio::spawn(async move {
-                if let Err(error) = sweep.items_extend_stream(items).await {
+                if let Err(error) = sweep.items_extend_stream(None, items).await {
                     tracing::error!(?error, "[Navigator.list_update]");
                 };
             })
@@ -225,7 +231,7 @@ impl Navigator {
 
     async fn path_complete(&self) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
         let (current, query) =
-            tokio::try_join!(self.sweep.items_current(), self.sweep.query_get())?;
+            tokio::try_join!(self.sweep.items_current(None), self.sweep.query_get(None))?;
 
         if query.starts_with('~') || query.starts_with('/') {
             // navigate path from query string
@@ -258,7 +264,7 @@ impl Navigator {
     ) -> Result<Vec<NavigatorItem>, Error> {
         mode.enter(self).await?;
         if let Some(query) = query {
-            self.sweep.query_set(query);
+            self.sweep.query_set(None, query);
         }
         while let Some(event) = self.sweep.next_event().await {
             match event {
@@ -320,19 +326,22 @@ impl NavigatorMode for CmdHistoryMode {
     async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
         navigator
             .sweep
-            .prompt_set(Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
-        navigator.sweep.keep_order(Some(true));
+            .prompt_set(None, Some("CMD".to_owned()), Some(CMD_HISTORY_ICON.clone()));
+        navigator.sweep.keep_order(None, Some(true));
         navigator.sweep.bind(
+            None,
             "alt+g s".parse()?,
             TAG_GOTO_SESSION.to_owned(),
             "Go to session of the current command".to_owned(),
         );
         navigator.sweep.bind(
+            None,
             "alt+g d".parse()?,
             TAG_GOTO_DIRECTORY.to_owned(),
             "Go to current working directory of the command".to_owned(),
         );
         navigator.sweep.bind(
+            None,
             "alt+g c".parse()?,
             TAG_FILTER_CWD.to_owned(),
             "Keep only commands that were executed in the current directory".to_owned(),
@@ -373,7 +382,7 @@ impl NavigatorMode for CmdHistoryMode {
     async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
         navigator
             .sweep
-            .bind("alt+g s".parse()?, String::new(), String::new());
+            .bind(None, "alt+g s".parse()?, String::new(), String::new());
         Ok(())
     }
 
@@ -385,7 +394,7 @@ impl NavigatorMode for CmdHistoryMode {
         match tag.as_str() {
             TAG_GOTO_SESSION => {
                 let session = if self.session.is_none() {
-                    let current = navigator.sweep.items_current().await?;
+                    let current = navigator.sweep.items_current(None).await?;
                     let Some(NavigatorItem::History(entry)) = current else {
                         return Ok(None);
                     };
@@ -406,7 +415,7 @@ impl NavigatorMode for CmdHistoryMode {
                 Ok(Some(CmdHistoryMode::new(self.session.clone(), dir)))
             }
             TAG_GOTO_DIRECTORY => {
-                let current = navigator.sweep.items_current().await?;
+                let current = navigator.sweep.items_current(None).await?;
                 let Some(NavigatorItem::History(entry)) = current else {
                     return Ok(None);
                 };
@@ -432,13 +441,16 @@ impl PathMode {
 #[async_trait]
 impl NavigatorMode for PathMode {
     async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
-        navigator
-            .sweep
-            .prompt_set(Some(path_collapse(&self.path)), Some(PATH_NAV_ICON.clone()));
-        navigator.sweep.keep_order(Some(true));
-        navigator.sweep.query_set(self.query.clone());
+        navigator.sweep.prompt_set(
+            None,
+            Some(path_collapse(&self.path)),
+            Some(PATH_NAV_ICON.clone()),
+        );
+        navigator.sweep.keep_order(None, Some(true));
+        navigator.sweep.query_set(None, self.query.clone());
 
         navigator.sweep.bind(
+            None,
             "backspace".parse()?,
             TAG_GOTO_PARENT.to_owned(),
             "Go to parent directory".to_owned(),
@@ -459,7 +471,7 @@ impl NavigatorMode for PathMode {
     async fn exit(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
         navigator
             .sweep
-            .bind("backspace".parse()?, String::new(), String::new());
+            .bind(None, "backspace".parse()?, String::new(), String::new());
         Ok(())
     }
 
@@ -495,10 +507,12 @@ impl PathHistoryMode {
 #[async_trait]
 impl NavigatorMode for PathHistoryMode {
     async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error> {
-        navigator
-            .sweep
-            .prompt_set(Some("PATH".to_owned()), Some(PATH_HISTORY_ICON.clone()));
-        navigator.sweep.keep_order(Some(true));
+        navigator.sweep.prompt_set(
+            None,
+            Some("PATH".to_owned()),
+            Some(PATH_HISTORY_ICON.clone()),
+        );
+        navigator.sweep.keep_order(None, Some(true));
 
         let mut history = Vec::new();
         // Add current directory as the first item

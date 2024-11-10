@@ -18,7 +18,7 @@ pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, F
 
 mod sweep;
 pub use crate::sweep::{
-    sweep, Sweep, SweepEvent, SweepLayout, SweepLayoutSize, SweepOptions, WindowId,
+    sweep, Sweep, SweepEvent, WindowLayout, WindowLayoutSize, SweepOptions, WindowId,
     PROMPT_DEFAULT_ICON,
 };
 

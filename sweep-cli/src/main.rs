@@ -16,7 +16,7 @@ use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
     Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep, SweepEvent,
-    SweepLayout, SweepLayoutSize, SweepOptions, Theme, WindowId,
+    SweepOptions, Theme, WindowId, WindowLayout, WindowLayoutSize,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -117,17 +117,17 @@ async fn main() -> Result<(), Error> {
             scorers: VecDeque::new(),
             layout: args.layout.unwrap_or_else(|| {
                 if args.preview_builder.is_some() {
-                    SweepLayout::Full {
-                        height: SweepLayoutSize::Fraction(-0.3),
+                    WindowLayout::Full {
+                        height: WindowLayoutSize::Fraction(-0.3),
                     }
                 } else {
-                    SweepLayout::default()
+                    WindowLayout::default()
                 }
             }),
         },
     )?;
-    sweep.query_set(args.query.clone());
-    sweep.scorer_by_name(Some(args.scorer)).await?;
+    sweep.query_set(None, args.query.clone());
+    sweep.scorer_by_name(None, Some(args.scorer)).await?;
     if let Some(preview_builder) = args.preview_builder {
         candidate_context.preview_set(preview_builder, sweep.waker());
     }
@@ -149,7 +149,7 @@ async fn main() -> Result<(), Error> {
             let seed = VecDeserializeSeed(&candidate_context);
             let candidates =
                 json_from_slice_seed(seed, data.as_ref()).context("failed to parse input JSON")?;
-            sweep.items_extend(candidates);
+            sweep.items_extend(None, candidates);
         } else {
             let sweep = sweep.clone();
             let field_dilimiter = args.field_delimiter;
@@ -158,7 +158,7 @@ async fn main() -> Result<(), Error> {
                 let candidates = Candidate::from_lines(input, field_dilimiter, field_selector);
                 tokio::pin!(candidates);
                 while let Some(candidates) = candidates.try_next().await? {
-                    sweep.items_extend(candidates);
+                    sweep.items_extend(None, candidates);
                 }
                 Ok::<_, Error>(())
             });
@@ -168,7 +168,7 @@ async fn main() -> Result<(), Error> {
                 if items.is_empty() && !args.no_match_use_input {
                     continue;
                 }
-                let input = sweep.query_get().await?;
+                let input = sweep.query_get(None).await?;
                 std::mem::drop(sweep); // cleanup terminal
                 let result = if args.json {
                     let mut result = serde_json::to_string(&items)?;
@@ -300,7 +300,7 @@ pub struct Args {
 
     /// layout mode specified as `name(,attr=value)*`
     #[argh(option)]
-    pub layout: Option<SweepLayout>,
+    pub layout: Option<WindowLayout>,
 
     /// show sweep version and quit
     #[argh(switch)]

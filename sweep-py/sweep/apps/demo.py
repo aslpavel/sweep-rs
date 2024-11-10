@@ -72,12 +72,12 @@ async def yes_or_no(sweep: Sweep[Any]) -> bool | None:
     yes_or_no = await sweep.quick_select(
         [
             Candidate()
-            .target_push("Y", face="bg=gruv-red-2/.5,bold")
+            .target_push("Y", face="fg=bg,bg=gruv-red-2,bold")
             .target_push("es")
             .hotkey_set("y")
             .wrap(True),
             Candidate()
-            .target_push("N", face="bg=gruv-green-2/.5,bold")
+            .target_push("N", face="fg=bg,bg=gruv-green-2,bold")
             .target_push("o")
             .hotkey_set("n")
             .wrap(False),

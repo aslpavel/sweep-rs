@@ -818,7 +818,7 @@ class MPDSweep:
                         await self._mpd.repeat()
                     case SweepBind(tag=tag) if tag == RANDOM_TOGGLE_TAG:
                         await self._mpd.random()
-                    case SweepWindow(uid_to=uid_to):
+                    case SweepWindow(type=type, uid_to=uid_to):
                         self._view = (
                             MPDSweepView.SONGS
                             if uid_to == "songs"
