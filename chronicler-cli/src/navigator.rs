@@ -263,7 +263,7 @@ impl Navigator {
         while let Some(event) = self.sweep.next_event().await {
             match event {
                 SweepEvent::Resize(_) => {}
-                SweepEvent::Select(result) => return Ok(result),
+                SweepEvent::Select { items, .. } => return Ok(items),
                 SweepEvent::Bind { tag, .. } => {
                     tracing::debug!(?tag, "[Navigator.run]");
                     let mode_next = match tag.as_str() {
