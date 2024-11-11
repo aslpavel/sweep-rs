@@ -38,9 +38,9 @@ use surf_n_term::{
         Margins, ScrollBarFn, ScrollBarPosition, Text, Tree, TreeId, TreeMut, TreeView, View,
         ViewCache, ViewContext, ViewDeserializer, ViewLayout, ViewLayoutStore, ViewMutLayout,
     },
-    CellWrite, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMap, KeyMod, KeyName, Position, Size,
-    SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent, TerminalSize,
-    TerminalSurface, TerminalSurfaceExt, TerminalWaker,
+    CellWrite, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMap, KeyMapHandler, KeyMod, KeyName,
+    Position, Size, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
+    TerminalSize, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -1064,6 +1064,8 @@ struct SweepWindow<H: Haystack> {
     ranker: Ranker,
     // haystack
     haystack: Vec<H>,
+    // haystack keymap
+    haystack_keymap: KeyMapHandler<SweepAction>,
     // haystack context
     haystack_context: H::Context,
     // cached large preview of the current item
@@ -1151,6 +1153,7 @@ where
             marked: Default::default(),
             ranker,
             haystack: Vec::new(),
+            haystack_keymap: KeyMapHandler::new(),
             haystack_context,
             preview_large: None,
             render_suppress_sync: None,
@@ -1166,10 +1169,10 @@ where
             let Some(chord) = haystack.hotkey() else {
                 return;
             };
-            let action = SweepAction::SelectByIndex(index_offset + index);
-            let desc = action.description();
-            self.key_actions.insert(desc.name, action.clone());
-            self.key_map.register(chord, action);
+            self.haystack_keymap.register(
+                chord.as_ref(),
+                SweepAction::SelectByIndex(index_offset + index),
+            );
         });
         self.haystack.extend(haystack);
     }
@@ -1513,6 +1516,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 HaystackClear => {
                     self.ranker.haystack_clear();
                     self.haystack.clear();
+                    self.haystack_keymap.clear();
                 }
                 RankerKeepOrder(toggle) => self.ranker.keep_order(toggle),
                 RenderSuppress(suppress) => {
@@ -1558,6 +1562,8 @@ impl<H: Haystack> Window for SweepWindow<H> {
             } else {
                 return self.handle_action(&action.clone());
             }
+        } else if let Some(action) = self.haystack_keymap.handle(key).cloned() {
+            return self.handle_action(&action);
         } else if let Key {
             name: KeyName::Char(c),
             mode: KeyMod::EMPTY,
