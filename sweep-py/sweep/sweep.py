@@ -70,6 +70,7 @@ __all__ = [
     "Text",
     "View",
     "ViewRef",
+    "WindowId",
 ]
 
 # ------------------------------------------------------------------------------
@@ -916,9 +917,12 @@ class Sweep[I]:
             self.__binds.pop(tag, None)
         await self.__peer.bind(uid=uid, key=key, tag=tag, desc=desc)
 
-    async def window_switch(self, uid: WindowId) -> None:
-        """Push new empty state"""
-        await self.__peer.window_switch(uid=uid)
+    async def window_switch(self, uid: WindowId) -> bool:
+        """Push new empty state
+
+        Returns `true` if window was created, `false` otherwise
+        """
+        return await self.__peer.window_switch(uid=uid)
 
     async def window_pop(self) -> None:
         """Pop previous state from the stack"""

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+from functools import partial
 import io
 import os
 import re
@@ -41,6 +42,7 @@ from .. import (
     Text,
     View,
     ViewRef,
+    WindowId,
 )
 from . import sweep_default_cmd
 
@@ -143,6 +145,14 @@ REPEAT_ONCE_ICON = Icon(
     frame=FRAME_ON,
     path="M66.8,11.3Q67.8,9.5 69.55,9.05Q71.3,8.6 72.9,9.5L81,17.5Q84.4,20.9 85.3,21.8Q86.5,23.2 86.75,23.7Q87,24.2 87,25L87,26.3Q86.9,26.6 86.75,27.05Q86.6,27.5 85.9,28.2L74.2,40Q72.9,41.1 72.45,41.4Q72,41.7 71.4,41.8L71.3,41.8Q69.9,42 68.65,41.35Q67.4,40.7 66.8,39.4Q66.6,39 66.6,38.3L66.6,37.6Q66.6,36.7 66.75,36.25Q66.9,35.8 67.7,35Q68.2,34.4 70.1,32.5L73,29.5L50.4,29.5L27.8,29.6Q25.7,30.2 24.5,31.1Q22.1,32.7 21.4,35.7Q21.2,36.3 21.2,37.4L21.1,43.4L21.1,51.3Q20,52.9 19.3,53.5Q18,54.5 16.3,54.2Q14.9,53.9 14,52.9Q13.5,52.3 13,51.1L12.9,44Q12.9,37.8 13,36.1Q13.1,34.4 13.8,32.5Q15.3,27.6 19.6,24.5Q23.4,21.6 27.8,21.3Q28.5,21.2 50.9,21.2L73,21.2L70.1,18.2Q68.2,16.3 67.7,15.7Q66.9,14.9 66.75,14.45Q66.6,14 66.6,13.1L66.6,12.3Q66.6,11.7 66.8,11.3ZM45.5,50.1Q45.2,50.1 44.5,49.9Q43.4,49.5 42.7,48.7Q41.8,47.5 41.8,45.7Q41.8,44.7 42.3,43.95Q42.8,43.2 45,41Q46.8,39.2 47.4,38.7Q48.1,38.1 48.65,37.9Q49.2,37.7 50.2,37.7Q51.5,37.7 52.7,38.75Q53.9,39.8 54.1,41.1Q54.1,41.6 54.1,50.1Q54.1,58.6 54.1,59.1Q53.9,59.9 53.3,60.8Q52.2,62.4 50,62.4Q47.8,62.4 46.7,60.8Q46.1,59.9 45.9,59.1Q45.8,58.8 45.8,54.4L45.8,50.1L45.5,50.1ZM82,46.1Q80.9,46.4 80.1,47.2Q79.6,47.7 78.9,48.9L78.9,56.7L78.8,62.7Q78.8,63.8 78.6,64.4Q77.9,67.2 75.9,68.8Q74.5,69.9 72.2,70.6L49.6,70.7L27,70.7L29.9,67.7Q31.8,65.8 32.3,65.2Q33.1,64.4 33.25,63.95Q33.4,63.5 33.4,62.6L33.4,62.5Q33.4,60.6 32.3,59.5Q31.4,58.7 30.1,58.5Q29.2,58.3 28.7,58.4L28.6,58.4Q28,58.5 27.5,58.8Q27,59.1 25.8,60.2L14,72Q13.4,72.7 13.2,73.15Q13,73.6 13,73.8L13,74.8L13,75.9Q13,76.1 13.2,76.55Q13.4,77 14,77.7L25.8,89.5Q27,90.6 27.5,90.9Q28,91.2 28.6,91.3L28.7,91.3Q29.2,91.4 30.1,91.2Q31.4,91 32.3,90.2Q33.4,89.1 33.4,87.2L33.4,87.1Q33.4,86.2 33.25,85.75Q33.1,85.3 32.3,84.5Q31.8,83.9 29.9,82L27,79L49.1,79Q71.5,79 72.2,78.9Q78,78.3 82.2,74.2Q86.4,70.1 87,64.3Q87.1,63.7 87.1,56.2L87,49.1Q86.4,47.7 85.5,46.9Q84,45.6 82,46.1Z",
 )
+# tabler-disk
+ALBUM_ICON_REF = alloc_ref()
+ALBUM_ICON = Icon(
+    view_box=(0, 0, 100, 100),
+    size=(1, 3),
+    path="M49.55,91.5Q38.25,91.5 28.65,85.9Q19.35,80.5 13.95,71.2Q8.35,61.6 8.35,50.3Q8.35,41.9 11.6,34.15Q14.85,26.4 20.75,20.6Q26.85,14.6 35.05,11.7Q43.75,8.5 53.85,9.2Q63.95,10.3 72.15,15.7Q79.85,20.8 84.65,28.8Q89.45,36.6 90.55,45.7Q91.65,54.8 88.75,63.2Q86.05,71.3 80.35,77.7Q74.65,84.1 66.85,87.7Q58.75,91.5 49.55,91.5ZM82.25,54.6Q83.35,45.1 79.55,36.7Q75.85,28.7 68.65,23.5Q61.45,18.3 52.75,17.4Q43.45,16.5 34.65,20.9Q28.95,23.9 25.25,27.9Q18.35,35.5 16.85,45.3Q15.55,54.4 19.25,63.1Q22.95,71.8 30.45,77.2Q38.45,83 48.55,83.3Q56.85,83.6 64.15,79.95Q71.45,76.3 76.15,69.7Q81.05,62.9 82.25,54.6ZM47.55,25.6Q47.65,25.6 47.95,25.6L48.95,25.5Q51.55,25.5 52.75,27.1Q53.85,28.4 53.55,30.25Q53.25,32.1 51.85,33.1Q51.15,33.5 50.25,33.7Q49.65,33.8 48.3,33.9Q46.95,34 46.15,34.2Q42.25,35 39.15,37.5Q33.65,41.8 33.15,49.5Q33.05,50.8 32.9,51.4Q32.75,52 32.35,52.6Q31.25,54.2 29.3,54.4Q27.35,54.6 26.05,53.25Q24.75,51.9 24.75,48.85Q24.75,45.8 26.15,42.2Q27.65,38.2 30.35,34.8Q33.35,31 37.45,28.7Q42.05,26.1 47.55,25.6ZM49.55,58.4Q45.45,58.4 43.25,55.7Q41.45,53.4 41.45,50.3Q41.45,46.1 44.45,43.8Q46.05,42.6 48.15,42.2L48.35,42.2Q49.15,42.1 49.75,42.1Q51.05,42.1 52.65,42.7Q54.75,43.5 56.05,45.1Q57.65,47.2 57.65,50.3Q57.65,54 55.45,56.2Q53.25,58.4 49.55,58.4ZM69.35,46.2Q67.45,46.6 66.75,47.9Q66.35,48.8 66.05,51.2Q65.75,53.1 65.55,54.2Q65.05,56 64.25,57.6Q62.85,60.5 60.35,62.7Q56.05,66.4 50.35,66.7Q49.05,66.8 48.45,66.95Q47.85,67.1 47.25,67.5Q45.65,68.6 45.45,70.55Q45.25,72.5 46.65,73.9Q47.45,74.6 48.25,74.85Q49.05,75.1 50.65,75Q55.35,74.8 59.55,72.95Q63.75,71.1 67.05,67.8Q69.85,65 71.65,61.6Q73.05,58.8 73.65,55.7Q74.15,53.4 74.25,51.2Q74.25,49.7 74.15,49.4Q73.85,47.8 72.4,46.85Q70.95,45.9 69.35,46.2Z",
+)
+
 REPAT_TOGGLE_TAG = "repeat-toggle-tag"
 RANDOM_TOGGLE_TAG = "random-toggle-tag"
 DATE_RE = re.compile("(\\d{4})-?(\\d{2})?-?(\\d{2})?")
@@ -175,7 +185,7 @@ class Song:
     attrs: dict[str, str]
     pos: int | None  # position in the playlist
     id: int | None  # song id in the playlist
-    current: MPDStatus | None  # if song is currently playing
+    current: PlayState | None  # if song is currently playing
 
     def __init__(self, file: str) -> None:
         self.file = file
@@ -262,9 +272,9 @@ class Song:
 
         # right
         if self.current is not None:
-            if self.current.state == PlayState.PAUSE:
+            if self.current == PlayState.PAUSE:
                 result.right_push(ref=PAUSE_ICON_REF)
-            elif self.current.state == PlayState.PLAY:
+            elif self.current == PlayState.PLAY:
                 result.right_push(ref=PLAY_ICON_REF)
         result.right_push(duration_fmt(self.duration))
 
@@ -430,66 +440,72 @@ class MPD:
 
     __slots__ = [
         "events",
-        "_host",
-        "_port",
-        "_database",
-        "_reader",
-        "_writer",
-        "_state",
-        "_state_cond",
-        "_idle_task",
-        "_album_id_to_song",
+        "__host",
+        "__port",
+        "__database",
+        "__reader",
+        "__writer",
+        "__state",
+        "__state_cond",
+        "__idle_task",
+        "__album_id_to_song",
     ]
 
     def __init__(self, host: str = "localhost", port: int = 6600):
         self.events = Event[MPDEvent]()
-        self._host = host
-        self._port = port
-        self._database: Database | None = None
+        self.__host = host
+        self.__port = port
+        self.__database: Database | None = None
 
-        self._reader: asyncio.StreamReader | None = None
-        self._writer: asyncio.StreamWriter | None = None
+        self.__reader: asyncio.StreamReader | None = None
+        self.__writer: asyncio.StreamWriter | None = None
 
-        self._state = MPDState.WAIT
-        self._state_cond = asyncio.Condition()
-        self._idle_task: asyncio.Task[None] | None = None
+        self.__state = MPDState.WAIT
+        self.__state_cond = asyncio.Condition()
+        self.__idle_task: asyncio.Task[None] | None = None
 
-        self._album_id_to_song: dict[int, Song] = {}
+        self.__album_id_to_song: dict[int, Song] = {}
 
     async def __aenter__(self) -> MPD:
-        self._reader, self._writer = await asyncio.open_connection(
-            self._host, self._port
+        return await self.connect()
+
+    async def connect(self) -> MPD:
+        self.__reader, self.__writer = await asyncio.open_connection(
+            self.__host, self.__port
         )
-        init = await self._reader.readline()
+        init = await self.__reader.readline()
         init = init.strip()
         if not init.startswith(b"OK MPD"):
             raise RuntimeError(f"invalid initial response from the MPD: {init}")
-        self._idle_task = asyncio.create_task(self._idle_coro(), name="mpd-idle")
+        self.__idle_task = asyncio.create_task(self.__idle_coro(), name="mpd-idle")
         return self
 
     async def __aexit__(self, _et: Any, _eo: Any, _tb: Any) -> bool:
-        if self._writer:
-            self._writer.close()
-        self._writer, self._reader = None, None
+        await self.disconnect()
         return False
 
-    async def _send_request(self, cmd: str, args: Sequence[str]) -> None:
-        """Send MPD request"""
-        if self._writer is None:
-            raise RuntimeError("MPD is not connected")
-        self._writer.write(cmd.encode())
-        for arg in args:
-            self._writer.write(b" ")
-            self._writer.write(mpd_escape(arg).encode())
-        self._writer.write(b"\n")
-        await self._writer.drain()
+    async def disconnect(self) -> None:
+        if self.__writer:
+            self.__writer.close()
+        self.__writer, self.__reader = None, None
 
-    async def _recv_response(self) -> AsyncIterator[MPDChunk]:
+    async def __send_request(self, cmd: str, args: Sequence[str]) -> None:
+        """Send MPD request"""
+        if self.__writer is None:
+            raise RuntimeError("MPD is not connected")
+        self.__writer.write(cmd.encode())
+        for arg in args:
+            self.__writer.write(b" ")
+            self.__writer.write(mpd_escape(arg).encode())
+        self.__writer.write(b"\n")
+        await self.__writer.drain()
+
+    async def __recv_response(self) -> AsyncIterator[MPDChunk]:
         """Receive MPD response"""
-        if self._reader is None:
+        if self.__reader is None:
             raise RuntimeError("MPD is not connected")
         while True:
-            line = await self._reader.readline()
+            line = await self.__reader.readline()
             line = line.strip()
             if line == b"OK":
                 break
@@ -497,78 +513,78 @@ class MPD:
                 raise ValueError(line[4:].strip().decode())
             name, value = line.split(b": ", maxsplit=1)
             if name == b"binary":
-                data = await self._reader.readexactly(int(value))
+                data = await self.__reader.readexactly(int(value))
                 yield MPDChunk("binary", data)
-                await self._reader.readline()
+                await self.__reader.readline()
             else:
                 yield MPDChunk(name.decode(), value.decode())
 
-    async def _idle_coro(self) -> None:
+    async def __idle_coro(self) -> None:
         """Client needs to be in IDLE state if there is no request to avoid timeout"""
-        while self._reader is not None and self._writer is not None:
+        while self.__reader is not None and self.__writer is not None:
             await asyncio.sleep(0.1)
-            async for chunk in self._call("idle"):
+            async for chunk in self.__call("idle"):
                 if chunk.name == "changed":
                     try:
                         event = MPDEvent(chunk.data)
                         if event == MPDEvent.DATABASE:
-                            self._database = None
+                            self.__database = None
                         self.events(event)
                     except ValueError:
                         pass
 
-    async def _call(self, cmd: str, *args: str) -> AsyncIterator[MPDChunk]:
+    async def __call(self, cmd: str, *args: str) -> AsyncIterator[MPDChunk]:
         """Issue MPD command"""
-        async with self._state_cond:
+        async with self.__state_cond:
             # interrupt idle state
-            if self._state == MPDState.IDLE:
-                await self._send_request("noidle", [])
+            if self.__state == MPDState.IDLE:
+                await self.__send_request("noidle", [])
             # wait for client to transition into WAIT state
-            while self._state != MPDState.WAIT:
-                await self._state_cond.wait()
+            while self.__state != MPDState.WAIT:
+                await self.__state_cond.wait()
             # change state
-            self._state = MPDState.IDLE if cmd == "idle" else MPDState.REQUEST
-            await self._send_request(cmd, args)
+            self.__state = MPDState.IDLE if cmd == "idle" else MPDState.REQUEST
+            await self.__send_request(cmd, args)
         try:
-            async for chunk in self._recv_response():
+            async for chunk in self.__recv_response():
                 yield chunk
         finally:
             # transition to WAIT state and wake up other tasks
-            async with self._state_cond:
-                self._state = MPDState.WAIT
-                self._state_cond.notify_all()
+            async with self.__state_cond:
+                self.__state = MPDState.WAIT
+                self.__state_cond.notify_all()
 
-    async def _call_dict(self, cmd: str, *args: str) -> dict[str, str]:
+    async def __call_dict(self, cmd: str, *args: str) -> dict[str, str]:
         """Issue MPD command and collect result to a dictionary"""
         attrs: dict[str, str] = {}
-        async for chunk in self._call(cmd, *args):
+        async for chunk in self.__call(cmd, *args):
             attrs[chunk.name] = cast(str, chunk.data)
         return attrs
 
     def song_by_id(self, id: int) -> Song | None:
-        return self._album_id_to_song.get(id)
+        return self.__album_id_to_song.get(id)
 
     async def database(self) -> Database:
-        if self._database is not None:
-            return self._database
+        if self.__database is not None:
+            return self.__database
         database = Database()
-        async for song in Song.from_chunks(self._call("listallinfo")):
+        async for song in Song.from_chunks(self.__call("listallinfo")):
             database.add(song)
-            self._album_id_to_song[song.album_id()] = song
-        self._database = database
+            self.__album_id_to_song[song.album_id()] = song
+        self.__database = database
         return database
 
     async def play(self, song: Song) -> None:
         if song.id is None:
             return
-        await self._call_dict("playid", str(song.id))
+        await self.__call_dict("playid", str(song.id))
 
     async def pause(self, pause: bool | None = None) -> None:
         """Pause/Resume playback, if pause is not set then toggle"""
         if pause is None:
-            await self._call_dict("pause")
+            await self.__call_dict("pause")
         else:
-            await self._call_dict("pause", str(int(pause)))
+            await self.__call_dict("pause", str(int(pause)))
 
     async def repeat(self, repeat: MPDRepeat | None = None) -> MPDRepeat:
         """Toggle repeat mode"""
@@ -581,23 +597,23 @@ class MPD:
                 repeat_flag, once_flag = True, False
             case MPDRepeat.SINGLE:
                 repeat_flag, once_flag = True, True
-        await self._call_dict("single", "1" if once_flag else "0")
-        await self._call_dict("repeat", "1" if repeat_flag else "0")
+        await self.__call_dict("single", "1" if once_flag else "0")
+        await self.__call_dict("repeat", "1" if repeat_flag else "0")
         return repeat
 
     async def random(self, random: bool | None = None) -> bool:
         """Toggle random mode"""
         if random is None:
             random = not (await self.status()).random
-        await self._call_dict("random", "1" if random else "0")
+        await self.__call_dict("random", "1" if random else "0")
         return random
 
     async def seekcur(self, offset: float, absolute: bool = False) -> None:
         """Seek to the position within the current song"""
         if absolute:
-            await self._call_dict("seekcur", str(abs(offset)))
+            await self.__call_dict("seekcur", str(abs(offset)))
         else:
-            await self._call_dict(
+            await self.__call_dict(
                 "seekcur", "{}{}".format("+" if offset > 0 else "", offset)
             )
 
@@ -616,21 +632,21 @@ class MPD:
 
         cmd = "addid"
         if pos is None:
-            attrs = await self._call_dict(cmd, song.file)
+            attrs = await self.__call_dict(cmd, song.file)
         elif relative:
             pos_str = str(pos) if pos < 0 else f"+{pos}"
-            attrs = await self._call_dict(cmd, song.file, pos_str)
+            attrs = await self.__call_dict(cmd, song.file, pos_str)
         else:
             if pos < 0:
                 raise ValueError("position must positivie if relative is not set")
-            attrs = await self._call_dict(cmd, song.file, str(pos))
+            attrs = await self.__call_dict(cmd, song.file, str(pos))
         return int(attrs["Id"])
 
     async def delete(self, song: Song) -> None:
         """Remove song from the playlist"""
         if song.id is None:
             return
-        await self._call_dict("deleteid", str(song.id))
+        await self.__call_dict("deleteid", str(song.id))
 
     async def move(self, song: Song, pos: int, relative: bool = True) -> None:
         if song.pos is None:
@@ -638,10 +654,10 @@ class MPD:
         pos = song.pos + pos if relative else pos
         status = await self.status()
         pos = min(max(0, pos), status.playlist_length - 1)
-        await self._call_dict("move", str(song.pos), str(pos))
+        await self.__call_dict("move", str(song.pos), str(pos))
 
     async def status(self) -> MPDStatus:
-        attrs = await self._call_dict("status")
+        attrs = await self.__call_dict("status")
         elapsed_opt = attrs.get("elapsed")
         duration_opt = attrs.get("duration")
         playlist_song_opt = attrs.get("song")
@@ -663,16 +679,16 @@ class MPD:
         )
 
     async def currentsong(self) -> Song | None:
-        async for song in Song.from_chunks(self._call("currentsong")):
+        async for song in Song.from_chunks(self.__call("currentsong")):
             return song
 
     async def playlistinfo(self) -> list[Song]:
         status = await self.status()
         songs: list[Song] = []
-        async for song in Song.from_chunks(self._call("playlistinfo")):
+        async for song in Song.from_chunks(self.__call("playlistinfo")):
             if song.id == status.playlist_song_id:
-                song.current = status
-            self._album_id_to_song[song.album_id()] = song
+                song.current = status.state
+            self.__album_id_to_song[song.album_id()] = song
             songs.append(song)
         return songs
 
@@ -685,13 +701,13 @@ class MPD:
         cmd = "readpicture"
         size = 0
         data = io.BytesIO()
-        async for chunk in self._call(cmd, file, "0"):
+        async for chunk in self.__call(cmd, file, "0"):
             if chunk.name == "size":
                 size = int(chunk.data)
             else:
                 data.write(chunk.get_bytes())
         while data.tell() < size:
-            async for chunk in self._call(cmd, file, str(data.tell())):
+            async for chunk in self.__call(cmd, file, str(data.tell())):
                 data.write(chunk.get_bytes())
         if data.tell() == 0:
             return None
@@ -721,180 +737,212 @@ def duration_fmt(duration: float) -> str:
     return result
 
 
-class MPDSweepView(Enum):
-    PLAYLIST = 0
-    SONGS = 1
-    MAX = 2
-
-
 class MPDSweep:
+    PLAYLIST_UID: str = "playlist"
+
     def __init__(self, mpd: MPD, sweep: Sweep[Song]) -> None:
-        self._mpd: MPD = mpd
-        self._sweep: Sweep[Song] = sweep
-        self._view: MPDSweepView = MPDSweepView.MAX
-        self._events_queue: asyncio.Queue[MPDEvent] = asyncio.Queue()
+        self.__mpd: MPD = mpd
+        self.__mpd_events_queue: asyncio.Queue[MPDEvent] = asyncio.Queue()
+
+        self.__sweep: Sweep[Song] = sweep
+
+        self.__playlist_version: int | None = None
+        self.__playlist: list[Song]
+        self.__status: MPDStatus
 
     async def run(self) -> None:
         # fields
-        await self._sweep.field_register(Field(glyph=PLAY_ICON), PLAY_ICON_REF)
-        await self._sweep.field_register(Field(glyph=PAUSE_ICON), PAUSE_ICON_REF)
-        await self._sweep.field_register(Field(glyph=PLAYLIST_ICON), PLAYLIST_ICON_REF)
-        await self._sweep.field_register(Field(glyph=DATABASE_ICON), DATABASE_ICON_REF)
-        self._sweep.field_resolver_set(self._field_resolver)
+        await self.__sweep.field_register(Field(glyph=PLAY_ICON), PLAY_ICON_REF)
+        await self.__sweep.field_register(Field(glyph=PAUSE_ICON), PAUSE_ICON_REF)
+        await self.__sweep.field_register(Field(glyph=PLAYLIST_ICON), PLAYLIST_ICON_REF)
+        await self.__sweep.field_register(Field(glyph=DATABASE_ICON), DATABASE_ICON_REF)
+        await self.__sweep.field_register(Field(glyph=ALBUM_ICON), ALBUM_ICON_REF)
+        self.__sweep.field_resolver_set(self.__field_resolver)
 
-        await self._sweep.view_register(PLAY_ICON, PLAY_ICON_REF)
-        await self._sweep.view_register(PAUSE_ICON, PAUSE_ICON_REF)
-        await self._sweep.view_register(STOP_ICON, STOP_ICON_REF)
-        await self._sweep.view_register(SHUFFLE_ON_ICON, SHUFFLE_ON_ICON_REF)
-        await self._sweep.view_register(SHUFFLE_OFF_ICON, SHUFFLE_OFF_ICON_REF)
-        await self._sweep.view_register(REPEAT_ICON, REPEAT_ICON_REF)
-        await self._sweep.view_register(REPEAT_OFF_ICON, REPEAT_OFF_ICON_REF)
-        await self._sweep.view_register(REPEAT_ONCE_ICON, REPEAT_ONCE_ICON_REF)
+        await self.__sweep.view_register(PLAY_ICON, PLAY_ICON_REF)
+        await self.__sweep.view_register(PAUSE_ICON, PAUSE_ICON_REF)
+        await self.__sweep.view_register(STOP_ICON, STOP_ICON_REF)
+        await self.__sweep.view_register(SHUFFLE_ON_ICON, SHUFFLE_ON_ICON_REF)
+        await self.__sweep.view_register(SHUFFLE_OFF_ICON, SHUFFLE_OFF_ICON_REF)
+        await self.__sweep.view_register(REPEAT_ICON, REPEAT_ICON_REF)
+        await self.__sweep.view_register(REPEAT_OFF_ICON, REPEAT_OFF_ICON_REF)
+        await self.__sweep.view_register(REPEAT_ONCE_ICON, REPEAT_ONCE_ICON_REF)
 
-        await self._update_footer()
+        await self.__footer_update()
 
         # binds
-        def handler(fn: Callable[[], Awaitable[None]]) -> BindHandler[Song]:
-            return lambda _sweep, _tag: fn()
-
-        await self._sweep.bind(
-            key="ctrl+i",
-            tag="mpd.switch.view",
-            desc="Switch between different views",
-            handler=handler(self.view_switch),
-        )
-        await self._sweep.bind(
-            key="alt+g",
-            tag="mpd.goto",
-            desc="Goto different view",
-            handler=self._goto,
-        )
-        await self._sweep.bind(
-            key="alt+d",
-            tag="mpd.song.delete",
-            desc="Delete song from the playlist",
-            handler=handler(self._playlist_song_delete),
-        )
-        await self._sweep.bind(
-            key="shift+up",
-            tag="mpd.song.moveup",
-            desc="Move song up in the playlist",
-            handler=handler(self._playlist_song_move_up),
-        )
-        await self._sweep.bind(
-            key="shift+down",
-            tag="mpd.song.movedown",
-            desc="Move song down in the playlist",
-            handler=handler(self._playlist_song_move_down),
-        )
-        await self._sweep.bind(
-            key="shift+right",
-            tag="mpd.song.seekfwd",
-            desc="Seek forward in the current song",
-            handler=handler(lambda: self._mpd.seekcur(10.0, False)),
-        )
-        await self._sweep.bind(
-            key="shift+left",
-            tag="mpd.song.seekbwd",
-            desc="Seek backward in the current song",
-            handler=handler(lambda: self._mpd.seekcur(-10.0, False)),
-        )
 
         # events enqueue
-        @self._mpd.events.on
+        @self.__mpd.events.on
         def _(event: MPDEvent) -> bool:
-            self._events_queue.put_nowait(event)
+            self.__mpd_events_queue.put_nowait(event)
             return True
 
-        update_task = asyncio.create_task(self._updater_coro())
-        update_footer_task = asyncio.create_task(self._update_footer_coro())
-        await self.view_playlist()
+        update_task = asyncio.create_task(self.__mpd_events_coro())
+        update_footer_task = asyncio.create_task(self.__footer_update_coro())
+        await self.__playlist_show()
         try:
-            async for event in self._sweep:
+            async for event in self.__sweep:
                 match event:
-                    case SweepSelect(items=items):
-                        await self._on_select(items)
+                    case SweepSelect(items=items, uid=uid):
+                        await self.__on_select(uid, items)
                     case SweepBind(tag=tag) if tag == REPAT_TOGGLE_TAG:
-                        await self._mpd.repeat()
+                        await self.__mpd.repeat()
                     case SweepBind(tag=tag) if tag == RANDOM_TOGGLE_TAG:
-                        await self._mpd.random()
-                    case SweepWindow(type=type, uid_to=uid_to):
-                        self._view = (
-                            MPDSweepView.SONGS
-                            if uid_to == "songs"
-                            else MPDSweepView.PLAYLIST
-                        )
+                        await self.__mpd.random()
+                    case SweepWindow(type="opened", uid_to=uid_to):
+                        if uid_to == self.PLAYLIST_UID:
+                            await self.__playlist_init()
+                    case SweepWindow(type="switched", uid_to=uid_to):
+                        if uid_to == self.PLAYLIST_UID:
+                            await self.__playlist_update()
+                        else:
+                            pass
                     case _:
                         pass
         finally:
             update_footer_task.cancel()
             update_task.cancel()
 
-    async def view_switch(self, view: MPDSweepView | None = None) -> None:
-        match view:
-            case None | MPDSweepView.MAX:
-                view = MPDSweepView((self._view.value + 1) % MPDSweepView.MAX.value)
-                await self.view_switch(view)
-            case MPDSweepView.SONGS:
-                await self.view_songs()
-            case MPDSweepView.PLAYLIST:
-                await self.view_playlist()
-
-    async def view_playlist(self) -> None:
+    async def __playlist_show(self) -> None:
         """Switch to Playlist view"""
-        songs = await self._mpd.playlistinfo()
-        status = await self._mpd.status()
+        await self.__sweep.window_switch(self.PLAYLIST_UID)
 
-        self._view = MPDSweepView.PLAYLIST
-        async with self._sweep.render_suppress():
-            await self._sweep.prompt_set("Playlist", icon=PLAYLIST_ICON)
-            await self._sweep.items_clear()
-            await self._sweep.query_set("")
-            await self._sweep.items_extend(songs)
-        if status.playlist_song is not None and songs:
-            await self._sweep.cursor_set(status.playlist_song)
-
-    async def view_songs(
+    async def __songs_show(
         self,
-        songs: Sequence[Song] | None = None,
-        prompt: str | None = None,
+        songs: Sequence[Song],
+        prompt: str,
+        prompt_icon: Icon,
+        uid: WindowId,
     ) -> None:
         """Switch to set view"""
-        if songs is None:
-            songs = await self._mpd.listallinfo()
-        self._view = MPDSweepView.SONGS
-        await self._sweep.window_switch("songs")
-        async with self._sweep.render_suppress():
-            await self._sweep.prompt_set(prompt or "Songs", icon=DATABASE_ICON)
-            await self._sweep.items_clear()
-            await self._sweep.query_set("")
-            await self._sweep.items_extend(songs)
+        created = await self.__sweep.window_switch(uid=uid)
+        if not created:
+            return
 
-    async def _on_select(self, songs: list[Song]) -> None:
-        match self._view:
-            case MPDSweepView.PLAYLIST:
-                if len(songs) != 1:
-                    return
-                song = songs[0]
-                if song.id is not None:
-                    current = await self._mpd.currentsong()
-                    if current == song:
-                        await self._mpd.pause()
-                    else:
-                        await self._mpd.play(song)
-            case MPDSweepView.SONGS:
-                for song in songs:
-                    await self._mpd.add(song)
-            case _:
-                pass
+        await self.__sweep.bind(
+            key="alt+g",
+            tag="mpd.goto",
+            desc="Goto Songs/Artists/Albums",
+            handler=self.__on_goto,
+            uid=uid,
+        )
+        await self.__sweep.bind(
+            key="alt+right",
+            tag="mpd.song.seekfwd",
+            desc="Seek forward in the current song",
+            handler=handler(lambda: self.__mpd.seekcur(10.0, False)),
+            uid=uid,
+        )
+        await self.__sweep.bind(
+            key="alt+left",
+            tag="mpd.song.seekbwd",
+            desc="Seek backward in the current song",
+            handler=handler(lambda: self.__mpd.seekcur(-10.0, False)),
+            uid=uid,
+        )
+        await self.__sweep.prompt_set(
+            prompt=prompt or "Songs",
+            icon=prompt_icon or DATABASE_ICON,
+            uid=uid,
+        )
+        await self.__sweep.items_extend(songs, uid=uid)
 
-    async def _update_footer_coro(self) -> None:
+    async def __playlist_update(self) -> None:
+        status = await self.__mpd.status()
+        if (
+            self.__playlist_version is None
+            or self.__playlist_version != status.playlist_version
+        ):
+            # full playlist update
+            self.__playlist_version = status.playlist_version
+            self.__playlist = await self.__mpd.playlistinfo()
+            song = await self.__sweep.items_current()
+            async with self.__sweep.render_suppress(uid=self.PLAYLIST_UID):
+                await self.__sweep.items_clear(uid=self.PLAYLIST_UID)
+                await self.__sweep.items_extend(self.__playlist, uid=self.PLAYLIST_UID)
+            song_index = next(
+                (i for i, s in enumerate(self.__playlist) if s == song), -1
+            )
+            if song_index > 0:
+                await self.__sweep.cursor_set(song_index, uid=self.PLAYLIST_UID)
+        else:
+            # update state for the current song
+            if status.playlist_song is not None and (
+                self.__status.state != status.state
+                or self.__status.playlist_song != status.playlist_song
+            ):
+                song = self.__playlist[status.playlist_song]
+                song.current = status.state
+                await self.__sweep.item_update(
+                    status.playlist_song, song, uid=self.PLAYLIST_UID
+                )
+            # unset current if it has changed
+            if (
+                self.__status.playlist_song is not None
+                and self.__status.playlist_song != status.playlist_song
+            ):
+                song = self.__playlist[self.__status.playlist_song]
+                song.current = None
+                await self.__sweep.item_update(
+                    self.__status.playlist_song, song, uid=self.PLAYLIST_UID
+                )
+        self.__status = status
+
+    async def __playlist_init(self) -> None:
+        await self.__sweep.prompt_set(
+            "Playlist", icon=PLAYLIST_ICON, uid=self.PLAYLIST_UID
+        )
+        await self.__sweep.bind(
+            key="alt+up",
+            tag="mpd.song.moveup",
+            desc="Move song up in the playlist",
+            handler=partial(self.__on_playlist_song_move, -1),
+            uid=self.PLAYLIST_UID,
+        )
+        await self.__sweep.bind(
+            key="alt+down",
+            tag="mpd.song.movedown",
+            desc="Move song down in the playlist",
+            handler=partial(self.__on_playlist_song_move, 1),
+            uid=self.PLAYLIST_UID,
+        )
+        await self.__sweep.bind(
+            key="alt+g",
+            tag="mpd.goto",
+            desc="Goto different view",
+            handler=self.__on_goto,
+            uid=self.PLAYLIST_UID,
+        )
+        await self.__sweep.bind(
+            key="alt+d",
+            tag="mpd.song.delete",
+            desc="Delete song from the playlist",
+            handler=self.__on_playlist_song_delete,
+            uid=self.PLAYLIST_UID,
+        )
+        await self.__sweep.bind(
+            key="alt+right",
+            tag="mpd.song.seekfwd",
+            desc="Seek forward in the current song",
+            handler=handler(lambda: self.__mpd.seekcur(10.0, False)),
+            uid=self.PLAYLIST_UID,
+        )
+        await self.__sweep.bind(
+            key="alt+left",
+            tag="mpd.song.seekbwd",
+            desc="Seek backward in the current song",
+            handler=handler(lambda: self.__mpd.seekcur(-10.0, False)),
+            uid=self.PLAYLIST_UID,
+        )
+
+    async def __footer_update_coro(self) -> None:
         while True:
-            await self._update_footer()
+            await self.__footer_update()
             await asyncio.sleep(1.0)
 
-    async def _update_footer(self) -> None:
-        status = await self._mpd.status()
+    async def __footer_update(self) -> None:
+        status = await self.__mpd.status()
         repeat_icon = MPDRepeat.from_status(status).icon()
 
         left = (
@@ -909,42 +957,41 @@ class MPDSweep:
         shuffle_icon = SHUFFLE_ON_ICON_REF if status.random else SHUFFLE_OFF_ICON_REF
         right = (
             Flex.row()
-            # items
             .push(shuffle_icon.tag(RANDOM_TOGGLE_TAG))
             .push(repeat_icon.tag(REPAT_TOGGLE_TAG))
         )
-        await self._sweep.footer_set(
+        await self.__sweep.footer_set(
             Container(
                 Flex.row()
                 .push(Container(left).horizontal(Align.EXPAND), flex=1.0)
                 .push(right)
             )
             .face(face="bg=accent/.4")
-            .horizontal(Align.EXPAND)
+            .horizontal(Align.EXPAND),
+            uid=self.PLAYLIST_UID,
         )
 
-    async def _updater_coro(self) -> None:
+    async def __mpd_events_coro(self) -> None:
         try:
             while True:
-                event = await self._events_queue.get()
-                if self._view == MPDSweepView.PLAYLIST:
-                    if event not in {
-                        MPDEvent.PLAYER,
-                        MPDEvent.PLAYLIST,
-                        MPDEvent.OPTIONS,
-                    }:
-                        continue
-                    await self._update_footer()
-                    await self.view_playlist()
+                event = await self.__mpd_events_queue.get()
+                if event not in {
+                    MPDEvent.PLAYER,
+                    MPDEvent.PLAYLIST,
+                    MPDEvent.OPTIONS,
+                }:
+                    continue
+                await self.__footer_update()
+                await self.__playlist_update()
         except Exception:
-            await self._sweep.terminate()
+            await self.__sweep.terminate()
             traceback.print_exc()
 
-    async def _field_resolver(self, ref: int) -> Field:
-        song = self._mpd.song_by_id(ref)
+    async def __field_resolver(self, ref: int) -> Field:
+        song = self.__mpd.song_by_id(ref)
         if song is None:
             return Field()
-        cover = await self._mpd.readpicture(song.file)
+        cover = await self.__mpd.readpicture(song.file)
         if cover is None:
             return Field()
         view = Flex.col().push(
@@ -952,66 +999,99 @@ class MPDSweep:
         )
         return Field(view=view)
 
-    async def _playlist_song_delete(self) -> None:
-        if self._view != MPDSweepView.PLAYLIST:
+    async def __on_playlist_song_move(
+        self,
+        pos: int,
+        _sweep: Sweep[Song],
+        _tag: str,
+    ) -> None:
+        song = await self.__sweep.items_current(uid=self.PLAYLIST_UID)
+        if song is None:
             return
-        songs = await self._sweep.items_marked() or [await self._sweep.items_current()]
+        await self.__mpd.move(song, pos)
+
+    async def __on_playlist_song_delete(self, _sweep: Sweep[Song], _tag: str) -> None:
+        songs = await self.__sweep.items_marked() or [
+            await self.__sweep.items_current()
+        ]
         for song in songs:
             if song is None or song.id is None:
                 return
-            await self._mpd.delete(song)
+            await self.__mpd.delete(song)
 
-    async def _playlist_song_move_up(self) -> None:
-        if self._view != MPDSweepView.PLAYLIST:
-            return
-        song = await self._sweep.items_current()
-        if song is None:
-            return
-        await self._mpd.move(song, -1)
+    async def __on_select(self, uid: WindowId, songs: list[Song]) -> None:
+        if uid == self.PLAYLIST_UID:
+            if len(songs) != 1:
+                return
+            song = songs[0]
+            if song.id is not None:
+                current = await self.__mpd.currentsong()
+                if current == song:
+                    await self.__mpd.pause()
+                else:
+                    await self.__mpd.play(song)
+        else:
+            for song in songs:
+                await self.__mpd.add(song)
 
-    async def _playlist_song_move_down(self) -> None:
-        if self._view != MPDSweepView.PLAYLIST:
-            return
-        song = await self._sweep.items_current()
-        if song is None:
-            return
-        await self._mpd.move(song, 1)
-
-    async def _goto(self, sweep: Sweep[Song], _tag: str) -> None:
-        song = await self._sweep.items_current()
+    async def __on_goto(self, sweep: Sweep[Song], _tag: str) -> None:
+        song = await self.__sweep.items_current()
         if song is None:
             return None
         selected = await sweep.quick_select(
             [
                 Candidate()
-                .target_push("Goto ")
-                .target_push("a", face="underline,bold")
+                .target_push(ref=ALBUM_ICON_REF)
+                .target_push("[A]", face="bold")
                 .target_push(f"lbum : {song.album}")
                 .hotkey_set("a")
                 .wrap("album"),
                 Candidate()
-                .target_push("Goto a")
-                .target_push("r", face="underline,bold")
+                .target_push(ref=PLAYLIST_ICON_REF)
+                .target_push("A")
+                .target_push("[R]", face="bold")
                 .target_push(f"tist: {song.artist}")
                 .hotkey_set("r")
                 .wrap("artist"),
+                Candidate()
+                .target_push(ref=DATABASE_ICON_REF)
+                .target_push("[D]", face="bold")
+                .target_push("abase: ALL")
+                .hotkey_set("d")
+                .wrap("database"),
             ],
             prompt="GOTO",
             window_uid="goto",
         )
         if not selected:
             return None
-        db = await self._mpd.database()
+        db = await self.__mpd.database()
         match selected[0].value:
-            case "album":
-                await self.view_songs(
-                    db.songs(artist=song.artist or "", album=song.album or ""),
-                    song.album,
+            case "album" if song.artist and song.album:
+                uid = f"{song.artist}/{song.album}"
+                await self.__songs_show(
+                    songs=db.songs(artist=song.artist, album=song.album),
+                    prompt=song.album,
+                    prompt_icon=ALBUM_ICON,
+                    uid=uid,
                 )
-            case "artist":
-                await self.view_songs(db.songs(artist=song.artist or ""), song.artist)
+            case "artist" if song.artist:
+                uid = song.artist
+                await self.__songs_show(
+                    songs=db.songs(artist=song.artist),
+                    prompt=song.artist,
+                    prompt_icon=PLAYLIST_ICON,
+                    uid=uid,
+                )
+            case "database":
+                songs = await self.__mpd.listallinfo()
+                await self.__songs_show(songs, "Songs", DATABASE_ICON, uid="ALL")
             case _:
                 pass
+
+
+def handler(fn: Callable[[], Awaitable[None]]) -> BindHandler[Song]:
+    return lambda _sweep, _tag: fn()
 
 
 async def main(args: list[str] | None = None) -> None:
@@ -1052,7 +1132,7 @@ async def main(args: list[str] | None = None) -> None:
             theme=opts.theme,
             log=opts.log,
             title="MPD Client",
-            window_uid="playlist",
+            window_uid=MPDSweep.PLAYLIST_UID,
             keep_order=True,
             **sweep_args,
         ) as sweep:
