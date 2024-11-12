@@ -743,9 +743,7 @@ class MPDSweep:
     def __init__(self, mpd: MPD, sweep: Sweep[Song]) -> None:
         self.__mpd: MPD = mpd
         self.__mpd_events_queue: asyncio.Queue[MPDEvent] = asyncio.Queue()
-
         self.__sweep: Sweep[Song] = sweep
-
         self.__playlist_version: int | None = None
         self.__playlist: list[Song]
         self.__status: MPDStatus
@@ -757,8 +755,6 @@ class MPDSweep:
         await self.__sweep.field_register(Field(glyph=PLAYLIST_ICON), PLAYLIST_ICON_REF)
         await self.__sweep.field_register(Field(glyph=DATABASE_ICON), DATABASE_ICON_REF)
         await self.__sweep.field_register(Field(glyph=ALBUM_ICON), ALBUM_ICON_REF)
-        self.__sweep.field_resolver_set(self.__field_resolver)
-
         await self.__sweep.view_register(PLAY_ICON, PLAY_ICON_REF)
         await self.__sweep.view_register(PAUSE_ICON, PAUSE_ICON_REF)
         await self.__sweep.view_register(STOP_ICON, STOP_ICON_REF)
@@ -767,12 +763,8 @@ class MPDSweep:
         await self.__sweep.view_register(REPEAT_ICON, REPEAT_ICON_REF)
         await self.__sweep.view_register(REPEAT_OFF_ICON, REPEAT_OFF_ICON_REF)
         await self.__sweep.view_register(REPEAT_ONCE_ICON, REPEAT_ONCE_ICON_REF)
+        self.__sweep.field_resolver_set(self.__field_resolver)
 
-        await self.__footer_update()
-
-        # binds
-
-        # events enqueue
         @self.__mpd.events.on
         def _(event: MPDEvent) -> bool:
             self.__mpd_events_queue.put_nowait(event)
@@ -780,7 +772,9 @@ class MPDSweep:
 
         update_task = asyncio.create_task(self.__mpd_events_coro())
         update_footer_task = asyncio.create_task(self.__footer_update_coro())
+
         await self.__playlist_show()
+        await self.__footer_update()
         try:
             async for event in self.__sweep:
                 match event:
