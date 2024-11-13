@@ -1,7 +1,4 @@
-use crate::{
-    common::{byte_view_concat, byte_view_filter, primitive_concat},
-    Haystack,
-};
+use crate::common::{byte_view_concat, byte_view_filter, primitive_concat};
 use arrow_array::{
     builder::{
         BinaryViewBuilder, Float32Builder, GenericByteViewBuilder, PrimitiveBuilder,
@@ -35,27 +32,6 @@ pub trait Scorer: Send + Sync + fmt::Debug {
         score: &mut Score,
         positions: PositionsRef<&mut [u8]>,
     ) -> bool;
-
-    /// Generic implementation over anything that implements `Haystack` trait.
-    fn score_haystack<H>(&self, ctx: &H::Context, haystack: H) -> Option<ScoreResult<H>>
-    where
-        H: Haystack,
-        Self: Sized,
-    {
-        HAYSTACK.with(|target| {
-            let mut target = target.borrow_mut();
-            target.clear();
-            haystack.haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
-            let mut score = Score::MIN;
-            let mut positions = Positions::new(target.len());
-            self.score_ref(target.as_slice(), &mut score, positions.as_mut())
-                .then_some(ScoreResult {
-                    haystack,
-                    score,
-                    positions,
-                })
-        })
-    }
 
     /// Run scorer on an arrow array of strings
     fn score(
@@ -327,16 +303,6 @@ pub struct ScoreItem<'a> {
     pub score: Score,
     pub positions: PositionsRef<&'a [u8]>,
     pub rank_index: usize,
-}
-
-/// Result of the scoring
-#[derive(Debug, Clone)]
-pub struct ScoreResult<H> {
-    pub haystack: H,
-    // score of this match
-    pub score: Score,
-    // match positions in the haystack
-    pub positions: Positions,
 }
 
 impl<S: Scorer + ?Sized> Scorer for &S {
@@ -925,6 +891,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Haystack;
+
+    fn score_haystack<H: Haystack>(
+        scorer: &dyn Scorer,
+        ctx: &H::Context,
+        haystack: H,
+    ) -> Option<(Score, Positions)> {
+        let mut target: Vec<char> = Vec::new();
+        haystack.haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
+        let mut score = Score::MIN;
+        let mut positions = Positions::new(target.len());
+        scorer
+            .score_ref(target.as_slice(), &mut score, positions.as_mut())
+            .then_some((score, positions))
+    }
 
     #[test]
     fn test_knuth_morris_pratt() {
@@ -988,26 +969,24 @@ mod tests {
         let needle: Vec<_> = "one".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(FuzzyScorer::new(needle));
 
-        let result = scorer.score_haystack(&(), " on/e two".to_string()).unwrap();
-        assert_eq!(result.positions, ps([1, 2, 4]));
-        assert!((result.score.0 - 2.665).abs() < 0.001);
+        let (score, positions) = score_haystack(&scorer, &(), " on/e two".to_string()).unwrap();
+        assert_eq!(positions, ps([1, 2, 4]));
+        assert!((score.0 - 2.665).abs() < 0.001);
 
-        assert!(scorer.score_haystack(&(), "two".to_string()).is_none());
+        assert!(score_haystack(&scorer, &(), "two".to_string()).is_none());
     }
 
     #[test]
     fn test_substr_scorer() {
         let needle: Vec<_> = "one  ababc".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer
-            .score_haystack(&(), " one babababcd ".to_string())
-            .unwrap();
-        assert_eq!(score.positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
+        let (_, positions) = score_haystack(&scorer, &(), " one babababcd ".to_string()).unwrap();
+        assert_eq!(positions, ps([1, 2, 3, 8, 9, 10, 11, 12]));
 
         let needle: Vec<_> = "o".chars().collect();
         let scorer: Box<dyn Scorer> = Box::new(SubstrScorer::new(needle));
-        let score = scorer.score_haystack(&(), "one".to_string()).unwrap();
-        assert_eq!(score.positions, ps([0]));
+        let (_, positions) = score_haystack(&scorer, &(), "one".to_string()).unwrap();
+        assert_eq!(positions, ps([0]));
     }
 
     #[test]

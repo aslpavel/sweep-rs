@@ -7,7 +7,7 @@ pub use haystack::{Haystack, HaystackBasicPreview, HaystackDefaultView, Haystack
 mod scorer;
 pub use scorer::{
     FuzzyScorer, KMPPattern, Positions, PositionsRef, Score, ScoreArray, ScoreItem, ScoreIter,
-    ScoreResult, Scorer, SubstrScorer,
+    Scorer, SubstrScorer,
 };
 
 mod rank;
@@ -18,7 +18,7 @@ pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, F
 
 mod sweep;
 pub use crate::sweep::{
-    sweep, Sweep, SweepEvent, WindowLayout, WindowLayoutSize, SweepOptions, WindowId,
+    sweep, Sweep, SweepEvent, SweepOptions, WindowId, WindowLayout, WindowLayoutSize,
     PROMPT_DEFAULT_ICON,
 };
 
