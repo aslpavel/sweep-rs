@@ -1036,21 +1036,23 @@ class MPDSweep:
             [
                 Candidate()
                 .target_push(ref=ALBUM_ICON_REF)
-                .target_push("[A]", face="bold")
-                .target_push(f"lbum : {song.album}")
+                .target_push("[")
+                .target_push("A", face="bold")
+                .target_push(f"]lbum : {song.album}")
                 .hotkey_set("a")
                 .wrap("album"),
                 Candidate()
                 .target_push(ref=PLAYLIST_ICON_REF)
-                .target_push("A")
-                .target_push("[R]", face="bold")
-                .target_push(f"tist: {song.artist}")
+                .target_push("A[")
+                .target_push("R", face="bold")
+                .target_push(f"]tist: {song.artist}")
                 .hotkey_set("r")
                 .wrap("artist"),
                 Candidate()
                 .target_push(ref=DATABASE_ICON_REF)
-                .target_push("[D]", face="bold")
-                .target_push("abase: ALL")
+                .target_push("[")
+                .target_push("D", face="bold")
+                .target_push("]abase: ALL")
                 .hotkey_set("d")
                 .wrap("database"),
             ],

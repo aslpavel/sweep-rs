@@ -4,7 +4,7 @@ use crate::{
     rpc::{RpcError, RpcParams, RpcPeer},
     substr_scorer,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
-    Haystack, HaystackPreview, RankedItems, Ranker, ScoreItem, ScorerBuilder,
+    Haystack, HaystackPreview, RankedItems, Ranker, RankerThread, ScoreItem, ScorerBuilder,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -432,7 +432,8 @@ where
                     }
                 }
             }),
-        );
+            self.ranker_thread.clone(),
+        )?;
         window.haystack_extend(items.into_iter().collect());
         let (send_switch, recv_switch) = oneshot::channel();
         self.send_request(SweepRequest::WindowSwitch {
@@ -466,6 +467,7 @@ pub struct SweepInner<H: Haystack> {
     haystack_context: H::Context,
     term_waker: TerminalWaker,
     ui_worker: Option<JoinHandle<Result<(), Error>>>,
+    ranker_thread: RankerThread,
     requests: Sender<SweepRequest<H>>,
     events: Mutex<mpsc::UnboundedReceiver<SweepEvent<H>>>,
     terminated: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
@@ -482,22 +484,35 @@ impl<H: Haystack> SweepInner<H> {
         let (terminate_send, terminate_recv) = oneshot::channel();
         let term = SystemTerminal::open(&options.tty_path)
             .with_context(|| format!("failed to open terminal: {}", options.tty_path))?;
-        let waker = term.waker();
+        let term_waker = term.waker();
+        let ranker_thread = RankerThread::new({
+            let term_waker = term_waker.clone();
+            move |_, _| term_waker.wake().is_ok()
+        });
         let worker = Builder::new().name("sweep-ui".to_string()).spawn({
             let options = options.clone();
             let haystack_context = haystack_context.clone();
+            let ranker_thread = ranker_thread.clone();
             move || {
-                sweep_ui_worker(options, term, requests_recv, events_send, haystack_context)
-                    .inspect(|_result| {
-                        let _ = terminate_send.send(());
-                    })
+                sweep_ui_worker(
+                    options,
+                    term,
+                    ranker_thread,
+                    requests_recv,
+                    events_send,
+                    haystack_context,
+                )
+                .inspect(|_result| {
+                    let _ = terminate_send.send(());
+                })
             }
         })?;
         Ok(SweepInner {
             options,
             haystack_context,
-            term_waker: waker,
+            term_waker,
             ui_worker: Some(worker),
+            ranker_thread,
             requests: requests_send,
             events: Mutex::new(events_recv),
             terminated: std::sync::Mutex::new(Some(terminate_recv)),
@@ -1121,14 +1136,12 @@ where
         term_waker: TerminalWaker,
         requests: Option<Receiver<SweepWindowRequest<H>>>,
         event_handler: SweepEventHandler<H>,
-    ) -> Self {
-        let ranker = Ranker::new({
-            let term_waker = term_waker.clone();
-            move |_| term_waker.wake().is_ok()
-        });
+        ranker_thread: RankerThread,
+    ) -> Result<Self, Error> {
+        let ranker = Ranker::new(ranker_thread)?;
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
-        SweepWindow::new(
+        Ok(SweepWindow::new(
             options.window_uid,
             options.prompt,
             options.prompt_icon,
@@ -1140,7 +1153,7 @@ where
             requests,
             event_handler,
             false,
-        )
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1361,7 +1374,7 @@ where
             SweepAction::Help => {
                 if !self.is_help {
                     return Ok(WindowAction::Open {
-                        window: self.help(),
+                        window: self.help()?,
                     });
                 }
             }
@@ -1405,7 +1418,7 @@ where
     }
 
     /// Crate sweep states which renders help view
-    fn help(&self) -> Box<dyn Window> {
+    fn help(&self) -> Result<Box<dyn Window>, Error> {
         // Tag -> ActionDesc
         let mut descriptions: BTreeMap<String, ActionDesc> = BTreeMap::new();
         self.key_map.for_each(|chord, action| {
@@ -1431,10 +1444,7 @@ where
             help_uid.clone(),
             "HELP".to_owned(),
             Some(KEYBOARD_ICON.clone()),
-            Ranker::new({
-                let term_waker = self.term_waker.clone();
-                move |_| term_waker.wake().is_ok()
-            }),
+            Ranker::new(self.ranker.ranker_thread().clone())?,
             self.theme.modify(|inner| inner.show_preview = true),
             self.scorers.clone(),
             (),
@@ -1462,7 +1472,7 @@ where
         );
         window.ranker.keep_order(Some(true));
         window.haystack_extend(entries);
-        Box::new(window)
+        Ok(Box::new(window))
     }
 }
 
@@ -2068,6 +2078,7 @@ where
 fn sweep_ui_worker<H>(
     mut options: SweepOptions,
     mut term: SystemTerminal,
+    ranker_thread: RankerThread,
     requests: Receiver<SweepRequest<H>>,
     events: mpsc::UnboundedSender<SweepEvent<H>>,
     haystack_context: H::Context,
@@ -2130,7 +2141,8 @@ where
         term.waker(),
         Some(window_dispatch.create(options.window_uid.clone())?),
         event_handler_default.clone(),
-    ));
+        ranker_thread.clone(),
+    )?);
     if !window_stack.handle_action(WindowAction::Open { window })? {
         return Ok(());
     };
@@ -2167,7 +2179,8 @@ where
                                 term.waker(),
                                 Some(window_dispatch.create(uid)?),
                                 event_handler_default.clone(),
-                            ));
+                                ranker_thread.clone(),
+                            )?);
                             Ok(win)
                         })?;
                         WindowAction::Open { window }

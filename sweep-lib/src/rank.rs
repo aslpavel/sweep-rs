@@ -6,9 +6,10 @@ use crate::{
 use arrow_array::{builder::StringViewBuilder, Array, StringViewArray};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::{
+    collections::HashMap,
     iter,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -35,27 +36,35 @@ pub fn substr_scorer() -> ScorerBuilder {
     })
 }
 
-#[derive(Clone)]
 pub struct Ranker {
-    sender: Sender<RankerCmd>,
-    result: Arc<Mutex<Arc<RankedItems>>>,
+    id: usize,
+    store: Arc<Mutex<Arc<RankedItems>>>,
+    ranker_thread: RankerThread,
 }
 
 impl Ranker {
-    pub fn new<N>(notify: N) -> Self
-    where
-        N: Fn(Arc<RankedItems>) -> bool + Send + 'static,
-    {
-        let (sender, receiver) = unbounded();
-        let result: Arc<Mutex<Arc<RankedItems>>> = Default::default();
-        std::thread::Builder::new()
-            .name("sweep-ranker".to_string())
-            .spawn({
-                let result = result.clone();
-                move || ranker_worker(receiver, result, notify)
+    pub fn new(ranker_thread: RankerThread) -> Result<Self, anyhow::Error> {
+        let store: Arc<Mutex<Arc<RankedItems>>> = Default::default();
+        let id = ranker_thread.next_id.fetch_add(1, Ordering::SeqCst);
+        ranker_thread
+            .sender
+            .send(RankerThreadCmd::Create {
+                id,
+                store: store.clone(),
             })
-            .expect("failed to start sweep-ranker thread");
-        Self { sender, result }
+            .map_err(|_| anyhow::anyhow!("ranker thread is dead"))?;
+        Ok(Self {
+            id,
+            store,
+            ranker_thread,
+        })
+    }
+
+    fn send(&self, cmd: RankerCmd) {
+        self.ranker_thread
+            .sender
+            .send(RankerThreadCmd::Cmd { id: self.id, cmd })
+            .expect("failed to send ranker cmd");
     }
 
     /// Extend haystack with new entries
@@ -73,51 +82,43 @@ impl Ranker {
             haystack.haystack_scope(ctx, |ch| string_buf.push(ch));
             builder.append_value(&string_buf);
         }
-        self.sender
-            .send(RankerCmd::HaystackAppend(builder.finish()))
-            .expect("failed to send haystack");
+        self.send(RankerCmd::HaystackAppend(builder.finish()));
     }
 
     /// Clear haystack
     pub fn haystack_clear(&self) {
-        self.sender
-            .send(RankerCmd::HaystackClear)
-            .expect("failed to clear haystack")
+        self.send(RankerCmd::HaystackClear);
     }
 
     /// Set new needle
     pub fn needle_set(&self, needle: String) {
-        self.sender
-            .send(RankerCmd::Needle(needle))
-            .expect("failed to send needle");
+        self.send(RankerCmd::Needle(needle));
     }
 
     /// Set new scorer
     pub fn scorer_set(&self, scorer: ScorerBuilder) {
-        self.sender
-            .send(RankerCmd::Scorer(scorer))
-            .expect("failed to send scorer");
+        self.send(RankerCmd::Scorer(scorer));
     }
 
     /// Whether to keep order of elements or sort by the best score
     pub fn keep_order(&self, toggle: Option<bool>) {
-        self.sender
-            .send(RankerCmd::KeepOrder(toggle))
-            .expect("failed to send keep_order");
+        self.send(RankerCmd::KeepOrder(toggle));
     }
 
     /// Get last result
     pub fn result(&self) -> Arc<RankedItems> {
-        self.result.with(|result| result.clone())
+        self.store.with(|result| result.clone())
     }
 
     /// Sets atomic to true once all requests before it has been processed
     pub fn sync(&self) -> Arc<AtomicBool> {
         let synced = Arc::new(AtomicBool::new(false));
-        self.sender
-            .send(RankerCmd::Sync(synced.clone()))
-            .expect("failed to send sync request");
+        self.send(RankerCmd::Sync(synced.clone()));
         synced
+    }
+
+    pub fn ranker_thread(&self) -> &RankerThread {
+        &self.ranker_thread
     }
 }
 
@@ -151,9 +152,32 @@ struct RankerState {
     rank_gen: usize,
     synced: Vec<Arc<AtomicBool>>,
     action: RankAction,
+    result_store: Arc<Mutex<Arc<RankedItems>>>,
 }
 
 impl RankerState {
+    fn new(result_store: Arc<Mutex<Arc<RankedItems>>>) -> Self {
+        let haystack = byte_view_concat([]);
+        let keep_order = false;
+        let scorer_builder = fuzzy_scorer();
+        let scorer = scorer_builder("");
+        let score = scorer.score(&haystack, Ok(0), !keep_order);
+        Self {
+            haystack_gen: 0,
+            haystack: byte_view_concat([]),
+            haystack_appends: Default::default(),
+            needle: String::new(),
+            keep_order,
+            scorer_builder,
+            scorer,
+            score,
+            rank_gen: 0,
+            synced: Default::default(),
+            action: RankAction::DoNothing,
+            result_store,
+        }
+    }
+
     // process ranker cmd
     fn process(&mut self, cmd: RankerCmd) {
         use RankAction::*;
@@ -208,7 +232,7 @@ impl RankerState {
     }
 
     // do actual ranking
-    fn rank(&mut self, result: Arc<Mutex<Arc<RankedItems>>>) {
+    fn rank(&mut self) -> Arc<RankedItems> {
         use RankAction::*;
 
         // collect haystack
@@ -222,7 +246,7 @@ impl RankerState {
         let rank_instant = Instant::now();
         self.score = match self.action {
             DoNothing => {
-                return;
+                return self.result_store.with(|result_store| result_store.clone());
             }
             Notify => self.score.clone(),
             Offset(offset) => {
@@ -252,66 +276,22 @@ impl RankerState {
 
         // update result
         self.rank_gen = self.rank_gen.wrapping_add(1);
-        result.with_mut(|result| {
-            *result = Arc::new(RankedItems {
-                score: self.score.clone(),
-                scorer: self.scorer.clone(),
-                duration: rank_elapsed,
-                haystack_gen: self.haystack_gen,
-                rank_gen: self.rank_gen,
-            });
+        let result = Arc::new(RankedItems {
+            score: self.score.clone(),
+            scorer: self.scorer.clone(),
+            duration: rank_elapsed,
+            haystack_gen: self.haystack_gen,
+            rank_gen: self.rank_gen,
         });
+        self.result_store.with_mut(|result_store| {
+            *result_store = result.clone();
+        });
+
         for sync in self.synced.drain(..) {
             sync.store(true, Ordering::Release);
         }
-    }
-}
 
-impl Default for RankerState {
-    fn default() -> Self {
-        let haystack = byte_view_concat([]);
-        let keep_order = false;
-        let scorer_builder = fuzzy_scorer();
-        let scorer = scorer_builder("");
-        let score = scorer.score(&haystack, Ok(0), !keep_order);
-        Self {
-            haystack_gen: 0,
-            haystack: byte_view_concat([]),
-            haystack_appends: Default::default(),
-            needle: String::new(),
-            keep_order,
-            scorer_builder,
-            scorer,
-            score,
-            rank_gen: 0,
-            synced: Default::default(),
-            action: RankAction::DoNothing,
-        }
-    }
-}
-
-fn ranker_worker<N>(receiver: Receiver<RankerCmd>, result: Arc<Mutex<Arc<RankedItems>>>, notify: N)
-where
-    N: Fn(Arc<RankedItems>) -> bool,
-{
-    let mut state = RankerState::default();
-    loop {
-        // process all pending commands
-        let cmd = match receiver.recv() {
-            Ok(cmd) => cmd,
-            Err(_) => return,
-        };
-        for cmd in iter::once(cmd).chain(receiver.try_iter()) {
-            state.process(cmd);
-        }
-
-        // rank
-        state.rank(result.clone());
-
-        // notify
-        if !notify(result.with(|r| r.clone())) {
-            return;
-        }
+        result
     }
 }
 
@@ -391,6 +371,85 @@ impl std::fmt::Debug for RankedItems {
     }
 }
 
+enum RankerThreadCmd {
+    Create {
+        id: usize,
+        store: Arc<Mutex<Arc<RankedItems>>>,
+    },
+    Cmd {
+        id: usize,
+        cmd: RankerCmd,
+    },
+}
+
+#[derive(Clone)]
+pub struct RankerThread {
+    sender: Sender<RankerThreadCmd>,
+    next_id: Arc<AtomicUsize>,
+}
+
+impl RankerThread {
+    pub fn new<N>(notify: N) -> Self
+    where
+        N: Fn(usize, Arc<RankedItems>) -> bool + Send + 'static,
+    {
+        let (sender, receiver) = unbounded();
+        std::thread::Builder::new()
+            .name("sweep-ranker".to_string())
+            .spawn(move || ranker_thread_main(receiver, notify))
+            .expect("failed to start sweep-ranker thread");
+        Self {
+            sender,
+            next_id: Default::default(),
+        }
+    }
+}
+
+fn ranker_thread_main<N>(receiver: Receiver<RankerThreadCmd>, notify: N)
+where
+    N: Fn(usize, Arc<RankedItems>) -> bool,
+{
+    let mut states: HashMap<usize, RankerState> = Default::default();
+    loop {
+        // process all pending commands
+        let cmd = match receiver.recv() {
+            Ok(cmd) => cmd,
+            Err(_) => return,
+        };
+        for cmd in iter::once(cmd).chain(receiver.try_iter()) {
+            match cmd {
+                RankerThreadCmd::Create { id, store } => {
+                    states.insert(id, RankerState::new(store));
+                }
+                RankerThreadCmd::Cmd { id, cmd } => {
+                    let Some(state) = states.get_mut(&id) else {
+                        continue;
+                    };
+                    state.process(cmd);
+                }
+            }
+        }
+
+        // rank
+        for (id, state) in states.iter_mut() {
+            let result = state.rank();
+            // notify
+            if !notify(*id, result) {
+                return;
+            }
+        }
+
+        // cleanup
+        states.retain(|id, state| {
+            let retain = Arc::strong_count(&state.result_store) > 1;
+            if !retain {
+                tracing::debug!(?id, "[ranker_thread_main] remove state");
+            }
+            retain
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,7 +459,8 @@ mod tests {
     fn ranker_test() -> Result<(), Error> {
         let timeout = Duration::from_millis(100);
         let (send, recv) = unbounded();
-        let ranker = Ranker::new(move |result| send.send(result).is_ok());
+        let ranker_thread = RankerThread::new(move |_, result| send.send(result).is_ok());
+        let ranker = Ranker::new(ranker_thread)?;
 
         ranker.haystack_extend(&(), &["one", "two", "tree"]);
         let result = recv.recv_timeout(timeout)?;
