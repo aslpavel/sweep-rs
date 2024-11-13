@@ -9,10 +9,6 @@ use arrow_array::{
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{cell::RefCell, cmp::Ordering, fmt, sync::Arc};
 
-thread_local! {
-    static HAYSTACK: RefCell<Vec<char>> = Default::default();
-}
-
 /// Scorer
 ///
 /// Scorer is used to score haystack against the needle stored inside the scorer
