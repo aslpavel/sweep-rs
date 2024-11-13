@@ -755,6 +755,14 @@ impl<D: AsRef<[u8]>> Positions<D> {
         Self { data }
     }
 
+    pub fn len(&self) -> usize {
+        self.data.as_ref().len() << POISTIONS_SHIFT
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.as_ref().is_empty()
+    }
+
     /// check if index is present
     pub fn get(&self, index: usize) -> bool {
         let (index, mask) = positions_offset(index);
@@ -774,9 +782,9 @@ impl<D: AsRef<[u8]>> Positions<D> {
 
 impl Positions<Vec<u8>> {
     pub fn new_owned(size: usize) -> Self {
-        let mut data = Vec::new();
-        data.resize(positions_data_size(size), 0);
-        Positions { data }
+        Positions {
+            data: vec![0; positions_data_size(size)],
+        }
     }
 }
 

@@ -2147,8 +2147,8 @@ where
             let window_event = match request {
                 Terminate => return Ok(TerminalAction::Quit(())),
                 WindowSwitch { window, created } => {
-                    let uid = window.as_ref().either(|win| win.uid(), |uid| &uid);
-                    if window_stack.window_position(&uid).is_some() {
+                    let uid = window.as_ref().either(|win| win.uid(), |uid| uid);
+                    if window_stack.window_position(uid).is_some() {
                         _ = created.send(false);
                         WindowAction::Switch {
                             uid: uid.clone(),
@@ -2157,22 +2157,19 @@ where
                         }
                     } else {
                         _ = created.send(true);
-                        let window = window.either(
-                            |win| Ok::<_, Error>(win),
-                            |uid| {
-                                let win = Box::new(SweepWindow::new_from_options(
-                                    SweepOptions {
-                                        window_uid: uid.clone(),
-                                        ..options.clone()
-                                    },
-                                    haystack_context.clone(),
-                                    term.waker(),
-                                    Some(window_dispatch.create(uid)?),
-                                    event_handler_default.clone(),
-                                ));
-                                Ok(win)
-                            },
-                        )?;
+                        let window = window.either(Ok::<_, Error>, |uid| {
+                            let win = Box::new(SweepWindow::new_from_options(
+                                SweepOptions {
+                                    window_uid: uid.clone(),
+                                    ..options.clone()
+                                },
+                                haystack_context.clone(),
+                                term.waker(),
+                                Some(window_dispatch.create(uid)?),
+                                event_handler_default.clone(),
+                            ));
+                            Ok(win)
+                        })?;
                         WindowAction::Open { window }
                     }
                 }
