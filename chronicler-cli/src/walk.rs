@@ -136,7 +136,7 @@ impl Haystack for PathItem {
     fn view(
         &self,
         ctx: &Self::Context,
-        positions: sweep::PositionsRef<&[u8]>,
+        positions: sweep::Positions<&[u8]>,
         theme: &sweep::Theme,
     ) -> Self::View {
         let path = HaystackDefaultView::new(ctx, self, positions, theme);
@@ -154,7 +154,7 @@ impl Haystack for PathItem {
     fn preview(
         &self,
         ctx: &Self::Context,
-        _positions: sweep::PositionsRef<&[u8]>,
+        _positions: sweep::Positions<&[u8]>,
         _theme: &sweep::Theme,
     ) -> Option<Self::Preview> {
         let metadata = self.metadata.as_ref()?;

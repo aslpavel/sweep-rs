@@ -6,7 +6,7 @@ use surf_n_term::{
     CellWrite, KeyChord, Position, TerminalSurface,
 };
 
-use crate::{PositionsRef, Theme};
+use crate::{Positions, Theme};
 
 /// Haystack
 ///
@@ -31,18 +31,13 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
     }
 
     /// Return a view that renders haystack item in a list
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
-        theme: &Theme,
-    ) -> Self::View;
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View;
 
     /// Side preview of the current item
     fn preview(
         &self,
         _ctx: &Self::Context,
-        _positions: PositionsRef<&[u8]>,
+        _positions: Positions<&[u8]>,
         _theme: &Theme,
     ) -> Option<Self::Preview> {
         None
@@ -52,7 +47,7 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn preview_large(
         &self,
         _ctx: &Self::Context,
-        _positions: PositionsRef<&[u8]>,
+        _positions: Positions<&[u8]>,
         _theme: &Theme,
     ) -> Option<Self::PreviewLarge> {
         None
@@ -135,7 +130,7 @@ impl HaystackDefaultView {
     pub fn new<H: Haystack>(
         ctx: &H::Context,
         haystack: &H,
-        positions: PositionsRef<&[u8]>,
+        positions: Positions<&[u8]>,
         theme: &Theme,
     ) -> Self {
         let mut text = Text::new();
@@ -222,12 +217,7 @@ impl Haystack for String {
     type Preview = ();
     type PreviewLarge = ();
 
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
-        theme: &Theme,
-    ) -> Self::View {
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
         HaystackDefaultView::new(ctx, self, positions, theme)
     }
 
@@ -245,12 +235,7 @@ impl Haystack for &'static str {
     type Preview = ();
     type PreviewLarge = ();
 
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
-        theme: &Theme,
-    ) -> Self::View {
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
         HaystackDefaultView::new(ctx, self, positions, theme)
     }
 

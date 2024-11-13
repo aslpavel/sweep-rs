@@ -19,7 +19,7 @@ use sweep::{
         view::{Either, View},
         Glyph,
     },
-    Haystack, PositionsRef, Sweep, SweepEvent, SweepOptions,
+    Haystack, Positions, Sweep, SweepEvent, SweepOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -104,7 +104,7 @@ impl Haystack for NavigatorItem {
     fn view(
         &self,
         ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
+        positions: Positions<&[u8]>,
         theme: &sweep::Theme,
     ) -> Self::View {
         use NavigatorItem::*;
@@ -117,7 +117,7 @@ impl Haystack for NavigatorItem {
     fn preview(
         &self,
         ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
+        positions: Positions<&[u8]>,
         theme: &sweep::Theme,
     ) -> Option<Self::Preview> {
         use NavigatorItem::*;
@@ -130,7 +130,7 @@ impl Haystack for NavigatorItem {
     fn preview_large(
         &self,
         ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
+        positions: Positions<&[u8]>,
         theme: &sweep::Theme,
     ) -> Option<Self::PreviewLarge> {
         use NavigatorItem::*;

@@ -26,7 +26,7 @@ pub trait Scorer: Send + Sync + fmt::Debug {
         &self,
         haystack: &[char],
         score: &mut Score,
-        positions: PositionsRef<&mut [u8]>,
+        positions: Positions<&mut [u8]>,
     ) -> bool;
 
     /// Run scorer on an arrow array of strings
@@ -54,7 +54,7 @@ pub trait Scorer: Send + Sync + fmt::Debug {
             let mut score_local = Score::MIN;
             positions_buf.clear();
             positions_buf.resize(positions_data_size(haystack_buf.len()), 0);
-            let positions = PositionsRef::new_data(positions_buf.as_mut());
+            let positions = Positions::new(positions_buf.as_mut());
             if !(self.score_ref(haystack_buf.as_slice(), &mut score_local, positions)) {
                 return false;
             }
@@ -189,7 +189,7 @@ impl ScoreArray {
             haystack: self.inner.haystack.value(index),
             haystack_index: self.inner.haystack_index.value(index) as usize,
             score: Score(self.inner.score.value(index)),
-            positions: PositionsRef::new_data(self.inner.positions.value(index)),
+            positions: Positions::new(self.inner.positions.value(index)),
             rank_index,
         })
     }
@@ -297,7 +297,7 @@ pub struct ScoreItem<'a> {
     pub haystack: &'a str,
     pub haystack_index: usize,
     pub score: Score,
-    pub positions: PositionsRef<&'a [u8]>,
+    pub positions: Positions<&'a [u8]>,
     pub rank_index: usize,
 }
 
@@ -312,7 +312,7 @@ impl<S: Scorer + ?Sized> Scorer for &S {
         &self,
         haystack: &[char],
         score: &mut Score,
-        positions: PositionsRef<&mut [u8]>,
+        positions: Positions<&mut [u8]>,
     ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
@@ -329,7 +329,7 @@ impl<T: Scorer + ?Sized> Scorer for Box<T> {
         &self,
         haystack: &[char],
         score: &mut Score,
-        positions: PositionsRef<&mut [u8]>,
+        positions: Positions<&mut [u8]>,
     ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
@@ -346,7 +346,7 @@ impl<T: Scorer + ?Sized> Scorer for Arc<T> {
         &self,
         haystack: &[char],
         score: &mut Score,
-        positions: PositionsRef<&mut [u8]>,
+        positions: Positions<&mut [u8]>,
     ) -> bool {
         (**self).score_ref(haystack, score, positions)
     }
@@ -437,7 +437,7 @@ impl Scorer for SubstrScorer {
         &self,
         haystack: &[char],
         score: &mut Score,
-        mut positions: PositionsRef<&mut [u8]>,
+        mut positions: Positions<&mut [u8]>,
     ) -> bool {
         positions.clear();
         if self.words.is_empty() {
@@ -609,7 +609,7 @@ impl FuzzyScorer {
         needle: &[char],
         haystack: &[char],
         score: &mut Score,
-        mut positions: PositionsRef<&mut [u8]>,
+        mut positions: Positions<&mut [u8]>,
     ) -> bool {
         positions.clear();
         let n_len = needle.len();
@@ -699,7 +699,7 @@ impl Scorer for FuzzyScorer {
         &self,
         haystack: &[char],
         score: &mut Score,
-        positions: PositionsRef<&mut [u8]>,
+        positions: Positions<&mut [u8]>,
     ) -> bool {
         Self::subseq(self.needle.as_ref(), haystack)
             && Self::score_impl(self.needle.as_ref(), haystack, score, positions)
@@ -746,22 +746,12 @@ fn positions_data_size(size: usize) -> usize {
 
 /// Position set implemented as bit-set
 #[derive(Clone, Hash)]
-pub struct PositionsRef<D> {
+pub struct Positions<D> {
     data: D,
 }
 
-pub type Positions = PositionsRef<smallvec::SmallVec<[u8; 16]>>;
-
-impl Positions {
-    pub fn new(size: usize) -> Self {
-        let mut chunks = smallvec::SmallVec::new();
-        chunks.resize(positions_data_size(size), 0);
-        Self { data: chunks }
-    }
-}
-
-impl<D: AsRef<[u8]>> PositionsRef<D> {
-    pub fn new_data(data: D) -> Self {
+impl<D: AsRef<[u8]>> Positions<D> {
+    pub fn new(data: D) -> Self {
         Self { data }
     }
 
@@ -775,22 +765,30 @@ impl<D: AsRef<[u8]>> PositionsRef<D> {
         }
     }
 
-    pub fn as_ref(&self) -> PositionsRef<&[u8]> {
-        PositionsRef {
+    pub fn as_ref(&self) -> Positions<&[u8]> {
+        Positions {
             data: self.data.as_ref(),
         }
     }
 }
 
-impl<D: AsMut<[u8]>> PositionsRef<D> {
+impl Positions<Vec<u8>> {
+    pub fn new_owned(size: usize) -> Self {
+        let mut data = Vec::new();
+        data.resize(positions_data_size(size), 0);
+        Positions { data }
+    }
+}
+
+impl<D: AsMut<[u8]>> Positions<D> {
     /// set specified index as selected
     pub fn set(&mut self, index: usize) {
         let (index, mask) = positions_offset(index);
         self.data.as_mut()[index] |= mask;
     }
 
-    pub fn as_mut(&mut self) -> PositionsRef<&mut [u8]> {
-        PositionsRef {
+    pub fn as_mut(&mut self) -> Positions<&mut [u8]> {
+        Positions {
             data: self.data.as_mut(),
         }
     }
@@ -803,12 +801,12 @@ impl<D: AsMut<[u8]>> PositionsRef<D> {
     }
 }
 
-impl<DL, DR> std::cmp::PartialEq<PositionsRef<DR>> for PositionsRef<DL>
+impl<DL, DR> std::cmp::PartialEq<Positions<DR>> for Positions<DL>
 where
     DL: AsRef<[u8]>,
     DR: AsRef<[u8]>,
 {
-    fn eq(&self, other: &PositionsRef<DR>) -> bool {
+    fn eq(&self, other: &Positions<DR>) -> bool {
         let data_left = self.data.as_ref();
         let data_right = other.data.as_ref();
         let (data_large, data_small) = if data_left.len() >= data_right.len() {
@@ -828,9 +826,9 @@ where
     }
 }
 
-impl<D: AsRef<[u8]>> std::cmp::Eq for PositionsRef<D> {}
+impl<D: AsRef<[u8]>> std::cmp::Eq for Positions<D> {}
 
-impl<D: AsRef<[u8]>> std::fmt::Debug for PositionsRef<D> {
+impl<D: AsRef<[u8]>> std::fmt::Debug for Positions<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
             .entries(
@@ -842,7 +840,7 @@ impl<D: AsRef<[u8]>> std::fmt::Debug for PositionsRef<D> {
     }
 }
 
-impl<D: AsMut<[u8]>> Extend<usize> for PositionsRef<D> {
+impl<D: AsMut<[u8]>> Extend<usize> for Positions<D> {
     fn extend<T: IntoIterator<Item = usize>>(&mut self, iter: T) {
         for item in iter {
             self.set(item)
@@ -869,7 +867,7 @@ impl Iterator for PositionsIter<'_> {
     }
 }
 
-impl<'a, D> IntoIterator for &'a PositionsRef<D>
+impl<'a, D> IntoIterator for &'a Positions<D>
 where
     D: AsRef<[u8]>,
 {
@@ -893,11 +891,11 @@ mod tests {
         scorer: &dyn Scorer,
         ctx: &H::Context,
         haystack: H,
-    ) -> Option<(Score, Positions)> {
+    ) -> Option<(Score, Positions<Vec<u8>>)> {
         let mut target: Vec<char> = Vec::new();
         haystack.haystack_scope(ctx, |char| target.extend(char::to_lowercase(char)));
         let mut score = Score::MIN;
-        let mut positions = Positions::new(target.len());
+        let mut positions = Positions::new_owned(target.len());
         scorer
             .score_ref(target.as_slice(), &mut score, positions.as_mut())
             .then_some((score, positions))
@@ -931,11 +929,11 @@ mod tests {
         assert!(subseq(&[], &one));
     }
 
-    fn ps(items: impl AsRef<[usize]>) -> Positions {
+    fn ps(items: impl AsRef<[usize]>) -> Positions<Vec<u8>> {
         match items.as_ref().iter().max() {
-            None => Positions::new(0),
+            None => Positions::new_owned(0),
             Some(max) => {
-                let mut positions = Positions::new(max + 1);
+                let mut positions = Positions::new_owned(max + 1);
                 positions.extend(items.as_ref().iter().copied());
                 positions
             }

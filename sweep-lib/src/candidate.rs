@@ -2,8 +2,8 @@ use crate::{
     common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
     rpc::{RpcParams, RpcPeer},
     widgets::ProcessOutput,
-    Haystack, HaystackBasicPreview, PositionsRef, Process, ProcessCommandArg,
-    ProcessCommandBuilder, Theme,
+    Haystack, HaystackBasicPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder,
+    Theme,
 };
 use anyhow::Error;
 use futures::Stream;
@@ -381,12 +381,7 @@ impl Haystack for Candidate {
         self.inner.hotkey.clone()
     }
 
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
-        theme: &Theme,
-    ) -> Self::View {
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
         // left side
         let mut positions_offset = 0;
         let left = fields_view(
@@ -434,7 +429,7 @@ impl Haystack for Candidate {
     fn preview(
         &self,
         ctx: &Self::Context,
-        positions: PositionsRef<&[u8]>,
+        positions: Positions<&[u8]>,
         theme: &Theme,
     ) -> Option<Self::Preview> {
         if self.inner.preview.is_empty() {
@@ -460,7 +455,7 @@ impl Haystack for Candidate {
     fn preview_large(
         &self,
         ctx: &Self::Context,
-        _positions: PositionsRef<&[u8]>,
+        _positions: Positions<&[u8]>,
         _theme: &Theme,
     ) -> Option<Self::PreviewLarge> {
         ctx.preview_get(self)
@@ -481,7 +476,7 @@ type FieldsView = either::Either<Flex<'static>, Text>;
 #[allow(clippy::too_many_arguments)]
 pub fn fields_view(
     fields: &[Field<'_>],
-    positions: PositionsRef<&[u8]>,
+    positions: Positions<&[u8]>,
     positions_offset: &mut usize,
     candidate_context: &CandidateContext,
     face_default: Face,
