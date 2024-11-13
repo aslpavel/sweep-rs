@@ -310,7 +310,7 @@ pub struct Args {
 fn parse_window_id(value: &str) -> Result<WindowId, String> {
     match value.parse() {
         Ok(num) => Ok(WindowId::Number(num)),
-        Err(_) => Ok(WindowId::String(value.to_owned())),
+        Err(_) => Ok(WindowId::String(value.into())),
     }
 }
 

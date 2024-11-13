@@ -272,7 +272,7 @@ impl Navigator {
                 SweepEvent::Select { items, .. } => return Ok(items),
                 SweepEvent::Bind { tag, .. } => {
                     tracing::debug!(?tag, "[Navigator.run]");
-                    let mode_next = match tag.as_str() {
+                    let mode_next = match tag.as_ref() {
                         TAG_COMMAND_HISTORY_MODE => Some(CmdHistoryMode::new(None, None)),
                         TAG_PATH_HISTORY_MODE => Some(PathHistoryMode::new()),
                         _ => mode.handler(self, tag).await?,
@@ -292,6 +292,8 @@ impl Navigator {
 
 #[async_trait]
 pub trait NavigatorMode {
+    // fn uid(&self) -> WindowId;
+
     /// Enter mode
     async fn enter(&mut self, navigator: &mut Navigator) -> Result<(), Error>;
 
@@ -302,7 +304,7 @@ pub trait NavigatorMode {
     async fn handler(
         &mut self,
         navigator: &mut Navigator,
-        tag: String,
+        tag: Arc<str>,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error>;
 }
 
@@ -389,9 +391,9 @@ impl NavigatorMode for CmdHistoryMode {
     async fn handler(
         &mut self,
         navigator: &mut Navigator,
-        tag: String,
+        tag: Arc<str>,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
-        match tag.as_str() {
+        match tag.as_ref() {
             TAG_GOTO_SESSION => {
                 let session = if self.session.is_none() {
                     let current = navigator.sweep.items_current(None).await?;
@@ -478,9 +480,9 @@ impl NavigatorMode for PathMode {
     async fn handler(
         &mut self,
         navigator: &mut Navigator,
-        tag: String,
+        tag: Arc<str>,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
-        match tag.as_str() {
+        match tag.as_ref() {
             TAG_COMPLETE => navigator.path_complete().await,
             TAG_GOTO_PARENT => {
                 if let Some(path) = self.path.parent().map(PathBuf::from) {
@@ -564,9 +566,9 @@ impl NavigatorMode for PathHistoryMode {
     async fn handler(
         &mut self,
         navigator: &mut Navigator,
-        tag: String,
+        tag: Arc<str>,
     ) -> Result<Option<Box<dyn NavigatorMode>>, Error> {
-        match tag.as_str() {
+        match tag.as_ref() {
             TAG_COMPLETE => navigator.path_complete().await,
             _ => Ok(None),
         }

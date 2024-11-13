@@ -192,7 +192,7 @@ pub enum SweepEvent<H> {
     },
     Bind {
         uid: WindowId,
-        tag: String,
+        tag: Arc<str>,
         chord: KeyChord,
     },
     Window(WindowEvent),
@@ -894,7 +894,7 @@ where
 enum SweepAction {
     User {
         chord: KeyChord,
-        tag: String,
+        tag: Arc<str>,
         desc: String,
     },
     Select,
@@ -906,7 +906,9 @@ enum SweepAction {
     ScorerNext,
     PreviewToggle,
     PreviewLineNext,
+    PreviewPageNext,
     PreviewLinePrev,
+    PreviewPagePrev,
     Input(InputAction),
     List(ListAction),
 }
@@ -917,7 +919,7 @@ impl SweepAction {
         match self {
             User { chord, tag, desc } => ActionDesc {
                 chords: vec![chord.clone()],
-                name: tag.clone(),
+                name: tag.to_string(),
                 description: desc.clone(),
             },
             Select => ActionDesc {
@@ -1005,6 +1007,14 @@ impl SweepAction {
                 name: "sweep.preview.line.next".to_owned(),
                 description: "Scroll preview one line down".to_owned(),
             },
+            PreviewPageNext => ActionDesc {
+                chords: vec![KeyChord::from_iter([Key {
+                    name: KeyName::Char('j'),
+                    mode: KeyMod::ALT | KeyMod::SHIFT,
+                }])],
+                name: "sweep.preview.page.next".to_owned(),
+                description: "Scroll preview one page down".to_owned(),
+            },
             PreviewLinePrev => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
                     name: KeyName::Char('k'),
@@ -1012,6 +1022,14 @@ impl SweepAction {
                 }])],
                 name: "sweep.preview.line.prev".to_owned(),
                 description: "Scroll preview one line up".to_owned(),
+            },
+            PreviewPagePrev => ActionDesc {
+                chords: vec![KeyChord::from_iter([Key {
+                    name: KeyName::Char('k'),
+                    mode: KeyMod::ALT | KeyMod::SHIFT,
+                }])],
+                name: "sweep.preview.page.prev".to_owned(),
+                description: "Scroll preview one page up".to_owned(),
             },
             Input(input_action) => input_action.description(),
             List(list_action) => list_action.description(),
@@ -1029,7 +1047,9 @@ impl SweepAction {
             ScorerNext,
             PreviewToggle,
             PreviewLineNext,
+            PreviewPageNext,
             PreviewLinePrev,
+            PreviewPagePrev,
         ]
         .into_iter()
         .chain(InputAction::all().map(Input))
@@ -1060,7 +1080,7 @@ struct SweepWindow<H: Haystack> {
     // current state of the key chord
     key_map_state: Vec<Key>,
     // user action executed on backspace when input is empty
-    key_empty_backspace: Option<String>,
+    key_empty_backspace: Option<Arc<str>>,
     // action key map
     key_map: KeyMap<SweepAction>,
     // action name to sweep action
@@ -1354,19 +1374,29 @@ where
                 self.theme
                     .modify(|inner| inner.show_preview = !self.theme.show_preview),
             ),
-            SweepAction::PreviewLineNext => {
+            SweepAction::PreviewLineNext | SweepAction::PreviewPageNext => {
                 if let Some(preview) = self.preview_large.as_ref() {
+                    let delta = if matches!(action, SweepAction::PreviewPageNext) {
+                        preview.height.load(Ordering::Relaxed)
+                    } else {
+                        1
+                    };
                     let layout = preview.preview.preview_layout();
                     let mut offset = layout.position();
-                    offset.row = layout.size().height.min(offset.row + 1);
+                    offset.row = layout.size().height.min(offset.row + delta);
                     preview.preview.set_offset(offset);
                 }
             }
-            SweepAction::PreviewLinePrev => {
+            SweepAction::PreviewLinePrev | SweepAction::PreviewPagePrev => {
                 if let Some(preview) = self.preview_large.as_ref() {
+                    let delta = if matches!(action, SweepAction::PreviewPagePrev) {
+                        preview.height.load(Ordering::Relaxed)
+                    } else {
+                        1
+                    };
                     let layout = preview.preview.preview_layout();
                     let mut offset = layout.position();
-                    offset.row = offset.row.saturating_sub(1);
+                    offset.row = offset.row.saturating_sub(delta);
                     preview.preview.set_offset(offset);
                 }
             }
@@ -1463,14 +1493,18 @@ impl<H: Haystack> Window for SweepWindow<H> {
                         name: KeyName::Backspace,
                         mode: KeyMod::EMPTY,
                     }] => {
-                        self.key_empty_backspace = if tag.is_empty() { None } else { Some(tag) };
+                        self.key_empty_backspace = if tag.is_empty() {
+                            None
+                        } else {
+                            Some(tag.into())
+                        };
                     }
                     _ => {
                         let action = if tag.is_empty() {
                             // empty user action means unbind
                             SweepAction::User {
                                 chord: KeyChord::new(Vec::new()),
-                                tag: String::new(),
+                                tag: Default::default(),
                                 desc: String::new(),
                             }
                         } else {
@@ -1478,7 +1512,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
                                 .entry(tag.clone())
                                 .or_insert_with(|| SweepAction::User {
                                     chord: chord.clone(),
-                                    tag,
+                                    tag: tag.into(),
                                     desc,
                                 })
                                 .clone()
@@ -1608,7 +1642,7 @@ impl<H: Haystack> Window for SweepWindow<H> {
                 let key = Key::new(mouse.name, mouse.mode);
                 (self.event_handler)(SweepEvent::Bind {
                     uid: self.window_uid.clone(),
-                    tag: tag.to_owned(),
+                    tag: tag.as_str().into(),
                     chord: KeyChord::from_iter([key]),
                 })
             }
@@ -1785,28 +1819,28 @@ impl<H> SweepWindowDispatch<H> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum WindowId {
-    String(String),
+    String(Arc<str>),
     Number(u64),
 }
 
 impl WindowId {
     fn with_suffix(&self, suffix: &str) -> Self {
         match self {
-            WindowId::String(name) => WindowId::String(format!("{name}/{suffix}")),
-            WindowId::Number(name) => WindowId::String(format!("{name}/{suffix}")),
+            WindowId::String(name) => WindowId::String(format!("{name}/{suffix}").into()),
+            WindowId::Number(name) => WindowId::String(format!("{name}/{suffix}").into()),
         }
     }
 }
 
 impl From<String> for WindowId {
     fn from(value: String) -> Self {
-        WindowId::String(value)
+        WindowId::String(value.into())
     }
 }
 
 impl From<&str> for WindowId {
     fn from(value: &str) -> Self {
-        WindowId::String(value.to_owned())
+        WindowId::String(value.into())
     }
 }
 
