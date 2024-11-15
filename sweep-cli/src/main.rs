@@ -5,7 +5,6 @@ use anyhow::{Context, Error};
 use argh::FromArgs;
 use futures::TryStreamExt;
 use std::{
-    collections::VecDeque,
     fs::File,
     io::Write,
     os::unix::{io::FromRawFd, net::UnixStream as StdUnixStream},
@@ -15,8 +14,8 @@ use std::{
 use surf_n_term::Glyph;
 use sweep::{
     common::{json_from_slice_seed, VecDeserializeSeed},
-    Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep, SweepEvent,
-    SweepOptions, Theme, WindowId, WindowLayout, WindowLayoutSize,
+    scorer_by_name, Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep,
+    SweepEvent, SweepOptions, Theme, WindowId, WindowLayout, WindowLayoutSize, ALL_SCORER_BUILDERS,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -104,6 +103,8 @@ async fn main() -> Result<(), Error> {
     let theme = args.theme;
     let candidate_context = CandidateContext::new();
     candidate_context.update_named_colors(&theme);
+    let mut scorers = ALL_SCORER_BUILDERS.clone();
+    scorer_by_name(&mut scorers, Some(args.scorer.as_str()));
     let sweep: Sweep<Candidate> = Sweep::new(
         candidate_context.clone(),
         SweepOptions {
@@ -113,8 +114,8 @@ async fn main() -> Result<(), Error> {
             keep_order: args.keep_order,
             tty_path: args.tty_path,
             title: args.title,
-            window_uid: args.window_uid,
-            scorers: VecDeque::new(),
+            window_uid: args.window_uid.clone(),
+            scorers,
             layout: args.layout.unwrap_or_else(|| {
                 if args.preview_builder.is_some() {
                     WindowLayout::Full {
@@ -126,8 +127,6 @@ async fn main() -> Result<(), Error> {
             }),
         },
     )?;
-    sweep.query_set(None, args.query.clone());
-    sweep.scorer_by_name(None, Some(args.scorer)).await?;
     if let Some(preview_builder) = args.preview_builder {
         candidate_context.preview_set(preview_builder, sweep.waker());
     }
@@ -143,6 +142,10 @@ async fn main() -> Result<(), Error> {
             )
             .await?;
     } else {
+        let uid = args.window_uid.unwrap_or_else(|| "default".into());
+        sweep.window_switch(uid).await?;
+        sweep.query_set(None, args.query.clone());
+
         if args.json {
             let mut data: Vec<u8> = Vec::new();
             tokio::io::copy(&mut input, &mut data).await?;
@@ -275,8 +278,12 @@ pub struct Args {
     pub title: String,
 
     /// internal windows stack window identifier
-    #[argh(option, from_str_fn(parse_window_id), default = "\"default\".into()")]
-    pub window_uid: WindowId,
+    #[argh(
+        option,
+        from_str_fn(parse_window_id),
+        default = "Some(\"default\".into())"
+    )]
+    pub window_uid: Option<WindowId>,
 
     /// candidates in JSON pre line format (same encoding as RPC)
     #[argh(switch)]
@@ -307,11 +314,15 @@ pub struct Args {
     pub version: bool,
 }
 
-fn parse_window_id(value: &str) -> Result<WindowId, String> {
-    match value.parse() {
-        Ok(num) => Ok(WindowId::Number(num)),
-        Err(_) => Ok(WindowId::String(value.into())),
+fn parse_window_id(value: &str) -> Result<Option<WindowId>, String> {
+    if value.is_empty() {
+        return Ok(None);
     }
+    let uid = match value.parse() {
+        Ok(num) => WindowId::Number(num),
+        Err(_) => WindowId::String(value.into()),
+    };
+    Ok(Some(uid))
 }
 
 fn parse_no_input(value: &str) -> Result<bool, String> {

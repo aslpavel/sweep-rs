@@ -6,16 +6,22 @@ use crate::{
 use arrow_array::{builder::StringViewBuilder, Array, StringViewArray};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     iter,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
     },
     time::{Duration, Instant},
 };
 
 const SCORE_CHUNK_SIZE: usize = 65_536;
+pub static ALL_SCORER_BUILDERS: LazyLock<VecDeque<ScorerBuilder>> = LazyLock::new(|| {
+    let mut builders = VecDeque::new();
+    builders.push_back(fuzzy_scorer());
+    builders.push_back(substr_scorer());
+    builders
+});
 
 /// Function to create scorer with the given needle
 pub type ScorerBuilder = Arc<dyn Fn(&str) -> Arc<dyn Scorer> + Send + Sync>;
@@ -34,6 +40,33 @@ pub fn substr_scorer() -> ScorerBuilder {
         let needle: Vec<_> = needle.chars().flat_map(char::to_lowercase).collect();
         Arc::new(SubstrScorer::new(needle))
     })
+}
+
+/// Find scorer by name, returns selected scorer builder
+pub fn scorer_by_name(
+    scorers: &mut VecDeque<ScorerBuilder>,
+    name: Option<&str>,
+) -> Option<ScorerBuilder> {
+    if scorers.is_empty() {
+        return None;
+    }
+    match name {
+        None => {
+            scorers.rotate_left(1);
+            scorers.iter().next().cloned()
+        }
+        Some(name) => scorers
+            .iter()
+            .enumerate()
+            .find_map(|(index, scorer)| {
+                let index = (scorer("").name() == name).then_some(index)?;
+                Some((index, scorer.clone()))
+            })
+            .map(|(index, scorer)| {
+                scorers.swap(0, index);
+                scorer
+            }),
+    }
 }
 
 pub struct Ranker {

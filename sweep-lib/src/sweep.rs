@@ -1,10 +1,10 @@
 use crate::{
     common::{LockExt, VecDeserializeSeed},
-    fuzzy_scorer,
     rpc::{RpcError, RpcParams, RpcPeer},
-    substr_scorer,
+    scorer_by_name,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
     Haystack, HaystackPreview, RankedItems, Ranker, RankerThread, ScoreItem, ScorerBuilder,
+    ALL_SCORER_BUILDERS,
 };
 use anyhow::{Context, Error};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -66,16 +66,14 @@ pub struct SweepOptions {
     pub scorers: VecDeque<ScorerBuilder>,
     pub theme: Theme,
     pub title: String,
-    pub window_uid: WindowId,
     pub tty_path: String,
     pub layout: WindowLayout,
+    /// default window id, if None no default window is created
+    pub window_uid: Option<WindowId>,
 }
 
 impl Default for SweepOptions {
     fn default() -> Self {
-        let mut scorers = VecDeque::new();
-        scorers.push_back(fuzzy_scorer());
-        scorers.push_back(substr_scorer());
         Self {
             prompt: "INPUT".to_string(),
             prompt_icon: Some(PROMPT_DEFAULT_ICON.clone()),
@@ -83,8 +81,8 @@ impl Default for SweepOptions {
             keep_order: false,
             tty_path: "/dev/tty".to_string(),
             title: "sweep".to_string(),
-            window_uid: WindowId::String("default".into()),
-            scorers,
+            window_uid: Some(WindowId::String("default".into())),
+            scorers: ALL_SCORER_BUILDERS.clone(),
             layout: WindowLayout::default(),
         }
     }
@@ -284,14 +282,14 @@ where
     pub async fn items_current(&self, uid: Option<WindowId>) -> Result<Option<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::Current(send));
-        Ok(recv.await?)
+        Ok(recv.await.context("items_current")?)
     }
 
     /// Get marked (multi-select) items
     pub async fn items_marked(&self, uid: Option<WindowId>) -> Result<Vec<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::Marked(send));
-        Ok(recv.await?)
+        Ok(recv.await.context("items_marked")?)
     }
 
     /// Set needle to the specified string
@@ -306,7 +304,7 @@ where
     pub async fn query_get(&self, uid: Option<WindowId>) -> Result<String, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::NeedleGet(send));
-        Ok(recv.await?)
+        Ok(recv.await.context("query_get")?)
     }
 
     /// Set scorer used for ranking
@@ -327,7 +325,7 @@ where
     ) -> Result<(), Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::ScorerByName(name.clone(), send));
-        if !recv.await? {
+        if !recv.await.context("scorer_by_name")? {
             return Err(anyhow::anyhow!("unkown scorer type: {:?}", name));
         }
         Ok(())
@@ -342,7 +340,7 @@ where
     pub async fn theme_get(&self, uid: Option<WindowId>) -> Result<Theme, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::ThemeGet(send));
-        Ok(recv.await?)
+        Ok(recv.await.context("theme_get")?)
     }
 
     /// Set footer
@@ -384,7 +382,7 @@ where
             window: Either::Right(uid),
             created: send,
         });
-        Ok(recv.await?)
+        Ok(recv.await.context("window_switch")?)
     }
 
     /// Remove state at the top of the stack and active one below it
@@ -409,10 +407,8 @@ where
     {
         let (send, recv) = oneshot::channel();
         let mut window = SweepWindow::new_from_options(
-            SweepOptions {
-                window_uid: uid.clone(),
-                ..options.unwrap_or_else(|| self.options.clone())
-            },
+            options.unwrap_or_else(|| self.options.clone()),
+            uid.clone(),
             items_context,
             self.term_waker.clone(),
             None,
@@ -476,8 +472,7 @@ pub struct SweepInner<H: Haystack> {
 impl<H: Haystack> SweepInner<H> {
     pub fn new(mut options: SweepOptions, haystack_context: H::Context) -> Result<Self, Error> {
         if options.scorers.is_empty() {
-            options.scorers.push_back(fuzzy_scorer());
-            options.scorers.push_back(substr_scorer());
+            options.scorers = ALL_SCORER_BUILDERS.clone();
         }
         let (requests_send, requests_recv) = unbounded();
         let (events_send, events_recv) = mpsc::unbounded_channel();
@@ -895,8 +890,14 @@ where
                 Ok(())
             };
             let result = tokio::select! {
-                result = serve => result,
-                result = events => result,
+                result = serve => {
+                    tracing::info!(?result, "[serve_seed] serve terminated");
+                    result
+                },
+                result = events => {
+                    tracing::info!(?result, "[serve_seed] events closed");
+                    result
+                },
             };
             sweep_terminate.terminate().await;
             result
@@ -1132,6 +1133,7 @@ where
 {
     fn new_from_options(
         options: SweepOptions,
+        window_uid: WindowId,
         haystack_context: H::Context,
         term_waker: TerminalWaker,
         requests: Option<Receiver<SweepWindowRequest<H>>>,
@@ -1142,7 +1144,7 @@ where
         ranker.scorer_set(options.scorers[0].clone());
         ranker.keep_order(Some(options.keep_order));
         Ok(SweepWindow::new(
-            options.window_uid,
+            window_uid,
             options.prompt,
             options.prompt_icon,
             ranker,
@@ -2114,6 +2116,7 @@ where
     events.send(SweepEvent::Resize(term_size))?;
 
     let mut window_events = Vec::new();
+    let mut window_created = false;
     let window_dispatch = SweepWindowDispatch::new();
     let mut window_stack = WindowStack::new({
         let events = events.clone();
@@ -2135,17 +2138,21 @@ where
             Ok(WindowAction::Nothing)
         }
     });
-    let window = Box::new(SweepWindow::new_from_options(
-        options.clone(),
-        haystack_context.clone(),
-        term.waker(),
-        Some(window_dispatch.create(options.window_uid.clone())?),
-        event_handler_default.clone(),
-        ranker_thread.clone(),
-    )?);
-    if !window_stack.handle_action(WindowAction::Open { window })? {
-        return Ok(());
-    };
+    if let Some(window_uid) = options.window_uid.clone() {
+        window_created = true;
+        let window = Box::new(SweepWindow::new_from_options(
+            options.clone(),
+            window_uid.clone(),
+            haystack_context.clone(),
+            term.waker(),
+            Some(window_dispatch.create(window_uid)?),
+            event_handler_default.clone(),
+            ranker_thread.clone(),
+        )?);
+        if !window_stack.handle_action(WindowAction::Open { window })? {
+            return Ok(());
+        };
+    }
 
     let mut layout_store = ViewLayoutStore::new();
     let mut layout_id: Option<TreeId> = None;
@@ -2168,13 +2175,12 @@ where
                             close: false,
                         }
                     } else {
+                        window_created = true;
                         _ = created.send(true);
                         let window = window.either(Ok::<_, Error>, |uid| {
                             let win = Box::new(SweepWindow::new_from_options(
-                                SweepOptions {
-                                    window_uid: uid.clone(),
-                                    ..options.clone()
-                                },
+                                options.clone(),
+                                uid.clone(),
                                 haystack_context.clone(),
                                 term.waker(),
                                 Some(window_dispatch.create(uid)?),
@@ -2188,9 +2194,11 @@ where
                 }
                 WindowPop => WindowAction::Close { uid: None },
                 WindowRequest { uid, request } => {
-                    let Some(uid) =
-                        uid.or_else(|| Some(window_stack.window_current()?.uid().clone()))
+                    let Some(uid) = uid
+                        .clone()
+                        .or_else(|| Some(window_stack.window_current()?.uid().clone()))
                     else {
+                        tracing::error!(?uid, "[sweep_ui_worker] window not found");
                         return Ok(TerminalAction::Quit(()));
                     };
                     window_dispatch.handle(&uid, request);
@@ -2254,7 +2262,12 @@ where
 
         // render
         let Some(window) = window_stack.window_current() else {
-            return Ok(TerminalAction::Quit(()));
+            let action = if window_created {
+                TerminalAction::Quit(())
+            } else {
+                TerminalAction::WaitNoFrame
+            };
+            return Ok(action);
         };
         let Some(view) = window.view(term_position, options.layout.clone()) else {
             return Ok(TerminalAction::WaitNoFrame);
@@ -2712,32 +2725,6 @@ where
             .add_flex_child(1.0, preview)
             .add_child(scrollbar);
         view
-    }
-}
-
-fn scorer_by_name(
-    scorers: &mut VecDeque<ScorerBuilder>,
-    name: Option<&str>,
-) -> Option<ScorerBuilder> {
-    if scorers.is_empty() {
-        return None;
-    }
-    match name {
-        None => {
-            scorers.rotate_left(1);
-            scorers.iter().next().cloned()
-        }
-        Some(name) => scorers
-            .iter()
-            .enumerate()
-            .find_map(|(index, scorer)| {
-                let index = (scorer("").name() == name).then_some(index)?;
-                Some((index, scorer.clone()))
-            })
-            .map(|(index, scorer)| {
-                scorers.swap(0, index);
-                scorer
-            }),
     }
 }
 

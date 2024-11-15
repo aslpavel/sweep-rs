@@ -214,8 +214,10 @@ async def main(args: list[str] | None = None) -> None:
         tty=opts.tty,
         theme=opts.theme,
         log=opts.log,
-        window_uid="demo",
+        window_uid=None,
     ) as sweep:
+        # testing spawning first window (window_uid=None)
+        await sweep.window_switch("demo")
         foot_ref = ViewRef(
             await sweep.view_register(Text(glyph=ICON_FOOT, face="fg=bg"))
         )

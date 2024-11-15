@@ -11,7 +11,10 @@ pub use scorer::{
 };
 
 mod rank;
-pub use rank::{fuzzy_scorer, substr_scorer, RankedItems, Ranker, RankerThread, ScorerBuilder};
+pub use rank::{
+    fuzzy_scorer, scorer_by_name, substr_scorer, RankedItems, Ranker, RankerThread, ScorerBuilder,
+    ALL_SCORER_BUILDERS,
+};
 
 mod candidate;
 pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, FieldSelector};
