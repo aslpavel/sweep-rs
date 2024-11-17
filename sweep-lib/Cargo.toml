@@ -8,7 +8,6 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 futures = { workspace = true }
-lazy_static = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 surf_n_term = { workspace = true }

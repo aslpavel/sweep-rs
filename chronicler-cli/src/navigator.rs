@@ -11,7 +11,7 @@ use std::{
     io::Write,
     os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock, RwLock},
 };
 use sweep::{
     common::{AbortJoinHandle, LockExt},
@@ -583,26 +583,28 @@ const TAG_GOTO_SESSION: &str = "chronicler.goto.session";
 const TAG_GOTO_DIRECTORY: &str = "chronicler.goto.directory";
 const TAG_FILTER_CWD: &str = "chronicler.filter.cwd";
 
-lazy_static::lazy_static! {
-    static ref ICONS: HashMap<String, Glyph> =
-        serde_json::from_str(include_str!("./icons.json"))
-            .expect("invalid icons.json file");
-
-    static ref PATH_HISTORY_ICON: &'static Glyph = ICONS.get("path-history")
-        .expect("failed to find path history icon");
-
-    static ref PATH_NAV_ICON: &'static Glyph = ICONS.get("path-navigation")
-        .expect("failed to find path navigation icon");
-
-    static ref CMD_HISTORY_ICON: &'static Glyph = ICONS.get("cmd-history")
-        .expect("failed to find path navigation icon");
-
-    pub(crate) static ref FAILED_ICON: &'static Glyph = ICONS.get("failed")
-        .expect("faield to find failed icon");
-
-    pub(crate) static ref FOLDER_ICON: &'static Glyph = ICONS.get("folder")
-        .expect("faield to find folder icon");
-}
+static ICONS: LazyLock<HashMap<String, Glyph>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("./icons.json")).expect("invalid icons.json file")
+});
+static PATH_HISTORY_ICON: LazyLock<&'static Glyph> = LazyLock::new(|| {
+    ICONS
+        .get("path-history")
+        .expect("failed to find path history icon")
+});
+static PATH_NAV_ICON: LazyLock<&'static Glyph> = LazyLock::new(|| {
+    ICONS
+        .get("path-navigation")
+        .expect("failed to find path navigation icon")
+});
+static CMD_HISTORY_ICON: LazyLock<&'static Glyph> = LazyLock::new(|| {
+    ICONS
+        .get("cmd-history")
+        .expect("failed to find path navigation icon")
+});
+pub(crate) static FAILED_ICON: LazyLock<&'static Glyph> =
+    LazyLock::new(|| ICONS.get("failed").expect("faield to find failed icon"));
+pub(crate) static FOLDER_ICON: LazyLock<&'static Glyph> =
+    LazyLock::new(|| ICONS.get("folder").expect("faield to find folder icon"));
 
 /// Find longest existing path from the input and use reminder as query
 async fn get_path_and_query(input: impl AsRef<str>) -> (PathBuf, String) {

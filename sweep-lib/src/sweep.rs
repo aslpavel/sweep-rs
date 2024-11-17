@@ -25,7 +25,7 @@ use std::{
     ops::Deref,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, RwLock,
+        Arc, LazyLock, RwLock,
     },
     thread::{Builder, JoinHandle},
     time::Duration,
@@ -47,15 +47,16 @@ use tokio::{
     sync::{mpsc, Mutex},
 };
 
-lazy_static::lazy_static! {
-    static ref ICONS: HashMap<String, Glyph> =
-        serde_json::from_str(include_str!("./icons.json"))
-            .expect("invalid icons.json file");
-    pub static ref PROMPT_DEFAULT_ICON: &'static Glyph = ICONS.get("prompt")
-        .expect("failed to get prompt default icon");
-    static ref KEYBOARD_ICON: &'static Glyph = ICONS.get("keyboard")
-        .expect("failed to get keyboard icon");
-}
+static ICONS: LazyLock<HashMap<String, Glyph>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("./icons.json")).expect("invalid icons.json file")
+});
+pub static PROMPT_DEFAULT_ICON: LazyLock<&'static Glyph> = LazyLock::new(|| {
+    ICONS
+        .get("prompt")
+        .expect("failed to get prompt default icon")
+});
+static KEYBOARD_ICON: LazyLock<&'static Glyph> =
+    LazyLock::new(|| ICONS.get("keyboard").expect("failed to get keyboard icon"));
 const SWEEP_SCORER_NEXT_TAG: &str = "sweep.scorer.next";
 
 #[derive(Clone)]
@@ -172,6 +173,7 @@ enum SweepRequest<H> {
     Terminate,
     WindowSwitch {
         window: Either<Box<dyn Window>, WindowId>,
+        close: bool,
         created: oneshot::Sender<bool>,
     },
     WindowPop,
@@ -376,11 +378,12 @@ where
     }
 
     /// Create new state and put on the top of the stack of active states
-    pub async fn window_switch(&self, uid: WindowId) -> Result<bool, Error> {
+    pub async fn window_switch(&self, uid: WindowId, close: bool) -> Result<bool, Error> {
         let (send, recv) = oneshot::channel();
         self.send_request(SweepRequest::WindowSwitch {
             window: Either::Right(uid),
             created: send,
+            close,
         });
         Ok(recv.await.context("window_switch")?)
     }
@@ -434,6 +437,7 @@ where
         let (send_switch, recv_switch) = oneshot::channel();
         self.send_request(SweepRequest::WindowSwitch {
             window: Either::Left(Box::new(window)),
+            close: false,
             created: send_switch,
         });
         if !recv_switch.await? {
@@ -765,7 +769,8 @@ where
                 let sweep = sweep.clone();
                 async move {
                     let uid = params.take(0, "uid")?;
-                    Ok(sweep.window_switch(uid).await?)
+                    let close = params.take_opt(0, "close")?.unwrap_or(false);
+                    Ok(sweep.window_switch(uid, close).await?)
                 }
             }
         });
@@ -1377,6 +1382,7 @@ where
                 if !self.is_help {
                     return Ok(WindowAction::Open {
                         window: self.help()?,
+                        close: false,
                     });
                 }
             }
@@ -1734,9 +1740,7 @@ impl<'a, H: Haystack> IntoView for &'a mut SweepWindow<H> {
         let header = FlexRef::row((
             prompt.into(),
             FlexChild::new(&self.input).flex(1.0),
-            stats
-                .tag(Value::String(SWEEP_SCORER_NEXT_TAG.to_string()))
-                .into(),
+            View::tag(stats, Value::String(SWEEP_SCORER_NEXT_TAG.to_string())).into(),
         ));
 
         let body = FlexRef::row((
@@ -1883,6 +1887,7 @@ enum WindowAction {
     /// Open new window
     Open {
         window: Box<dyn Window>,
+        close: bool,
     },
     /// To provided uid passing arguments to resume, close current window if close is set
     Switch {
@@ -1991,7 +1996,11 @@ where
         Ok(WindowAction::Nothing)
     }
 
-    fn window_open(&mut self, window_to: Box<dyn Window>) -> Result<WindowAction, Error> {
+    fn window_open(
+        &mut self,
+        window_to: Box<dyn Window>,
+        close: bool,
+    ) -> Result<WindowAction, Error> {
         let uid_to = window_to.uid().clone();
         // existing window
         if self.window_position(&uid_to).is_some() {
@@ -2002,8 +2011,19 @@ where
             });
         }
 
+        let uid_from = if close {
+            if let Some(window) = self.windows.pop() {
+                let uid = window.uid().clone();
+                (self.transition_handler)(WindowEvent::Closed(uid.clone()))?;
+                Some(uid)
+            } else {
+                None
+            }
+        } else {
+            self.window_current().map(|win| win.uid().clone())
+        };
+
         // new
-        let uid_from = self.window_current().map(|win| win.uid().clone());
         self.windows.push(window_to);
         (self.transition_handler)(WindowEvent::Opened(uid_to.clone()))?;
 
@@ -2068,7 +2088,10 @@ where
                 WindowAction::Quit => return Ok(false),
                 WindowAction::Nothing => return Ok(true),
                 WindowAction::Close { uid } => self.window_close(uid)?,
-                WindowAction::Open { window: window_to } => self.window_open(window_to)?,
+                WindowAction::Open {
+                    window: window_to,
+                    close,
+                } => self.window_open(window_to, close)?,
                 WindowAction::Switch { uid, args, close } => {
                     self.window_switch(uid, args, close)?
                 }
@@ -2149,7 +2172,10 @@ where
             event_handler_default.clone(),
             ranker_thread.clone(),
         )?);
-        if !window_stack.handle_action(WindowAction::Open { window })? {
+        if !window_stack.handle_action(WindowAction::Open {
+            window,
+            close: false,
+        })? {
             return Ok(());
         };
     }
@@ -2165,14 +2191,18 @@ where
             use SweepRequest::*;
             let window_event = match request {
                 Terminate => return Ok(TerminalAction::Quit(())),
-                WindowSwitch { window, created } => {
+                WindowSwitch {
+                    window,
+                    created,
+                    close,
+                } => {
                     let uid = window.as_ref().either(|win| win.uid(), |uid| uid);
                     if window_stack.window_position(uid).is_some() {
                         _ = created.send(false);
                         WindowAction::Switch {
                             uid: uid.clone(),
                             args: Value::Null,
-                            close: false,
+                            close,
                         }
                     } else {
                         window_created = true;
@@ -2189,7 +2219,7 @@ where
                             )?);
                             Ok(win)
                         })?;
-                        WindowAction::Open { window }
+                        WindowAction::Open { window, close }
                     }
                 }
                 WindowPop => WindowAction::Close { uid: None },

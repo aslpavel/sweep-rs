@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use either::Either;
 use surf_n_term::{
+    render::CellKind,
     view::{BoxConstraint, Layout, Text, View, ViewContext, ViewLayout, ViewMutLayout},
     CellWrite, KeyChord, Position, TerminalSurface,
 };
@@ -51,6 +52,18 @@ pub trait Haystack: std::fmt::Debug + Clone + Send + Sync + 'static {
         _theme: &Theme,
     ) -> Option<Self::PreviewLarge> {
         None
+    }
+
+    // Tag haystack with a value, useful for `quick_select`
+    fn tagged<T>(self, tag: T, hotkey: Option<KeyChord>) -> HaystackTagged<Self, T>
+    where
+        Self: Sized,
+    {
+        HaystackTagged {
+            haystack: self,
+            hotkey,
+            tag,
+        }
     }
 }
 
@@ -119,6 +132,124 @@ impl<T: HaystackPreview + ?Sized> HaystackPreview for Arc<T> {
 
     fn set_offset(&self, offset: Position) -> Position {
         (**self).set_offset(offset)
+    }
+}
+
+#[derive(Clone)]
+pub struct HaystackTagged<H, T> {
+    pub haystack: H,
+    pub hotkey: Option<KeyChord>,
+    pub tag: T,
+}
+
+impl<H: Haystack, T> std::fmt::Debug for HaystackTagged<H, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HaystackTagged")
+            .field("haystack", &self.haystack)
+            .field("hotkey", &self.hotkey)
+            .finish()
+    }
+}
+
+impl<H, T> Haystack for HaystackTagged<H, T>
+where
+    H: Haystack,
+    T: Clone + Send + Sync + 'static,
+{
+    type Context = H::Context;
+    type View = H::View;
+    type Preview = H::Preview;
+    type PreviewLarge = H::PreviewLarge;
+
+    fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.haystack.haystack_scope(ctx, scope);
+    }
+
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
+        self.haystack.view(ctx, positions, theme)
+    }
+
+    fn hotkey(&self) -> Option<KeyChord> {
+        self.hotkey.clone().or(self.haystack.hotkey())
+    }
+
+    fn preview(
+        &self,
+        ctx: &Self::Context,
+        positions: Positions<&[u8]>,
+        theme: &Theme,
+    ) -> Option<Self::Preview> {
+        self.haystack.preview(ctx, positions, theme)
+    }
+
+    fn preview_large(
+        &self,
+        ctx: &Self::Context,
+        positions: Positions<&[u8]>,
+        theme: &Theme,
+    ) -> Option<Self::PreviewLarge> {
+        self.haystack.preview_large(ctx, positions, theme)
+    }
+}
+
+impl<L, R> Haystack for Either<L, R>
+where
+    L: Haystack,
+    R: Haystack,
+{
+    type Context = (L::Context, R::Context);
+    type View = Either<L::View, R::View>;
+    type Preview = Either<L::Preview, R::Preview>;
+    type PreviewLarge = Either<L::PreviewLarge, R::PreviewLarge>;
+
+    fn haystack_scope<S>(&self, ctx: &Self::Context, scope: S)
+    where
+        S: FnMut(char),
+    {
+        match self {
+            Either::Left(left) => left.haystack_scope(&ctx.0, scope),
+            Either::Right(right) => right.haystack_scope(&ctx.1, scope),
+        }
+    }
+
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
+        match self {
+            Either::Left(left) => left.view(&ctx.0, positions, theme).left_view(),
+            Either::Right(right) => right.view(&ctx.1, positions, theme).right_view(),
+        }
+    }
+
+    fn hotkey(&self) -> Option<KeyChord> {
+        None
+    }
+
+    fn preview(
+        &self,
+        ctx: &Self::Context,
+        positions: Positions<&[u8]>,
+        theme: &Theme,
+    ) -> Option<Self::Preview> {
+        let preview = match self {
+            Either::Left(left) => left.preview(&ctx.0, positions, theme)?.left_view(),
+            Either::Right(right) => right.preview(&ctx.1, positions, theme)?.right_view(),
+        };
+        Some(preview)
+    }
+
+    fn preview_large(
+        &self,
+        ctx: &Self::Context,
+        positions: Positions<&[u8]>,
+        theme: &Theme,
+    ) -> Option<Self::PreviewLarge> {
+        let preview = match self {
+            Either::Left(left) => left.preview_large(&ctx.0, positions, theme)?.left_view(),
+            Either::Right(right) => right.preview_large(&ctx.1, positions, theme)?.right_view(),
+        };
+        Some(preview)
     }
 }
 
@@ -244,5 +375,45 @@ impl Haystack for &'static str {
         S: FnMut(char),
     {
         self.chars().for_each(scope)
+    }
+}
+
+impl Haystack for Text {
+    type Context = ();
+    type View = Text;
+    type Preview = ();
+    type PreviewLarge = ();
+
+    fn haystack_scope<S>(&self, _ctx: &Self::Context, mut scope: S)
+    where
+        S: FnMut(char),
+    {
+        self.cells().iter().for_each(|cell| {
+            if let CellKind::Char(ch) = cell.kind() {
+                scope(*ch);
+            }
+        });
+    }
+
+    fn view(&self, _ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
+        let mut index = 0;
+        self.cells()
+            .iter()
+            .map(|cell| {
+                let cell = cell.clone();
+                if matches!(cell.kind(), CellKind::Char(..)) {
+                    let highligted = positions.get(index);
+                    index += 1;
+                    if highligted {
+                        let face = cell.face().overlay(&theme.list_highlight);
+                        cell.with_face(face)
+                    } else {
+                        cell
+                    }
+                } else {
+                    cell
+                }
+            })
+            .collect()
     }
 }

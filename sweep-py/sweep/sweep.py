@@ -317,8 +317,8 @@ class Candidate:
         self.hotkey = hotkey
         return self
 
-    def wrap[V](self, value: V) -> CandidateWrapped[V]:
-        return CandidateWrapped(value, self)
+    def tag[V](self, value: V) -> CandidateTagged[V]:
+        return CandidateTagged(value, self)
 
     @override
     def __repr__(self) -> str:
@@ -400,8 +400,8 @@ class Candidate:
 
 
 @dataclass
-class CandidateWrapped[V]:
-    value: V
+class CandidateTagged[V]:
+    tag: V
     candidate: Candidate
 
     def to_candidate(self) -> Candidate:
@@ -916,12 +916,12 @@ class Sweep[I]:
             self.__binds.pop(tag, None)
         await self.__peer.bind(uid=uid, key=key, tag=tag, desc=desc)
 
-    async def window_switch(self, uid: WindowId) -> bool:
+    async def window_switch(self, uid: WindowId, close: bool = False) -> bool:
         """Push new empty state
 
         Returns `true` if window was created, `false` otherwise
         """
-        return await self.__peer.window_switch(uid=uid)
+        return await self.__peer.window_switch(uid=uid, close=close)
 
     async def window_pop(self) -> None:
         """Pop previous state from the stack"""

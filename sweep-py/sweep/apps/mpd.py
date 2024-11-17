@@ -1040,21 +1040,21 @@ class MPDSweep:
                 .target_push("A", face="bold")
                 .target_push(f"]lbum : {song.album}")
                 .hotkey_set("a")
-                .wrap("album"),
+                .tag("album"),
                 Candidate()
                 .target_push(ref=PLAYLIST_ICON_REF)
                 .target_push("A[")
                 .target_push("R", face="bold")
                 .target_push(f"]tist: {song.artist}")
                 .hotkey_set("r")
-                .wrap("artist"),
+                .tag("artist"),
                 Candidate()
                 .target_push(ref=DATABASE_ICON_REF)
                 .target_push("[")
                 .target_push("D", face="bold")
                 .target_push("]abase: ALL")
                 .hotkey_set("d")
-                .wrap("database"),
+                .tag("database"),
             ],
             prompt="GOTO",
             window_uid="goto",
@@ -1062,7 +1062,7 @@ class MPDSweep:
         if not selected:
             return None
         db = await self.__mpd.database()
-        match selected[0].value:
+        match selected[0].tag:
             case "album" if song.artist and song.album:
                 uid = f"{song.artist}/{song.album}"
                 await self.__songs_show(

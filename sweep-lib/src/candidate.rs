@@ -772,21 +772,21 @@ pub struct FieldRef(pub(crate) i64);
 #[derive(Clone, Serialize)]
 pub struct Field<'a> {
     /// Text content on the field
-    pub text: Cow<'a, str>,
+    text: Cow<'a, str>,
     /// Render glyph (if glyphs are disabled text is shown)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub glyph: Option<Glyph>,
+    glyph: Option<Glyph>,
     /// [View] representing a field content
     #[serde(skip_serializing)]
-    pub view: Option<ArcView<'static>>,
+    view: Option<ArcView<'static>>,
     /// Flag indicating if the should be used as part of search
-    pub active: bool,
+    active: bool,
     /// Face used to override default one
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub face: Option<Face>,
+    face: Option<Face>,
     /// Base field value
     #[serde(skip_serializing_if = "Option::is_none", rename = "ref")]
-    pub field_ref: Option<FieldRef>,
+    field_ref: Option<FieldRef>,
 }
 
 impl fmt::Debug for Field<'_> {

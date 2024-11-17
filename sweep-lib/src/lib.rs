@@ -2,7 +2,9 @@
 #![allow(clippy::reversed_empty_ranges)]
 
 mod haystack;
-pub use haystack::{Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview};
+pub use haystack::{
+    Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview, HaystackTagged,
+};
 
 mod scorer;
 pub use scorer::{

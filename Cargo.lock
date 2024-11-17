@@ -234,9 +234,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40723b8fb387abc38f4f4a37c09073622e41dd12327033091ef8950659e6dc0c"
+checksum = "1a68f1f47cdf0ec8ee4b941b2eee2a80cb796db73118c0dd09ac63fbe405be22"
 dependencies = [
  "memchr",
  "serde",
@@ -288,9 +288,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aeb932158bd710538c73702db6945cb68a8fb08c519e6e12706b94263b36db8"
+checksum = "fd9de9f2205d5ef3fd67e685b0df337994ddd4495e2a28d185500d0e1edfea47"
 dependencies = [
  "shlex",
 ]
@@ -311,7 +311,6 @@ dependencies = [
  "dirs",
  "futures",
  "globset",
- "lazy_static",
  "mimalloc",
  "serde",
  "serde_json",
@@ -694,9 +693,9 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.0.34"
+version = "1.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1b589b4dc103969ad3cf85c950899926ec64300a1a46d76c03a6072957036f0"
+checksum = "c936bfdafb507ebbf50b8074c54fa31c5be9a1e7e5f467dd659697041407d07c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -1173,9 +1172,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.162"
+version = "0.2.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
+checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
 
 [[package]]
 name = "libm"
@@ -1675,12 +1674,11 @@ dependencies = [
 
 [[package]]
 name = "rasterize"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a5ba45fe1a5d6c28429e9075836a14e940e53e65434c5aacd38de0f14b90e46"
+checksum = "eea810a967f328c208d44bd0fd5dd41661a85d1eae4e4d7ca7b984553c5f1975"
 dependencies = [
  "bytemuck",
- "lazy_static",
  "serde",
  "serde_json",
  "tracing",
@@ -1799,7 +1797,7 @@ checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 [[package]]
 name = "rustix"
 version = "0.38.35"
-source = "git+https://github.com/bytecodealliance/rustix.git?rev=7d4a719f33495c45ba74a3a8fb7a16bf737f8036#7d4a719f33495c45ba74a3a8fb7a16bf737f8036"
+source = "git+https://github.com/bytecodealliance/rustix.git?rev=0565616570e20b34b711e87c1c7b6612d3aae093#0565616570e20b34b711e87c1c7b6612d3aae093"
 dependencies = [
  "bitflags 2.6.0",
  "errno",
@@ -1864,9 +1862,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.132"
+version = "1.0.133"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
 dependencies = [
  "indexmap",
  "itoa",
@@ -2235,12 +2233,11 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surf_n_term"
-version = "0.17.7"
-source = "git+https://github.com/aslpavel/surf-n-term.git#94fe567af5be6d6259b3f4c30eebff70cbb6278e"
+version = "0.17.8"
+source = "git+https://github.com/aslpavel/surf-n-term.git#be15d6d9d53b8f7366c59c99cbb7e6392159ce80"
 dependencies = [
  "either",
  "fnv",
- "lazy_static",
  "lru",
  "png",
  "rasterize",
@@ -2264,7 +2261,6 @@ dependencies = [
  "crossbeam-channel",
  "either",
  "futures",
- "lazy_static",
  "mimalloc",
  "rayon",
  "serde",

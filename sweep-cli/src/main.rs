@@ -143,7 +143,7 @@ async fn main() -> Result<(), Error> {
             .await?;
     } else {
         let uid = args.window_uid.unwrap_or_else(|| "default".into());
-        sweep.window_switch(uid).await?;
+        sweep.window_switch(uid, false).await?;
         sweep.query_set(None, args.query.clone());
 
         if args.json {

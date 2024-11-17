@@ -12,7 +12,6 @@ repository = "https://github.com/aslpavel/sweep-rs"
 anyhow = { version = "^1.0" }
 argh = { version = "^0.1" }
 futures = { version = "^0.3" }
-lazy_static = { version = "^1.4" }
 mimalloc = { version = "^0.1", default-features = false }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

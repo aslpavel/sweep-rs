@@ -75,12 +75,12 @@ async def yes_or_no(sweep: Sweep[Any]) -> bool | None:
             .target_push("Y", face="fg=bg,bg=gruv-red-2,bold")
             .target_push("es")
             .hotkey_set("y")
-            .wrap(True),
+            .tag(True),
             Candidate()
             .target_push("N", face="fg=bg,bg=gruv-green-2,bold")
             .target_push("o")
             .hotkey_set("n")
-            .wrap(False),
+            .tag(False),
         ],
         prompt="Yes/No",
         prompt_icon=ICON_BACKPACK,
@@ -88,7 +88,7 @@ async def yes_or_no(sweep: Sweep[Any]) -> bool | None:
     )
     if len(yes_or_no) != 1:
         return None
-    return yes_or_no[0].value
+    return yes_or_no[0].tag
 
 
 async def main(args: list[str] | None = None) -> None:
@@ -208,6 +208,7 @@ async def main(args: list[str] | None = None) -> None:
     ]
 
     result: SweepEvent[Candidate | str] | None = None
+    uid = "demo"
     async with Sweep[Candidate | str](
         field_resolver=field_resolver,
         sweep=shlex.split(opts.sweep) if opts.sweep else sweep_default_cmd(),
@@ -217,7 +218,7 @@ async def main(args: list[str] | None = None) -> None:
         window_uid=None,
     ) as sweep:
         # testing spawning first window (window_uid=None)
-        await sweep.window_switch("demo")
+        await sweep.window_switch(uid=uid)
         foot_ref = ViewRef(
             await sweep.view_register(Text(glyph=ICON_FOOT, face="fg=bg"))
         )
@@ -226,11 +227,11 @@ async def main(args: list[str] | None = None) -> None:
             .face(face="bg=accent/.8")
             .horizontal(Align.EXPAND)
         )
-        await sweep.footer_set(view)
-        await sweep.prompt_set(icon=ICON_COCKTAIL)
+        await sweep.footer_set(view, uid=uid)
+        await sweep.prompt_set(icon=ICON_COCKTAIL, uid=uid)
         await sweep.field_register_many(fields)
-        await sweep.bind_struct(ctrl_q_action)
-        await sweep.items_extend(candidates)
+        await sweep.bind_struct(ctrl_q_action, uid=uid)
+        await sweep.items_extend(candidates, uid=uid)
 
         async for event in sweep:
             match event:
