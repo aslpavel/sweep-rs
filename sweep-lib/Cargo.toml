@@ -6,16 +6,16 @@ version.workspace = true
 repository.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-futures = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-surf_n_term = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+anyhow.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+surf_n_term.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
-arrow-array = "^53.0"
-arrow-data = "^53.0"
+arrow-array = "^54.0"
+arrow-data = "^54.0"
 crossbeam-channel = "^0.5"
 either = "^1.13"
 rayon = { version = "^1.10" }
@@ -24,7 +24,7 @@ smallvec = "^1.9.0"
 tracing-futures = "^0.2"
 
 [dev-dependencies]
-mimalloc = { workspace = true }
+mimalloc.workspace = true
 criterion = "^0.5"
 
 

@@ -224,9 +224,13 @@ class Field:
         )
 
 
+class ToJSON(Protocol):
+    def to_json(self) -> dict[str, Any]: ...
+
+
 @runtime_checkable
 class ToCandidate(Protocol):
-    def to_candidate(self) -> Candidate: ...
+    def to_candidate(self) -> ToJSON | dict[str, Any]: ...
 
 
 @dataclass(slots=True)
@@ -792,13 +796,14 @@ class Sweep[I]:
         items_cache = self.__items[uid or self.__window_uid_current]
         for item in items:
             if isinstance(item, ToCandidate):
-                candidate = item.to_candidate()
-                candidate.extra_update(_sweep_item_index=len(items_cache))
-                batch.append(candidate.to_json())
-                items_cache.append(item)
+                item_obj = item.to_candidate()
+                if not isinstance(item_obj, dict):
+                    item_obj = item_obj.to_json()
+                item_obj["_sweep_item_index"] = len(items_cache)
+                batch.append(item_obj)
             else:
                 batch.append(item)
-                items_cache.append(item)
+            items_cache.append(item)
 
             time_now = time.monotonic()
             if time_now - time_start >= time_limit:
@@ -822,11 +827,11 @@ class Sweep[I]:
             raise IndexError(f"index {index} >= {len(items)}")
         items[index] = item
         if isinstance(item, ToCandidate):
-            candidate = item.to_candidate()
-            candidate.extra_update(_sweep_item_index=index)
-            await self.__peer.item_update(
-                uid=uid, index=index, item=candidate.to_json()
-            )
+            item_obj = item.to_candidate()
+            if not isinstance(item_obj, dict):
+                item_obj = item_obj.to_json()
+            item_obj["_sweep_item_index"] = index
+            await self.__peer.item_update(uid=uid, index=index, item=item_obj)
         else:
             await self.__peer.item_update(uid=uid, index=index, item=item)
 
@@ -944,9 +949,11 @@ class Sweep[I]:
             if isinstance(item, ToCandidate):
                 index = len(haystack_index)
                 haystack_index[index] = item
-                candidate = item.to_candidate()
-                candidate.extra_update(__sweep_item_index=index)
-                haystack.append(candidate.to_json())
+                item_obj = item.to_candidate()
+                if not isinstance(item_obj, dict):
+                    item_obj = item_obj.to_json()
+                item_obj["_sweep_item_index"] = index
+                haystack.append(item_obj)
             else:
                 haystack.append(item)
         if window_uid is None:
@@ -965,7 +972,7 @@ class Sweep[I]:
         for item in selected:
             if isinstance(item, dict):
                 item = cast(dict[str, Any], item)
-                item_index = item.get("__sweep_item_index")
+                item_index = item.get("_sweep_item_index")
                 if item_index is not None and (item := haystack_index.get(item_index)):
                     result.append(item)
             else:
