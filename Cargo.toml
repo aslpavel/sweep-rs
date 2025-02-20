@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = { version = "^0.1" }
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
-surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git", rev = "5084bdca7075dc0000ad73169d253ec5240a428f" }
+surf_n_term = { git = "https://github.com/aslpavel/surf-n-term.git", rev = "9b58ce9f8027c3d53bd176b3f9684918ad3c3a62" }
 # surf_n_term = { path = "../surf-n-term" }
 # surf_n_term = { version = "^0.17.5" } # wait for rustix to publish version with select
 
