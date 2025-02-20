@@ -304,7 +304,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chronicler-cli"
-version = "0.25.1"
+version = "0.25.2"
 dependencies = [
  "anyhow",
  "argh",
@@ -2310,7 +2310,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.25.1"
+version = "0.25.2"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "sweep-cli"
-version = "0.25.1"
+version = "0.25.2"
 dependencies = [
  "anyhow",
  "argh",
