@@ -13,7 +13,7 @@ static YES: LazyLock<Glyph> = LazyLock::new(|| {
         "view_box": [0, 0, 100, 100],
         "size": [1, 2]
     }"#;
-    serde_json::from_str(&glyph_str).unwrap()
+    serde_json::from_str(glyph_str).unwrap()
 });
 static NO: LazyLock<Glyph> = LazyLock::new(|| {
     let glyph_str = r#"{
@@ -21,7 +21,7 @@ static NO: LazyLock<Glyph> = LazyLock::new(|| {
         "view_box": [0, 0, 100, 100],
         "size": [1, 2]
     }"#;
-    serde_json::from_str(&glyph_str).unwrap()
+    serde_json::from_str(glyph_str).unwrap()
 });
 
 #[tokio::main(flavor = "current_thread")]
@@ -39,18 +39,13 @@ async fn main() -> Result<(), Error> {
             .tagged("confirm", Some("1".parse()?))],
     );
     while let Some(event) = sweep.next_event().await {
-        match event {
-            sweep::SweepEvent::Select { items, .. } => {
-                let Some(item) = items.first() else {
-                    continue;
-                };
-                if item.tag == "confirm" {
-                    if yes_or_no(&sweep).await? {
-                        break;
-                    }
-                }
+        if let sweep::SweepEvent::Select { items, .. } = event {
+            let Some(item) = items.first() else {
+                continue;
+            };
+            if item.tag == "confirm" && yes_or_no(&sweep).await? {
+                break;
             }
-            _ => {}
         }
     }
     Ok(())

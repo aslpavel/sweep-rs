@@ -1,20 +1,20 @@
 use crate::{
+    ALL_SCORER_BUILDERS, Haystack, HaystackPreview, RankedItems, Ranker, RankerThread, ScoreItem,
+    ScorerBuilder,
     common::{LockExt, VecDeserializeSeed},
     rpc::{RpcError, RpcParams, RpcPeer},
     scorer_by_name,
     widgets::{ActionDesc, Input, InputAction, List, ListAction, ListItems, Theme},
-    Haystack, HaystackPreview, RankedItems, Ranker, RankerThread, ScoreItem, ScorerBuilder,
-    ALL_SCORER_BUILDERS,
 };
 use anyhow::{Context, Error};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use either::Either;
-use futures::{channel::oneshot, future, stream::TryStreamExt, Stream};
+use futures::{Stream, channel::oneshot, future, stream::TryStreamExt};
 use serde::{
-    de::{DeserializeOwned, DeserializeSeed},
     Deserialize, Serialize,
+    de::{DeserializeOwned, DeserializeSeed},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
@@ -24,13 +24,16 @@ use std::{
     mem,
     ops::Deref,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, LazyLock, RwLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{Builder, JoinHandle},
     time::Duration,
 };
 use surf_n_term::{
+    CellWrite, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMap, KeyMapHandler, KeyMod, KeyName,
+    Position, Size, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
+    TerminalSize, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
     encoder::ColorDepth,
     terminal::Mouse,
     view::{
@@ -38,13 +41,10 @@ use surf_n_term::{
         Margins, ScrollBarFn, ScrollBarPosition, Text, Tree, TreeId, TreeMut, TreeView, View,
         ViewCache, ViewContext, ViewDeserializer, ViewLayout, ViewLayoutStore, ViewMutLayout,
     },
-    CellWrite, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMap, KeyMapHandler, KeyMod, KeyName,
-    Position, Size, SystemTerminal, Terminal, TerminalAction, TerminalCommand, TerminalEvent,
-    TerminalSize, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, Mutex},
+    sync::{Mutex, mpsc},
 };
 
 static ICONS: LazyLock<HashMap<String, Glyph>> = LazyLock::new(|| {
@@ -284,14 +284,14 @@ where
     pub async fn items_current(&self, uid: Option<WindowId>) -> Result<Option<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::Current(send));
-        Ok(recv.await.context("items_current")?)
+        recv.await.context("items_current")
     }
 
     /// Get marked (multi-select) items
     pub async fn items_marked(&self, uid: Option<WindowId>) -> Result<Vec<H>, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::Marked(send));
-        Ok(recv.await.context("items_marked")?)
+        recv.await.context("items_marked")
     }
 
     /// Set needle to the specified string
@@ -306,7 +306,7 @@ where
     pub async fn query_get(&self, uid: Option<WindowId>) -> Result<String, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::NeedleGet(send));
-        Ok(recv.await.context("query_get")?)
+        recv.await.context("query_get")
     }
 
     /// Set scorer used for ranking
@@ -342,7 +342,7 @@ where
     pub async fn theme_get(&self, uid: Option<WindowId>) -> Result<Theme, Error> {
         let (send, recv) = oneshot::channel();
         self.send_window_request(uid, SweepWindowRequest::ThemeGet(send));
-        Ok(recv.await.context("theme_get")?)
+        recv.await.context("theme_get")
     }
 
     /// Set footer
@@ -385,7 +385,7 @@ where
             created: send,
             close,
         });
-        Ok(recv.await.context("window_switch")?)
+        recv.await.context("window_switch")
     }
 
     /// Remove state at the top of the stack and active one below it
@@ -726,7 +726,7 @@ where
                     let theme = sweep.theme_get(uid.clone()).await?;
                     let seed = ViewDeserializer::new(Some(&theme.named_colors), view_cache);
                     let footer: Option<Arc<dyn View>> = params.take_opt_seed(&seed, 1, "footer")?;
-                    sweep.footer_set(uid, footer.map(Arc::from));
+                    sweep.footer_set(uid, footer);
                     Ok(Value::Null)
                 }
             }
@@ -1507,10 +1507,12 @@ impl<H: Haystack> Window for SweepWindow<H> {
                     mem::drop(resolve.send(self.theme.clone()));
                 }
                 Bind { chord, tag, desc } => match *chord.keys() {
-                    [Key {
-                        name: KeyName::Backspace,
-                        mode: KeyMod::EMPTY,
-                    }] => {
+                    [
+                        Key {
+                            name: KeyName::Backspace,
+                            mode: KeyMod::EMPTY,
+                        },
+                    ] => {
                         self.key_empty_backspace = if tag.is_empty() {
                             None
                         } else {
@@ -2442,7 +2444,7 @@ impl<H> MarkedItems<H> {
         }
     }
 
-    fn take(&mut self) -> impl Iterator<Item = H> {
+    fn take(&mut self) -> impl Iterator<Item = H> + use<H> {
         self.haystack_index_to_order.clear();
         std::mem::take(&mut self.order_to_haystack).into_values()
     }
@@ -2751,10 +2753,10 @@ where
                 }
             },
         );
-        let view = Flex::row()
+        
+        Flex::row()
             .add_flex_child(1.0, preview)
-            .add_child(scrollbar);
-        view
+            .add_child(scrollbar)
     }
 }
 
