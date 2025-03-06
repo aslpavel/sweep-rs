@@ -1031,6 +1031,8 @@ class MPDSweep:
     async def __on_goto(self, sweep: Sweep[Song], _tag: str) -> None:
         song = await self.__sweep.items_current()
         if song is None:
+            songs = await self.__mpd.listallinfo()
+            await self.__songs_show(songs, "Songs", DATABASE_ICON, uid="ALL")
             return None
         selected = await sweep.quick_select(
             [
