@@ -2,9 +2,8 @@ use super::DATE_FORMAT;
 use crate::navigator::NavigatorContext;
 use anyhow::Error;
 use futures::{
-    ready,
+    FutureExt, Stream, StreamExt, TryStreamExt, ready,
     stream::{self, FuturesOrdered},
-    FutureExt, Stream, StreamExt, TryStreamExt,
 };
 use globset::{GlobBuilder, GlobMatcher};
 use std::{
@@ -19,11 +18,11 @@ use std::{
     task::Poll,
 };
 use sweep::{
-    surf_n_term::{
-        view::{Flex, Justify, Text},
-        CellWrite, Face, FaceAttrs,
-    },
     Haystack, HaystackBasicPreview, HaystackDefaultView,
+    surf_n_term::{
+        CellWrite, Face, FaceAttrs,
+        view::{Flex, Justify, Text},
+    },
 };
 use time::OffsetDateTime;
 use tokio::fs;
@@ -481,22 +480,24 @@ where
 {
     let mut unscheduled = VecDeque::from_iter(init);
     let mut scheduled = FuturesOrdered::new();
-    stream::poll_fn(move |cx| loop {
-        if scheduled.is_empty() && unscheduled.is_empty() {
-            return Poll::Ready(None);
-        }
-
-        for item in
-            unscheduled.drain(..std::cmp::min(unscheduled.len(), scheduled_max - scheduled.len()))
-        {
-            scheduled.push_back(unfold(item))
-        }
-
-        if let Some((out, children)) = ready!(scheduled.poll_next_unpin(cx)).transpose()? {
-            for child in children {
-                unscheduled.push_front(child);
+    stream::poll_fn(move |cx| {
+        loop {
+            if scheduled.is_empty() && unscheduled.is_empty() {
+                return Poll::Ready(None);
             }
-            return Poll::Ready(Some(Ok(out)));
+
+            for item in unscheduled
+                .drain(..std::cmp::min(unscheduled.len(), scheduled_max - scheduled.len()))
+            {
+                scheduled.push_back(unfold(item))
+            }
+
+            if let Some((out, children)) = ready!(scheduled.poll_next_unpin(cx)).transpose()? {
+                for child in children {
+                    unscheduled.push_front(child);
+                }
+                return Poll::Ready(Some(Ok(out)));
+            }
         }
     })
 }

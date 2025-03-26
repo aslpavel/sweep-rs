@@ -2753,7 +2753,7 @@ where
                 }
             },
         );
-        
+
         Flex::row()
             .add_flex_child(1.0, preview)
             .add_child(scrollbar)

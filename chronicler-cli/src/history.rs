@@ -1,5 +1,5 @@
 use crate::{
-    navigator::{NavigatorContext, FAILED_ICON, FOLDER_ICON},
+    navigator::{FAILED_ICON, FOLDER_ICON, NavigatorContext},
     utils::Table,
 };
 
@@ -8,17 +8,17 @@ use anyhow::{Context, Error};
 use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode},
     FromRow, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode},
 };
 use std::path::Path;
 use std::{fmt::Write, str::FromStr};
 use sweep::{
-    surf_n_term::{
-        view::{Align, Container, Flex, Justify, Text},
-        CellWrite, Face, FaceAttrs,
-    },
     Haystack, HaystackBasicPreview, HaystackDefaultView, Theme,
+    surf_n_term::{
+        CellWrite, Face, FaceAttrs,
+        view::{Align, Container, Flex, Justify, Text},
+    },
 };
 
 #[derive(Clone, Debug, FromRow)]
@@ -193,7 +193,7 @@ impl FromStr for HistoryUpdate {
                 (Some("end_ts"), Some(val)) => result.end_ts = Some(val.parse()?),
                 (Some("session"), Some(val)) => result.session = Some(val.to_owned()),
                 (Some(key), _) => {
-                    return Err(anyhow::anyhow!("history update invalid key \"{key}\""))
+                    return Err(anyhow::anyhow!("history update invalid key \"{key}\""));
                 }
                 _ => continue,
             }

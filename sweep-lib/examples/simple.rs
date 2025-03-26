@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 use anyhow::Error;
 use surf_n_term::Glyph;
 use sweep::{
-    surf_n_term::{view::Text, CellWrite},
     Haystack, HaystackTagged, Sweep, SweepOptions,
+    surf_n_term::{CellWrite, view::Text},
 };
 
 static YES: LazyLock<Glyph> = LazyLock::new(|| {

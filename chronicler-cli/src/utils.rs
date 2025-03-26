@@ -1,6 +1,6 @@
 use sweep::surf_n_term::{
-    view::{Align, Container, Flex, IntoView},
     Face,
+    view::{Align, Container, Flex, IntoView},
 };
 
 pub(crate) struct Table<'a> {

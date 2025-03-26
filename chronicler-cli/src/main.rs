@@ -12,7 +12,7 @@ use sweep::{SweepOptions, Theme};
 use time::{format_description::FormatItem, macros::format_description};
 
 use std::{io::Read, path::PathBuf};
-use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
 
 const HISTORY_DB: &str = "chronicler/history.db";
 

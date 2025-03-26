@@ -1,16 +1,16 @@
 use crate::{
-    common::{json_from_slice_seed, LockExt, VecDeserializeSeed},
-    rpc::{RpcParams, RpcPeer},
-    widgets::ProcessOutput,
     Haystack, HaystackBasicPreview, Positions, Process, ProcessCommandArg, ProcessCommandBuilder,
     Theme,
+    common::{LockExt, VecDeserializeSeed, json_from_slice_seed},
+    rpc::{RpcParams, RpcPeer},
+    widgets::ProcessOutput,
 };
 use anyhow::Error;
 use futures::Stream;
 use serde::{
+    Deserialize, Deserializer, Serialize,
     de::{self, DeserializeSeed},
     ser::SerializeMap,
-    Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
 use std::{
@@ -21,13 +21,13 @@ use std::{
     sync::{Arc, RwLock},
 };
 use surf_n_term::{
+    CellWrite, Face, FaceDeserializer, Glyph, KeyChord, RGBA, Size, TerminalWaker,
     glyph::GlyphDeserializer,
     rasterize::SVG_COLORS,
     view::{
         Align, ArcView, Axis, Container, Flex, IntoView, Justify, Margins, Text, View, ViewCache,
         ViewDeserializer,
     },
-    CellWrite, Face, FaceDeserializer, Glyph, KeyChord, Size, TerminalWaker, RGBA,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -1077,13 +1077,7 @@ impl FieldSelect {
 
         let index = index as i32;
         let size = size as i32;
-        let resolve = |value: i32| -> i32 {
-            if value < 0 {
-                size + value
-            } else {
-                value
-            }
-        };
+        let resolve = |value: i32| -> i32 { if value < 0 { size + value } else { value } };
 
         match *self {
             All => return true,
@@ -1156,13 +1150,15 @@ impl FieldSelector {
 
     pub fn matches_iter(&self, size: usize) -> impl Iterator<Item = usize> + '_ {
         let mut index = 0;
-        std::iter::from_fn(move || loop {
-            if index >= size {
-                return None;
-            }
-            index += 1;
-            if self.matches(index - 1, size) {
-                return Some(index - 1);
+        std::iter::from_fn(move || {
+            loop {
+                if index >= size {
+                    return None;
+                }
+                index += 1;
+                if self.matches(index - 1, size) {
+                    return Some(index - 1);
+                }
             }
         })
     }

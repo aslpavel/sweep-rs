@@ -14,17 +14,17 @@ pub use scorer::{
 
 mod rank;
 pub use rank::{
-    fuzzy_scorer, scorer_by_name, substr_scorer, RankedItems, Ranker, RankerThread, ScorerBuilder,
-    ALL_SCORER_BUILDERS,
+    ALL_SCORER_BUILDERS, RankedItems, Ranker, RankerThread, ScorerBuilder, fuzzy_scorer,
+    scorer_by_name, substr_scorer,
 };
 
 mod candidate;
-pub use candidate::{fields_view, Candidate, CandidateContext, Field, FieldRef, FieldSelector};
+pub use candidate::{Candidate, CandidateContext, Field, FieldRef, FieldSelector, fields_view};
 
 mod sweep;
 pub use crate::sweep::{
-    sweep, Sweep, SweepEvent, SweepOptions, WindowId, WindowLayout, WindowLayoutSize,
-    PROMPT_DEFAULT_ICON,
+    PROMPT_DEFAULT_ICON, Sweep, SweepEvent, SweepOptions, WindowId, WindowLayout, WindowLayoutSize,
+    sweep,
 };
 
 pub mod rpc;

@@ -6,14 +6,14 @@ use std::{
 };
 
 use arrow_array::{
+    Array, ArrowPrimitiveType, GenericByteViewArray, PrimitiveArray,
     builder::{GenericByteViewBuilder, PrimitiveBuilder},
     types::ByteViewType,
-    Array, ArrowPrimitiveType, GenericByteViewArray, PrimitiveArray,
 };
 use arrow_data::ByteView;
 use serde::{
-    de::{self, DeserializeSeed},
     Deserializer,
+    de::{self, DeserializeSeed},
 };
 use tokio::task::JoinHandle;
 
@@ -155,7 +155,7 @@ pub fn json_from_slice_seed<'de, 'a: 'de, S: DeserializeSeed<'de>>(
     seed: S,
     slice: &'a [u8],
 ) -> serde_json::Result<S::Value> {
-    use serde_json::{de::SliceRead, Deserializer};
+    use serde_json::{Deserializer, de::SliceRead};
 
     let mut deserializer = Deserializer::new(SliceRead::new(slice));
     seed.deserialize(&mut deserializer)

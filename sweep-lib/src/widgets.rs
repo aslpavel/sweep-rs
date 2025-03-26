@@ -1,10 +1,9 @@
 use crate::{
+    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview, Positions,
     common::{AbortJoinHandle, LockExt},
-    FieldSelector, Haystack, HaystackBasicPreview, HaystackDefaultView, HaystackPreview,
-    Positions,
 };
 use anyhow::Context;
-use futures::{future, FutureExt, TryFutureExt};
+use futures::{FutureExt, TryFutureExt, future};
 use std::{
     borrow::Cow,
     cmp::max,
@@ -16,14 +15,14 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 use surf_n_term::{
-    rasterize::{PathBuilder, StrokeStyle, SVG_COLORS},
+    BBox, Cell, CellWrite, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName,
+    Position, RGBA, Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt,
+    TerminalWaker,
+    rasterize::{PathBuilder, SVG_COLORS, StrokeStyle},
     view::{
         Axis, BoxConstraint, BoxView, Container, Flex, IntoView, Justify, Layout, ScrollBarFn,
         ScrollBarPosition, Text, Tree, TreeMut, View, ViewContext, ViewLayout, ViewMutLayout,
     },
-    BBox, Cell, CellWrite, Color, Error, Face, FaceAttrs, Glyph, Key, KeyChord, KeyMod, KeyName,
-    Position, Size, SurfaceMut, TerminalEvent, TerminalSurface, TerminalSurfaceExt, TerminalWaker,
-    RGBA,
 };
 use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
 
@@ -304,12 +303,7 @@ impl Haystack for ActionDesc {
         self.name.chars().for_each(scope);
     }
 
-    fn view(
-        &self,
-        ctx: &Self::Context,
-        positions: Positions<&[u8]>,
-        theme: &Theme,
-    ) -> Self::View {
+    fn view(&self, ctx: &Self::Context, positions: Positions<&[u8]>, theme: &Theme) -> Self::View {
         let mut chords_text = Text::new();
         for chord in self.chords.iter() {
             chords_text
@@ -1433,35 +1427,37 @@ fn parse_command_pattern(string: &str) -> impl Iterator<Item = Result<String, St
     let mut chunk = String::new();
     let mut is_opened = false;
     let mut is_done = false;
-    std::iter::from_fn(move || loop {
-        if is_done {
-            return None;
-        }
-        if let Some(char) = chars.next() {
-            if !matches!(char, '{' | '}') {
-                chunk.push(char);
-                continue;
+    std::iter::from_fn(move || {
+        loop {
+            if is_done {
+                return None;
             }
-            if matches!(chars.peek(), Some(c) if *c == char) {
-                chars.next();
-                chunk.push(char);
-                continue;
+            if let Some(char) = chars.next() {
+                if !matches!(char, '{' | '}') {
+                    chunk.push(char);
+                    continue;
+                }
+                if matches!(chars.peek(), Some(c) if *c == char) {
+                    chars.next();
+                    chunk.push(char);
+                    continue;
+                }
+                if (char == '{' && is_opened) || (char == '}' && !is_opened) {
+                    chunk.push(char);
+                    continue;
+                }
+            } else {
+                is_done = true;
             }
-            if (char == '{' && is_opened) || (char == '}' && !is_opened) {
-                chunk.push(char);
-                continue;
-            }
-        } else {
-            is_done = true;
-        }
-        let item = std::mem::take(&mut chunk);
-        if is_opened {
-            is_opened = false;
-            return Some(Err(item));
-        } else {
-            is_opened = true;
-            if !item.is_empty() {
-                return Some(Ok(item));
+            let item = std::mem::take(&mut chunk);
+            if is_opened {
+                is_opened = false;
+                return Some(Err(item));
+            } else {
+                is_opened = true;
+                if !item.is_empty() {
+                    return Some(Ok(item));
+                }
             }
         }
     })
@@ -1575,15 +1571,13 @@ mod tests {
         assert_eq!(list.offset(), 2);
 
         println!("very long line");
-        let items = VecItems::new(
-            [
-                "first short",
-                "second",
-                "fist very very long line\nwhich is also multi line that should split",
-                "second very very long line that should be split into multiple lines and rendered correctly",
-                "last",
-            ]
-        );
+        let items = VecItems::new([
+            "first short",
+            "second",
+            "fist very very long line\nwhich is also multi line that should split",
+            "second very very long line that should be split into multiple lines and rendered correctly",
+            "last",
+        ]);
         list.items_set(items);
         print!("{:?}", list.view(()).debug(Size::new(4, 20)));
         assert_eq!(list.offset(), 0);

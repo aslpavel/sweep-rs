@@ -1,16 +1,16 @@
 use crate::{
-    common::{byte_view_concat, LockExt},
-    scorer::{ScoreArray, ScoreItem},
     FuzzyScorer, Haystack, Scorer, SubstrScorer,
+    common::{LockExt, byte_view_concat},
+    scorer::{ScoreArray, ScoreItem},
 };
-use arrow_array::{builder::StringViewBuilder, Array, StringViewArray};
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use arrow_array::{Array, StringViewArray, builder::StringViewBuilder};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::{
     collections::{HashMap, VecDeque},
     iter,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, LazyLock, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };

@@ -1,10 +1,10 @@
 use crate::{
     history::{History, HistoryEntry},
-    walk::{path_ignore_for_path, walk, PathItem},
+    walk::{PathItem, path_ignore_for_path, walk},
 };
 use anyhow::Error;
 use async_trait::async_trait;
-use futures::{future, stream, Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, future, stream};
 use std::{
     collections::HashMap,
     fmt,
@@ -14,12 +14,12 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
 };
 use sweep::{
+    Haystack, Positions, Sweep, SweepEvent, SweepOptions,
     common::{AbortJoinHandle, LockExt},
     surf_n_term::{
-        view::{Either, View},
         Glyph,
+        view::{Either, View},
     },
-    Haystack, Positions, Sweep, SweepEvent, SweepOptions,
 };
 
 #[derive(Debug, Clone)]

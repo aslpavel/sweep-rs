@@ -13,9 +13,10 @@ use std::{
 };
 use surf_n_term::Glyph;
 use sweep::{
-    common::{json_from_slice_seed, VecDeserializeSeed},
-    scorer_by_name, Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep,
-    SweepEvent, SweepOptions, Theme, WindowId, WindowLayout, WindowLayoutSize, ALL_SCORER_BUILDERS,
+    ALL_SCORER_BUILDERS, Candidate, CandidateContext, FieldSelector, ProcessCommandBuilder, Sweep,
+    SweepEvent, SweepOptions, Theme, WindowId, WindowLayout, WindowLayoutSize,
+    common::{VecDeserializeSeed, json_from_slice_seed},
+    scorer_by_name,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing_subscriber::fmt::format::FmtSpan;

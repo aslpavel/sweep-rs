@@ -1,10 +1,10 @@
 use crate::common::{byte_view_concat, byte_view_filter, primitive_concat};
 use arrow_array::{
+    Array, BinaryViewArray, Float32Array, StringViewArray, UInt32Array,
     builder::{
         BinaryViewBuilder, Float32Builder, GenericByteViewBuilder, PrimitiveBuilder,
         StringViewBuilder, UInt32Builder,
     },
-    Array, BinaryViewArray, Float32Array, StringViewArray, UInt32Array,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{cell::RefCell, cmp::Ordering, fmt, sync::Arc};

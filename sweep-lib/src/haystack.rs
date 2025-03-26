@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use either::Either;
 use surf_n_term::{
+    CellWrite, KeyChord, Position, TerminalSurface,
     render::CellKind,
     view::{BoxConstraint, Layout, Text, View, ViewContext, ViewLayout, ViewMutLayout},
-    CellWrite, KeyChord, Position, TerminalSurface,
 };
 
 use crate::{Positions, Theme};

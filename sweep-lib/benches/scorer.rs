@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use mimalloc::MiMalloc;
 use sweep::{FuzzyScorer, KMPPattern, Positions, Score, Scorer, SubstrScorer};
 
