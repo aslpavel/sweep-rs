@@ -506,7 +506,7 @@ class MPD:
             raise RuntimeError("MPD is not connected")
         while True:
             line = await self.__reader.readline()
-            line = line.strip()
+            line = line.strip(b"\n")
             if line == b"OK":
                 break
             elif line.startswith(b"ACK "):
