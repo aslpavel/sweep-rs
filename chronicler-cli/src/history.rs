@@ -77,15 +77,14 @@ impl Haystack for HistoryEntry {
                 text.put_glyph(FAILED_ICON.clone());
             });
         }
-        if !theme.show_preview {
-            if let Ok(date) = self
+        if !theme.show_preview
+            && let Ok(date) = self
                 .start_dt()
                 .and_then(|date| Ok(date.format(DATE_FORMAT)?))
-            {
-                right
-                    .put_fmt(&date, Some(theme.list_inactive))
-                    .put_char(' ');
-            }
+        {
+            right
+                .put_fmt(&date, Some(theme.list_inactive))
+                .put_char(' ');
         }
 
         Flex::row()

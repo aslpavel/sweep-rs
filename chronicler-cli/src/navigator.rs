@@ -485,10 +485,10 @@ impl NavigatorMode for PathMode {
         match tag.as_ref() {
             TAG_COMPLETE => navigator.path_complete().await,
             TAG_GOTO_PARENT => {
-                if let Some(path) = self.path.parent().map(PathBuf::from) {
-                    if self.path != path {
-                        return Ok(Some(PathMode::new(path, String::new())));
-                    }
+                if let Some(path) = self.path.parent().map(PathBuf::from)
+                    && self.path != path
+                {
+                    return Ok(Some(PathMode::new(path, String::new())));
                 }
                 Ok(None)
             }

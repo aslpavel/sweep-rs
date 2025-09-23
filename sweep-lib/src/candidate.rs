@@ -568,13 +568,12 @@ impl CandidateContext {
 
     /// Resolve field references
     pub fn field_resolve<'a>(&self, field: &'a Field<'_>) -> Field<'a> {
-        if let Some(field_ref) = field.field_ref {
-            if !self
+        if let Some(field_ref) = field.field_ref
+            && !self
                 .inner
                 .with(|inner| inner.field_refs.contains_key(&field_ref))
-            {
-                self.field_missing(field_ref)
-            }
+        {
+            self.field_missing(field_ref)
         }
         self.inner.with(|inner| field.resolve(&inner.field_refs))
     }

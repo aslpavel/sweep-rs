@@ -654,6 +654,10 @@ impl ListAction {
                         name: KeyName::Char('n'),
                         mode: KeyMod::CTRL,
                     }]),
+                    KeyChord::from_iter([Key {
+                        name: KeyName::Char('j'),
+                        mode: KeyMod::ALT,
+                    }]),
                 ],
                 name: "list.item.next".to_owned(),
                 description: "Move to the next item in the list".to_owned(),
@@ -667,6 +671,10 @@ impl ListAction {
                     KeyChord::from_iter([Key {
                         name: KeyName::Char('p'),
                         mode: KeyMod::CTRL,
+                    }]),
+                    KeyChord::from_iter([Key {
+                        name: KeyName::Char('k'),
+                        mode: KeyMod::ALT,
                     }]),
                 ],
                 name: "list.item.prev".to_owned(),

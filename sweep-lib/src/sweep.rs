@@ -526,10 +526,10 @@ where
     fn drop(&mut self) {
         let _ = self.requests.send(SweepRequest::Terminate);
         self.term_waker.wake().unwrap_or(());
-        if let Some(handle) = self.ui_worker.take() {
-            if let Err(error) = handle.join() {
-                tracing::error!("[SweepInner.drop] ui worker thread failed: {:?}", error);
-            }
+        if let Some(handle) = self.ui_worker.take()
+            && let Err(error) = handle.join()
+        {
+            tracing::error!("[SweepInner.drop] ui worker thread failed: {:?}", error);
         }
     }
 }
@@ -1022,32 +1022,32 @@ impl SweepAction {
             },
             PreviewLineNext => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
-                    name: KeyName::Char('j'),
-                    mode: KeyMod::ALT,
+                    name: KeyName::Char('d'),
+                    mode: KeyMod::CTRL,
                 }])],
                 name: "sweep.preview.line.next".to_owned(),
                 description: "Scroll preview one line down".to_owned(),
             },
             PreviewPageNext => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
-                    name: KeyName::Char('j'),
-                    mode: KeyMod::ALT | KeyMod::SHIFT,
+                    name: KeyName::Char('d'),
+                    mode: KeyMod::CTRL | KeyMod::SHIFT,
                 }])],
                 name: "sweep.preview.page.next".to_owned(),
                 description: "Scroll preview one page down".to_owned(),
             },
             PreviewLinePrev => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
-                    name: KeyName::Char('k'),
-                    mode: KeyMod::ALT,
+                    name: KeyName::Char('u'),
+                    mode: KeyMod::CTRL,
                 }])],
                 name: "sweep.preview.line.prev".to_owned(),
                 description: "Scroll preview one line up".to_owned(),
             },
             PreviewPagePrev => ActionDesc {
                 chords: vec![KeyChord::from_iter([Key {
-                    name: KeyName::Char('k'),
-                    mode: KeyMod::ALT | KeyMod::SHIFT,
+                    name: KeyName::Char('u'),
+                    mode: KeyMod::CTRL | KeyMod::SHIFT,
                 }])],
                 name: "sweep.preview.page.prev".to_owned(),
                 description: "Scroll preview one page up".to_owned(),
@@ -1983,16 +1983,16 @@ where
         (self.transition_handler)(WindowEvent::Closed(window_from.uid().clone()))?;
 
         // closed window was active
-        if index == self.windows.len() {
-            if let Some(window_to) = self.window_current() {
-                let uid_to = window_to.uid().clone();
-                let action = window_to.resume(Value::Null)?;
-                (self.transition_handler)(WindowEvent::Switched {
-                    from: Some(window_from.uid().clone()),
-                    to: uid_to,
-                })?;
-                return Ok(action);
-            }
+        if index == self.windows.len()
+            && let Some(window_to) = self.window_current()
+        {
+            let uid_to = window_to.uid().clone();
+            let action = window_to.resume(Value::Null)?;
+            (self.transition_handler)(WindowEvent::Switched {
+                from: Some(window_from.uid().clone()),
+                to: uid_to,
+            })?;
+            return Ok(action);
         }
 
         Ok(WindowAction::Nothing)

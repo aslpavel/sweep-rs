@@ -101,7 +101,7 @@ pub trait Scorer: Send + Sync + fmt::Debug {
         }
         let chunk_count = {
             let whole = haystack.len() / chunk_size;
-            let part = if haystack.len() % chunk_size > 0 {
+            let part = if !haystack.len().is_multiple_of(chunk_size) {
                 1
             } else {
                 0
