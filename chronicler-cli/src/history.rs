@@ -34,6 +34,8 @@ pub struct HistoryEntry {
     pub start_ts: f64,
     pub end_ts: f64,
     pub session: String,
+    #[allow(unused)]
+    rank: i64,
 }
 
 impl HistoryEntry {
@@ -323,6 +325,7 @@ CREATE TABLE IF NOT EXISTS history (
 -- index to speed up retrieval of most frequent paths
 CREATE INDEX IF NOT EXISTS history_cwd ON history(cwd, end_ts);
 CREATE INDEX IF NOT EXISTS history_end_ts ON history(end_ts);
+CREATE INDEX IF NOT EXISTS history_cmd_and_end_ts ON history(cmd, end_ts);
 "#;
 
 const LIST_QUERY: &str = r#"
@@ -334,14 +337,11 @@ SELECT * FROM history WHERE session = $1 ORDER BY end_ts DESC;
 "#;
 
 const LIST_UNIQUE_CMD_QUERY: &str = r#"
-SELECT *
-FROM history h1
-JOIN (
-    SELECT cmd, MAX(end_ts) as max_ts
+WITH ranked AS (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY cmd ORDER BY end_ts DESC) AS rank
     FROM history
-    GROUP BY cmd
-) h2
-ON h1.cmd = h2.cmd AND h1.end_ts = h2.max_ts
+)
+SELECT * FROM ranked WHERE rank = 1
 ORDER BY abs(return), end_ts DESC;
 "#;
 

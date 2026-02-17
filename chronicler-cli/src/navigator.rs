@@ -21,6 +21,7 @@ use sweep::{
         view::{Either, View},
     },
 };
+use tracing_futures::Instrument;
 
 #[derive(Debug, Clone)]
 pub enum NavigatorItem {
@@ -366,7 +367,10 @@ impl NavigatorMode for CmdHistoryMode {
         // keep commands executed in the current directory at the top
         let cwd = std::env::current_dir()
             .map_or_else(|_| String::new(), |cwd| cwd.to_string_lossy().into_owned());
-        let mut history = history.collect::<Vec<_>>().await;
+        let mut history = history
+            .collect::<Vec<_>>()
+            .instrument(tracing::debug_span!("[CmdHistoryMode.collect]"))
+            .await;
         history.sort_by_key(|entry| {
             entry
                 .as_ref()

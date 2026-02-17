@@ -29,5 +29,6 @@ sqlx = { version = "^0.8", features = ["runtime-tokio", "sqlite"] }
 time = { version = "^0.3", features = ["macros"] }
 tokio-stream = { version = "0.1.16", features = ["fs"] }
 tracing-appender = "^0.2"
+tracing-futures = "^0.2"
 unix_mode = "^0.1"
 uzers = "^0.12"

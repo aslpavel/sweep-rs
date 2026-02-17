@@ -293,7 +293,7 @@ checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
 name = "chronicler-cli"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "anyhow",
  "argh",
@@ -311,6 +311,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-appender",
+ "tracing-futures",
  "tracing-subscriber",
  "unix_mode",
  "uzers",
@@ -2237,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -2260,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "sweep-cli"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "anyhow",
  "argh",
