@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "chronicler-cli"
-version = "0.26.4"
+version = "0.26.5"
 dependencies = [
  "anyhow",
  "argh",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.26.4"
+version = "0.26.5"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "sweep-cli"
-version = "0.26.4"
+version = "0.26.5"
 dependencies = [
  "anyhow",
  "argh",
