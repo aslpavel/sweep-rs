@@ -14,8 +14,8 @@ surf_n_term.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-arrow-array = "^58.3"
-arrow-data = "^58.3"
+arrow-array = "^59"
+arrow-data = "^59"
 crossbeam-channel = "^0.5"
 either = "^1.16"
 rayon = { version = "^1.12" }
